@@ -9,7 +9,7 @@ function App() {
 
   return (
     <>
-    <h1>Welcome to wart bunker, where we make self-custody of your wart the priority on the front lines</h1>
+    <h1>Welcome to wart bunker! Where we make self-custody of your wart the priority on the front lines</h1>
      <WebWallet />
     </>
   )
