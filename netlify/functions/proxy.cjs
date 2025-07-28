@@ -1,4 +1,5 @@
-import https from 'https';
+const https = require('https');
+const fetch = require('node-fetch');
 
 const agent = new https.Agent({
   rejectUnauthorized: false,
