@@ -1,0 +1,297 @@
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&family=Press+Start+2P&family=Orbitron:wght@400;700&family=Roboto:wght@400;500&display=swap');
+
+.container {
+  background-color: #070707;
+  color: #FFFFFF;
+  font-family: 'Roboto', sans-serif;
+  padding: 20px;
+  min-height: 100vh;
+  max-width: 800px;
+  margin: 0 auto;
+  border: 3px solid #FFC107;
+  box-shadow: 0 0 10px #FFC107;
+  overflow-x: hidden;
+  box-sizing: border-box;
+}
+
+.container h1,
+.container h2 {
+  font-family: 'Montserrat';
+  color: #FFC107;
+  text-shadow: 2px 2px 4px #000000;
+  margin-bottom: 20px;
+}
+
+.container h1 {
+  font-size: 24px;
+  text-align: center;
+}
+
+.container h2 {
+  font-size: 18px;
+}
+
+.container section {
+  background-color: #474747;
+  padding: 20px;
+  margin-bottom: 20px;
+  border-radius: 8px;
+  border: 2px solid #FFC107;
+  box-shadow: 0 0 5px #FFC107;
+  max-width: 100%;
+  overflow-x: hidden;
+  box-sizing: border-box;
+}
+
+.container .form-group {
+  margin-bottom: 15px;
+}
+
+.container .form-group label {
+  display: block;
+  font-family: 'Montserrat';
+  color: #FFECB3;
+  margin-bottom: 5px;
+  font-size: 14px;
+}
+
+.container .input,
+.container input[type="file"] {
+  width: 100%;
+  padding: 10px;
+  background-color: #1C2526;
+  color: #FFFFFF;
+  border: 2px solid #FFC107;
+  border-radius: 4px;
+  font-family: 'Montserrat', sans-serif;
+  font-size: 16px;
+  transition: border-color 0.3s, box-shadow 0.3s;
+  box-sizing: border-box;
+}
+
+.container .input:focus,
+.container input[type="file"]:focus {
+  outline: none;
+  border-color: #FFECB3;
+  box-shadow: 0 0 8px #FFECB3;
+}
+
+.container button {
+  background: linear-gradient(45deg, #FFC107, #FFECB3);
+  color: #1C2526;
+  font-family: 'Montserrat';
+  font-weight: 700;
+  padding: 10px 20px;
+  border: 2px solid #1C2526;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
+  margin-right: 10px;
+  margin-bottom: 10px;
+  box-sizing: border-box;
+}
+
+.container button:hover {
+  transform: scale(1.05);
+  box-shadow: 0 0 10px #FFC107;
+}
+
+.container button:active {
+  transform: scale(0.95);
+}
+
+.container .result,
+.container .error {
+  background-color: #1C2526;
+  padding: 15px;
+  border: 2px solid #FFC107;
+  border-radius: 4px;
+  margin-top: 15px;
+  font-family: 'Roboto', sans-serif;
+}
+
+.container .result p,
+.container .error {
+  color: #FFECB3;
+  font-size: 14px;
+  word-break: break-all;
+  overflow-wrap: break-word;
+  white-space: normal;
+}
+
+.container .result p strong {
+  display: inline-block;
+  width: 120px;
+  font-weight: 500;
+}
+
+.container .result pre {
+  color: #FFFFFF;
+  background-color: #4A4A4A;
+  padding: 10px;
+  border-radius: 4px;
+  overflow-x: auto;
+  font-size: 12px;
+}
+
+.container .warning {
+  color: #FFC107;
+  font-size: 12px;
+  font-style: italic;
+  margin-top: 10px;
+}
+
+.container .wallet-address {
+  color: #FFECB3;
+  font-size: 14px;
+  word-break: break-all;
+  overflow-wrap: break-word;
+  white-space: normal;
+  max-width: 100%;
+  margin: 0;
+  padding: 5px 0;
+}
+
+.wallet-info-value {
+  color: #FFECB3;
+  word-break: break-all;
+  overflow-wrap: break-word;
+  white-space: normal;
+  font-family: 'Montserrat';
+  max-width: 100%;
+  display: inline-block;
+}
+
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: rgb(87, 87, 87);
+  padding: 20px;
+  border-radius: 8px;
+  max-width: 600px;
+  width: 80%;
+  max-height: 80%;
+  overflow-y: auto;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.modal-content h2 {
+  margin-top: 0;
+}
+
+.modal-content button {
+  margin-top: 10px;
+}
+
+.modal-content ul {
+  margin-bottom: 20px;
+}
+
+.container .download-wallet-btn {
+  font-size: 0.8em !important;
+  padding: 5px 10px !important;
+  min-width: 7rem !important;
+  line-height: 1.5 !important;
+  text-align: center !important;
+  background: linear-gradient(45deg, #FFC107, #FFECB3) !important;
+  color: #1C2526 !important;
+  border: 2px solid #1C2526 !important;
+  border-radius: 4px !important;
+  margin-right: 0 !important;
+}
+
+@media (max-width: 600px) {
+  .container {
+    padding: 10px;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  .container h1 {
+    font-size: 20px;
+  }
+
+  .container h2 {
+    font-size: 16px;
+  }
+
+  .container section {
+    padding: 15px;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  .container .form-group label {
+    font-size: 12px;
+  }
+
+  .container .input,
+  .container input[type="file"] {
+    font-size: 14px;
+    padding: 8px;
+  }
+
+  .container button {
+    width: 100%;
+    margin-right: 0;
+    padding: 12px;
+    font-size: 14px;
+  }
+
+  .container .result p,
+  .container .error {
+    font-size: 12px;
+  }
+
+  .container .result p strong {
+    width: 100%;
+    display: block;
+    margin-bottom: 5px;
+  }
+
+  .container .result pre {
+    font-size: 10px;
+  }
+
+  .container .wallet-address {
+    font-size: 12px;
+    word-break: break-all;
+    overflow-wrap: break-word;
+    white-space: normal;
+    max-width: 100%;
+  }
+
+  .modal-overlay {
+    align-items: flex-start;
+    height: 100vh;
+    overflow-y: auto;
+  }
+
+  .modal-content {
+    max-height: none;
+    margin-top: 24px;
+    margin-bottom: 24px;
+  }
+
+  .container .download-wallet-btn {
+    font-size: 0.7em !important;
+    padding: 8px !important;
+    width: 40px !important;
+    height: 40px !important;
+    line-height: 1 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+}
