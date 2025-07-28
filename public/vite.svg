@@ -1,1 +1,27 @@
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" role="img" class="iconify iconify--logos" width="31.88" height="32" preserveAspectRatio="xMidYMid meet" viewBox="0 0 256 257"><defs><linearGradient id="IconifyId1813088fe1fbc01fb466" x1="-.828%" x2="57.636%" y1="7.652%" y2="78.411%"><stop offset="0%" stop-color="#41D1FF"></stop><stop offset="100%" stop-color="#BD34FE"></stop></linearGradient><linearGradient id="IconifyId1813088fe1fbc01fb467" x1="43.376%" x2="50.316%" y1="2.242%" y2="89.03%"><stop offset="0%" stop-color="#FFEA83"></stop><stop offset="8.333%" stop-color="#FFDD35"></stop><stop offset="100%" stop-color="#FFA800"></stop></linearGradient></defs><path fill="url(#IconifyId1813088fe1fbc01fb466)" d="M255.153 37.938L134.897 252.976c-2.483 4.44-8.862 4.466-11.382.048L.875 37.958c-2.746-4.814 1.371-10.646 6.827-9.67l120.385 21.517a6.537 6.537 0 0 0 2.322-.004l117.867-21.483c5.438-.991 9.574 4.796 6.877 9.62Z"></path><path fill="url(#IconifyId1813088fe1fbc01fb467)" d="M185.432.063L96.44 17.501a3.268 3.268 0 0 0-2.634 3.014l-5.474 92.456a3.268 3.268 0 0 0 3.997 3.378l24.777-5.718c2.318-.535 4.413 1.507 3.936 3.838l-7.361 36.047c-.495 2.426 1.782 4.5 4.151 3.78l15.304-4.649c2.372-.72 4.652 1.36 4.15 3.788l-11.698 56.621c-.732 3.542 3.979 5.473 5.943 2.437l1.313-2.028l72.516-144.72c1.215-2.423-.88-5.186-3.54-4.672l-25.505 4.922c-2.396.462-4.435-1.77-3.759-4.114l16.646-57.705c.677-2.35-1.37-4.583-3.769-4.113Z"></path></svg>
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Generator: Adobe Illustrator 27.8.0, SVG Export Plug-In . SVG Version: 6.00 Build 0)  -->
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px"
+	 viewBox="0 0 1080 1080" style="enable-background:new 0 0 1080 1080;" xml:space="preserve">
+<style type="text/css">
+	.st0{fill:#F8F8F9;}
+	.st1{fill:#FDB913;}
+	.st2{fill:#231F20;}
+	.st3{fill:#FFFFFF;}
+</style>
+<g id="Layer_1">
+</g>
+<g id="Layer_2">
+	<circle class="st1" cx="540" cy="540" r="510"/>
+	<g>
+		<polygon class="st2" points="291.1,784.1 376.1,785 455.8,682.5 359,719.5 		"/>
+		<g>
+			<path class="st2" d="M805.8,564l68.4-14.9l19.9-44.5l-26.5-6.4l-69.3-47.8l-52.8-86.9l-22.2,6.4l-21.3-62.3l-51,39.4l6.4-35.5
+				L565.2,295l30.3,26.4l-110.6-13.6l42.4,29.9L414,338.8l52.5,27l-99.4,21.8l51.8,13.1l-62.3,20.1l-1.9,0.1l-1.5,1L309,436l18,3.5
+				l-42.2,28.6l0.1-0.3l-42.3,26.9l-20.1,44.8l-36.5,18.7l6.3,17.6l47.3-13l26.5,26.7L268,665l-70.5,120h62.9l92.7-87l121.2-42.6
+				l124.2-61.8L726.1,624l24.8,51.2l62.6-29.7L783,591.3l-76.4-51.6l14.4-7.2L805.8,564z M761.7,429.8l10,25.5l-38.5-17.5
+				L761.7,429.8z"/>
+			<polygon class="st2" points="595.2,612.9 566.8,629.2 652.1,667.7 675.4,707.9 728.4,682.5 708.5,644.4 			"/>
+		</g>
+	</g>
+</g>
+</svg>
