@@ -72,7 +72,8 @@ const Wallet = () => {
       return null;
     }
   };
-
+console.log('Using node:', selectedNode);
+const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
   const fetchBalanceAndNonce = async (address) => {
     setError(null);
     setBalance(null);
