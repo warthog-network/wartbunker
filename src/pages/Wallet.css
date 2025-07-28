@@ -214,8 +214,11 @@
 @media (max-width: 600px) {
   .container {
     padding: 10px;
-    max-width: 100%;
+    max-width: 100%; /* Full width on mobile */
+    margin: 0; /* Remove side margins */
+    width: 100%; /* Ensure full viewport width */
     overflow-x: hidden;
+    box-sizing: border-box;
   }
 
   .container h1 {
@@ -230,6 +233,7 @@
     padding: 15px;
     max-width: 100%;
     overflow-x: hidden;
+    box-sizing: border-box;
   }
 
   .container .form-group label {
@@ -240,6 +244,8 @@
   .container input[type="file"] {
     font-size: 14px;
     padding: 8px;
+    width: 100%;
+    box-sizing: border-box;
   }
 
   .container button {
@@ -282,6 +288,10 @@
     max-height: none;
     margin-top: 24px;
     margin-bottom: 24px;
+    width: 100%; /* Full width for modal content */
+    max-width: 100%; /* Remove max-width constraint */
+    padding: 15px;
+    box-sizing: border-box;
   }
 
   .container .download-wallet-btn {
@@ -294,4 +304,4 @@
     align-items: center !important;
     justify-content: center !important;
   }
-}
+};
