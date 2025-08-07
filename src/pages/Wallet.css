@@ -217,8 +217,8 @@
   .container {
     padding: 10px;
     max-width: 100%; /* Full width on mobile */
-    margin: 0; /* Remove side margins */
-    width: 100%; /* Ensure full viewport width */
+    margin: 0 auto; /* Remove side margins */
+     /* Ensure full viewport width */
     overflow-x: hidden;
     box-sizing: border-box;
   }
