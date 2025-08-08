@@ -15,6 +15,8 @@ const defaultNodeList = [
 ];
 
 const Wallet = () => {
+  const [supportsPWA, setSupportsPWA] = useState(false);
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
   const [walletData, setWalletData] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [consentToClose, setConsentToClose] = useState(false);
@@ -471,10 +473,63 @@ const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
     }
   };
 
+
+const handleInstallClick = async () => {
+  if (!deferredPrompt) {
+    setError('Installation not available. Try using your browser’s "Add to Home Screen" option.');
+    return;
+  }
+
+  try {
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') {
+      console.log('User accepted the install prompt');
+    } else {
+      console.log('User dismissed the install prompt');
+    }
+    setDeferredPrompt(null);
+    setSupportsPWA(false);
+  } catch (err) {
+    setError('Failed to install app: ' + err.message);
+  }
+};
+
+useEffect(() => {
+  // Listen for beforeinstallprompt event to enable PWA installation
+  const handleBeforeInstallPrompt = (e) => {
+    e.preventDefault();
+    setDeferredPrompt(e);
+    setSupportsPWA(true);
+  };
+
+  window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+
+  // Register service worker
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker
+      .register('/sw.js')
+      .then((registration) => {
+        console.log('Service Worker registered with scope:', registration.scope);
+      })
+      .catch((err) => {
+        console.error('Service Worker registration failed:', err);
+      });
+  }
+
+  return () => {
+    window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+  };
+}, []);
+
   return (
     <div className="container">
       <h1>Warthog Wallet</h1>
-
+{supportsPWA && (
+  <button onClick={handleInstallClick} className="install-button">
+    Install App
+  </button>
+)}
       {!showModal && (
         <>
           <section>

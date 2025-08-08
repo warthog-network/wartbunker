@@ -38,3 +38,8 @@
 .read-the-docs {
   color: #888;
 }
+.container .install-button {
+  margin-bottom: 20px;
+  width: auto;
+  display: inline-block;
+}
