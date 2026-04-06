@@ -38,8 +38,8 @@ const AssetPage = ({ selectedNode, wallet }) => {
 
       {/* CREATE ASSET CARD */}
       <div>
-        <h3 className="text-2xl font-bold mb-6 text-green-700 dark:text-green-300 flex items-center gap-3">
-          🪙 Create Asset
+        <h3 className="text-2xl font-bold mb-6 text-blue-700 dark:text-blue-300">
+          Create Asset
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
@@ -61,7 +61,7 @@ const AssetPage = ({ selectedNode, wallet }) => {
                 query('createAsset', 'asset/create', 'POST', data);
               }}
               disabled={loading.createAsset || !wallet?.address}
-              className="px-6 py-3 mx-2 my-1 bg-green-600 hover:bg-green-700 text-white font-medium rounded-2xl transition-colors"
+              className="px-6 py-3 mx-2 my-1 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-2xl transition-colors"
             style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}
             >
               {loading.createAsset ? 'Creating...' : 'Create Asset'}
@@ -75,8 +75,8 @@ const AssetPage = ({ selectedNode, wallet }) => {
 <section>
       {/* TRANSFER ASSET CARD */}
       <div className="rounded-3xl p-8 shadow-xl">
-        <h3 className="text-2xl font-bold mb-6 text-red-700 dark:text-red-300 flex items-center gap-3">
-          🔄 Transfer Asset
+        <h3 className="text-2xl font-bold mb-6 text-blue-700 dark:text-blue-300">
+          Transfer Asset
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
@@ -98,7 +98,7 @@ const AssetPage = ({ selectedNode, wallet }) => {
                 query('transferAsset', 'asset/transfer', 'POST', data);
               }}
               disabled={loading.transferAsset || !wallet?.address}
-              className="px-6 py-3 mx-2 my-1 bg-red-600 hover:bg-red-700 text-white font-medium rounded-2xl transition-colors"
+              className="px-6 py-3 mx-2 my-1 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-2xl transition-colors"
             style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}
             >
               {loading.transferAsset ? 'Transferring...' : 'Transfer Asset'}
@@ -114,8 +114,8 @@ const AssetPage = ({ selectedNode, wallet }) => {
      
       <div className="rounded-3xl p-8 shadow-xl">
 
-        <h3 className="text-2xl font-bold mb-6 text-blue-700 dark:text-blue-300 flex items-center gap-3">
-          🔍 Asset Search & Lookup
+        <h3 className="text-2xl font-bold mb-6 text-blue-700 dark:text-blue-300">
+          Asset Search & Lookup
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
      
