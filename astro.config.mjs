@@ -17,5 +17,8 @@ export default defineConfig({
         stream: 'stream-browserify',
       },
     },
+    css: {
+      postcss: './postcss.config.js',
+    },
   },
 });
