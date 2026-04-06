@@ -17,6 +17,7 @@ export default defineConfig({
       alias: {
         crypto: 'crypto-browserify',
         stream: 'stream-browserify',
+         '@': '/src' 
       },
     },
 
