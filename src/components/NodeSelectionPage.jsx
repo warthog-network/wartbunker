@@ -65,12 +65,13 @@ const NodeSelectionPage = ({ onNodeChange }) => {
           placeholder="http://localhost:3000"
           className="input"
         />
-        <button onClick={saveCustomNode} className="mt-2">Save Custom Node</button>
+        <button onClick={saveCustomNode} className="mt-2"  style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>Save Custom Node</button>
       </div>
 
       <button
         onClick={useTestnet}
         className="px-4 py-2 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700"
+       style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}
       >
         Use DeFi Testnet (localhost:3000)
       </button>

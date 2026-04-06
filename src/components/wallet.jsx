@@ -786,7 +786,7 @@ const Wallet = () => {
   return (
     <div className="container">
       <h1>Warthog Network Defi</h1>
-      <nav className="tabs">
+      <nav className="tabs ">
         <button className={currentTab === 'wallet' ? 'active' : ''} onClick={() => setCurrentTab('wallet')}>Wallet</button>
         <button className={currentTab === 'node' ? 'active' : ''} onClick={() => setCurrentTab('node')}>Node</button>
         <button className={currentTab === 'send' ? 'active' : ''} onClick={() => setCurrentTab('send')}>Send</button>

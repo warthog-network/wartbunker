@@ -41,7 +41,8 @@ const DexPage = ({ selectedNode, wallet }) => {
             <button
               onClick={() => query('dexMarket', `dex/market/${encodeURIComponent(document.getElementById('market').value)}`)}
               disabled={loading.dexMarket}
-              className="w-full px-6 py-3 bg-green-600 hover:bg-green-700 text-white font-medium rounded-2xl transition-colors"
+              className="px-6 py-3 mx-2 my-1 bg-green-600 hover:bg-green-700 text-white font-medium rounded-2xl transition-colors"
+              style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}
             >
               {loading.dexMarket ? 'Querying...' : 'Query Market'}
             </button>
@@ -67,7 +68,8 @@ const DexPage = ({ selectedNode, wallet }) => {
             <button
               onClick={() => query('openOrders', `account/${account}/open_orders`)}
               disabled={loading.openOrders || !account}
-              className="w-full px-6 py-3 bg-orange-600 hover:bg-orange-700 text-white font-medium rounded-2xl transition-colors disabled:bg-gray-400"
+              className="px-6 py-3 mx-2 my-1 bg-orange-600 hover:bg-orange-700 text-white font-medium rounded-2xl transition-colors disabled:bg-gray-400"
+              style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}
             >
               {loading.openOrders ? 'Loading...' : 'View All Open Orders'}
             </button>
@@ -83,7 +85,8 @@ const DexPage = ({ selectedNode, wallet }) => {
             <button
               onClick={() => query('openOrdersAsset', `account/${account}/open_orders/${encodeURIComponent(document.getElementById('assetForOrders').value)}`)}
               disabled={!account}
-              className="w-full px-6 py-3 bg-orange-600 hover:bg-orange-700 text-white font-medium rounded-2xl transition-colors disabled:bg-gray-400"
+              className="px-6 py-3 mx-2 my-1 bg-orange-600 hover:bg-orange-700 text-white font-medium rounded-2xl transition-colors disabled:bg-gray-400"
+              style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}
             >
               Query Asset Orders
             </button>
@@ -94,7 +97,8 @@ const DexPage = ({ selectedNode, wallet }) => {
             <button
               onClick={() => query('mempool', `account/${account}/mempool`)}
               disabled={loading.mempool || !account}
-              className="w-full px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white font-medium rounded-2xl transition-colors disabled:bg-gray-400"
+              className="px-6 py-3 mx-2 my-1 bg-purple-600 hover:bg-purple-700 text-white font-medium rounded-2xl transition-colors disabled:bg-gray-400"
+              style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}
             >
               {loading.mempool ? 'Loading...' : 'View Mempool'}
             </button>

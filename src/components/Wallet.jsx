@@ -114,7 +114,7 @@ const WalletContent = () => {
         </button>
       )}
 
-      <div className="flex border-b border-gray-200 dark:border-gray-700 mb-6 overflow-x-auto">
+      <div className="flex dark:border-gray-700 mb-6 overflow-x-auto">
         {tabs.map(tab => (
           <button
             key={tab.key}
