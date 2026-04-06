@@ -74,7 +74,7 @@ const AssetPage = ({ selectedNode, wallet }) => {
 </section>
 <section>
       {/* TRANSFER ASSET CARD */}
-      <div className="rounded-3xl p-8 bg-red-50 dark:bg-red-950 shadow-xl">
+      <div className="rounded-3xl p-8 shadow-xl">
         <h3 className="text-2xl font-bold mb-6 text-red-700 dark:text-red-300 flex items-center gap-3">
           🔄 Transfer Asset
         </h3>
@@ -112,7 +112,7 @@ const AssetPage = ({ selectedNode, wallet }) => {
       <section>
       {/* SEARCH & LOOKUP CARD */}
      
-      <div className="rounded-3xl p-8 bg-blue-50 dark:bg-blue-950 shadow-xl">
+      <div className="rounded-3xl p-8 shadow-xl">
 
         <h3 className="text-2xl font-bold mb-6 text-blue-700 dark:text-blue-300 flex items-center gap-3">
           🔍 Asset Search & Lookup
