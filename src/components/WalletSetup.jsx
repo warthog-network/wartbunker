@@ -18,10 +18,34 @@ const WalletSetup = () => {
   const [walletData, setWalletData] = useState(null);
   const [consentToClose, setConsentToClose] = useState(false);
   const [error, setError] = useState(null);
+  const [walletName, setWalletName] = useState('');
+  const [selectedSavedWallet, setSelectedSavedWallet] = useState('');
 
   const handleWalletAction = async () => {
     setError(null);
     try {
+      if (walletAction === 'login') {
+        if (!selectedSavedWallet || !password) {
+          setError('Please select a saved wallet and enter password');
+          return;
+        }
+        const encrypted = localStorage.getItem(`warthogWallet_${selectedSavedWallet}`);
+        if (!encrypted) {
+          setError('Selected wallet not found');
+          return;
+        }
+        try {
+          const decrypted = decryptWallet(encrypted, password);
+          setWallet(decrypted);
+          sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(decrypted));
+          setIsLoggedIn(true);
+          setCurrentTab('overview');
+        } catch (err) {
+          setError('Failed to decrypt wallet: ' + err.message);
+        }
+        return;
+      }
+
       if (walletAction === 'load') {
         if (!uploadedFile || !password) {
           setError('Please upload the wallet file and enter password');
@@ -71,13 +95,13 @@ const WalletSetup = () => {
   };
 
   const handleSaveWallet = () => {
-    if (!saveWalletConsent || !password || password !== confirmPassword) {
-      setError('Please provide matching passwords and consent to save');
+    if (!saveWalletConsent || !walletName || !password || password !== confirmPassword) {
+      setError('Please provide a wallet name, matching passwords and consent to save');
       return;
     }
     try {
       const encrypted = encryptWallet(walletData, password);
-      localStorage.setItem('warthogWallet', encrypted);
+      localStorage.setItem(`warthogWallet_${walletName}`, encrypted);
       setWallet(walletData);
       sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(walletData));
       setIsLoggedIn(true);
@@ -89,9 +113,27 @@ const WalletSetup = () => {
     }
   };
 
+  const getSavedWallets = () => {
+    const keys = Object.keys(localStorage);
+    return keys.filter(key => key.startsWith('warthogWallet_')).map(key => key.replace('warthogWallet_', ''));
+  };
+
   return (
     <div className="container">
       <h1>Warthog Network Defi</h1>
+
+      <section>
+        <h2>Login to Existing Wallet</h2>
+        <p className="mb-4 text-gray-600 dark:text-gray-400">
+          If you have a saved encrypted wallet file, use the button below to login.
+        </p>
+        <button
+          onClick={() => setWalletAction('load')}
+          className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-2xl transition-colors w-full mb-6"
+        >
+          Login with Encrypted Wallet File
+        </button>
+      </section>
 
       <section>
         <h2>Wallet Setup</h2>
@@ -102,9 +144,34 @@ const WalletSetup = () => {
             <option value="create">Create New Wallet</option>
             <option value="derive">Derive from Mnemonic</option>
             <option value="import">Import Private Key</option>
+            <option value="login">Login to Saved Wallet</option>
             <option value="load">Login with Encrypted File</option>
           </select>
         </div>
+
+        {walletAction === 'login' && (
+          <>
+            <div className="form-group">
+              <label>Select Saved Wallet:</label>
+              <select value={selectedSavedWallet} onChange={(e) => setSelectedSavedWallet(e.target.value)} className="input">
+                <option value="">-- Select Wallet --</option>
+                {getSavedWallets().map(name => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Password:</label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter password"
+                className="input"
+              />
+            </div>
+          </>
+        )}
 
         {walletAction === 'load' && (
           <>
@@ -186,17 +253,19 @@ const WalletSetup = () => {
           </div>
         )}
 
-        <button 
-          onClick={handleWalletAction} 
-          disabled={walletAction === 'load' && (!password || !uploadedFile)}
+        <button
+          onClick={handleWalletAction}
+          disabled={(walletAction === 'load' && (!password || !uploadedFile)) || (walletAction === 'login' && (!password || !selectedSavedWallet))}
           className="px-4 py-2 text-sm font-medium text-white bg-zinc-700 rounded-lg hover:bg-zinc-800 focus:ring-4 focus:outline-none focus:ring-zinc-300 transition-colors duration-200 dark:bg-zinc-600 dark:hover:bg-zinc-700 dark:focus:ring-zinc-800 w-full"
         >
-          {walletAction === 'create' 
-            ? 'Create Wallet' 
-            : walletAction === 'derive' 
-            ? 'Derive Wallet' 
-            : walletAction === 'import' 
-            ? 'Import Wallet' 
+          {walletAction === 'create'
+            ? 'Create Wallet'
+            : walletAction === 'derive'
+            ? 'Derive Wallet'
+            : walletAction === 'import'
+            ? 'Import Wallet'
+            : walletAction === 'login'
+            ? 'Login to Wallet'
             : 'Decrypt Wallet & Login'}
         </button>
 
@@ -238,16 +307,30 @@ const WalletSetup = () => {
                 I consent to save the wallet encrypted with a password
               </label>
             </div>
-            <div className="form-group">
-              <label>Password:</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter password"
-                className="input"
-              />
-            </div>
+            {saveWalletConsent && (
+              <>
+                <div className="form-group">
+                  <label>Wallet Name:</label>
+                  <input
+                    type="text"
+                    value={walletName}
+                    onChange={(e) => setWalletName(e.target.value)}
+                    placeholder="Enter a name for your wallet"
+                    className="input"
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Password:</label>
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Enter password"
+                    className="input"
+                  />
+                </div>
+              </>
+            )}
             <div className="form-group">
               <label>Confirm Password:</label>
               <input

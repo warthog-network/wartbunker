@@ -19,6 +19,7 @@ const WalletContent = () => {
     setWallet,
     setIsLoggedIn,
     selectedNode,
+    setSelectedNode,
     error,
   } = useWallet();
 

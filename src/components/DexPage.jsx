@@ -31,8 +31,8 @@ const DexPage = ({ selectedNode, wallet }) => {
           Query decentralized exchange markets and trading data.
         </p>
 
-        <h3 className="text-xl font-semibold mb-4 text-green-700 dark:text-green-300 flex items-center gap-3">
-          📊 Market Data
+        <h3 className="text-xl font-semibold mb-4 text-green-700 dark:text-green-300">
+          Market Data
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
@@ -55,8 +55,8 @@ const DexPage = ({ selectedNode, wallet }) => {
 
       {/* === SECTION 2: Trading Activity === */}
       <section className="border-2 border-orange-500 rounded-3xl p-8 bg-orange-50 dark:bg-orange-950 shadow-xl">
-        <h3 className="text-xl font-semibold mb-6 text-orange-700 dark:text-orange-300 flex items-center gap-3">
-          🔄 Trading Activity
+        <h3 className="text-xl font-semibold mb-6 text-orange-700 dark:text-orange-300">
+          Trading Activity
         </h3>
         <p className="text-sm text-orange-600 dark:text-orange-400 mb-6">
           Uses your connected wallet address

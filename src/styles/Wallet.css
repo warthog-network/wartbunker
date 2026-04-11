@@ -503,31 +503,7 @@
   }
 }
 
-/* Responsive classes */
-.mobile-hamburger {
-  display: block;
-}
-@media (min-width: 768px) {
-  .mobile-hamburger {
-    display: none;
-  }
-}
-
-.desktop-tabs {
-  display: none;
-}
-@media (min-width: 768px) {
-  .desktop-tabs {
-    display: block;
-  }
-}
-
-
-@media (min-width: 768px) {
-  .mobile-menu {
-    display: none;
-  }
-}
+/* === RESPONSIVE MENU CONTROLS (fixed) === */
 
 /* Perfectly center hamburger button - overrides global padding */
 .mobile-hamburger {
@@ -539,4 +515,34 @@
 
 .mobile-hamburger svg {
   margin: 0 !important;
+}
+
+/* Hamburger visible only on mobile (< 768px) */
+.mobile-hamburger {
+  display: flex !important;
+}
+
+/* Hide hamburger on desktop */
+@media (min-width: 768px) {
+  .mobile-hamburger {
+    display: none !important;
+  }
+}
+
+/* Desktop tabs hidden on mobile, visible on desktop */
+.desktop-tabs {
+  display: none !important;
+}
+
+@media (min-width: 768px) {
+  .desktop-tabs {
+    display: flex !important;
+  }
+}
+
+/* Completely hide mobile overlay menu on desktop */
+@media (min-width: 768px) {
+  .mobile-menu {
+    display: none !important;
+  }
 }
