@@ -377,7 +377,7 @@
   }
 
   .container h1 {
-    font-size: 2.25rem;
+    font-size: 2rem;
   }
 
   .container h2 {
@@ -403,7 +403,7 @@
     box-sizing: border-box;
   }
 
-  .container button {
+  .container button:not(.mobile-hamburger) {
     font-size: 1rem;
     width: 100%;
     margin-right: 0;
@@ -461,6 +461,16 @@
     min-width: auto !important;
   }
 
+  /* Additional narrow screen adjustments */
+  @media (max-width: 480px) {
+    .container h1 {
+      font-size: 1.75rem;
+    }
+    .container {
+      padding: 0.75rem;
+    }
+  }
+
   .tabs {
     flex-wrap: wrap;
   }
@@ -475,3 +485,58 @@
     margin-top: 0.25rem;
   }
 };
+
+/* Scrollbar hiding for tab container */
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Enhanced touch targets for mobile */
+@media (max-width: 767px) {
+  button {
+    min-height: 48px;
+    touch-action: manipulation;
+  }
+}
+
+/* Responsive classes */
+.mobile-hamburger {
+  display: block;
+}
+@media (min-width: 768px) {
+  .mobile-hamburger {
+    display: none;
+  }
+}
+
+.desktop-tabs {
+  display: none;
+}
+@media (min-width: 768px) {
+  .desktop-tabs {
+    display: block;
+  }
+}
+
+
+@media (min-width: 768px) {
+  .mobile-menu {
+    display: none;
+  }
+}
+
+/* Perfectly center hamburger button - overrides global padding */
+.mobile-hamburger {
+  padding: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.mobile-hamburger svg {
+  margin: 0 !important;
+}

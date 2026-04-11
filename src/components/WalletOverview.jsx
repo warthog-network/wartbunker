@@ -32,13 +32,15 @@ const WalletOverview = ({ onLogout }) => {
       {/* Address section - now on ONE line and clickable to copy */}
       <div className="result" style={{ textAlign: 'left' }}>
         <p>
-          <strong>Address:</strong>{' '}
+          <strong>Address:</strong>
           <span
             className="wallet-address"
             style={{
+              display: 'block',
               textAlign: 'left',
               cursor: 'pointer',
               wordBreak: 'break-all',
+              marginTop: '0.5rem',
             }}
             onClick={() => copyToClipboard(wallet.address)}
           >
