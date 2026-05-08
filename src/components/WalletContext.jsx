@@ -51,21 +51,45 @@ export const WalletProvider = ({ children }) => {
     }
   }, [wallet, selectedNode, refreshTrigger]);
 
+  // Helper to safely extract balance string
+  const getBalanceStr = (wartObj) => {
+    if (!wartObj) return null;
+    if (wartObj.str) return wartObj.str;
+    if (wartObj.E8 !== undefined) {
+      return (Number(wartObj.E8) / 100000000).toFixed(8);
+    }
+    return null;
+  };
+
+  // Unwrap proxy response if needed
+  const unwrapResponse = (responseData) => {
+    if (responseData?.data && (responseData.status !== undefined || responseData.data?.wart || responseData.data?.chainHead)) {
+      return responseData.data;
+    }
+    return responseData;
+  };
+
   const fetchBalanceAndNonce = async (address) => {
     setError(null);
     setBalance(null);
     setNextNonce(null);
+    setPinHeight(null);
+    setPinHash(null);
 
     try {
       const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
 
-      // Chain head (works on both networks)
+      // === CHAIN HEAD ===
       const chainHeadResponse = await axios.get(`${API_URL}?nodePath=chain/head&${nodeBaseParam}`);
-      const chainHeadData = chainHeadResponse.data.data || chainHeadResponse.data;
-      setPinHeight(chainHeadData.pinHeight);
-      setPinHash(chainHeadData.pinHash);
+      let headRaw = unwrapResponse(chainHeadResponse.data);
+      const chainHead = headRaw?.chainHead || headRaw;
+      
+      setPinHeight(chainHead?.pinHeight ?? chainHead?.height ?? null);
+      setPinHash(chainHead?.pinHash ?? null);
 
-      // === BALANCE ENDPOINT (different per network) ===
+      console.log('✅ [CHAIN HEAD]', chainHead);
+
+      // === BALANCE ENDPOINT ===
       let balanceResponse;
       if (isMainnetNode(selectedNode)) {
         balanceResponse = await axios.get(`${API_URL}?nodePath=account/${address}/balance&${nodeBaseParam}`);
@@ -73,26 +97,36 @@ export const WalletProvider = ({ children }) => {
         balanceResponse = await axios.get(`${API_URL}?nodePath=account/${address}/wart_balance&${nodeBaseParam}`);
       }
 
-      const raw = balanceResponse.data;
-      const data = raw.data || raw;   // handle both wrapped and direct responses
+      let balRaw = unwrapResponse(balanceResponse.data);
+      const data = balRaw.data || balRaw;
 
-      console.log('✅ [BALANCE RAW]', raw);   // ← you can check this in browser console (F12)
+      console.log('✅ [BALANCE RAW]', balanceResponse.data);
+      console.log('✅ [BALANCE DATA]', data);
 
-      // FIXED: Parse the exact testnet structure you just showed
       let balanceInWart = '0.00000000';
-      if (data?.balance?.total?.str) {
-        balanceInWart = data.balance.total.str;                    // ← this is the one you have
-      } else if (data?.balance?.total?.E8 !== undefined) {
-        balanceInWart = (Number(data.balance.total.E8) / 100000000).toFixed(8);
-      } else if (data?.balance !== undefined) {
-        balanceInWart = Number(data.balance).toFixed(8);
-      } else if (data?.wart_balance !== undefined) {
-        balanceInWart = Number(data.wart_balance).toFixed(8);
+
+      if (isMainnetNode(selectedNode)) {
+        if (data?.balance?.total?.str) {
+          balanceInWart = data.balance.total.str;
+        } else if (data?.balance?.total?.E8 !== undefined) {
+          balanceInWart = (Number(data.balance.total.E8) / 100000000).toFixed(8);
+        } else if (data?.balance !== undefined) {
+          balanceInWart = Number(data.balance).toFixed(8);
+        }
+      } else {
+        // Testnet / DeFi
+        if (data?.wart?.total?.str) {
+          balanceInWart = data.wart.total.str;
+        } else if (data?.wart?.total?.E8 !== undefined) {
+          balanceInWart = (Number(data.wart.total.E8) / 100000000).toFixed(8);
+        } else if (data?.wart?.total) {
+          balanceInWart = getBalanceStr(data.wart.total) || balanceInWart;
+        }
       }
 
       setBalance(balanceInWart);
 
-      // USD price (independent of node)
+      // USD price
       try {
         const priceResponse = await axios.get('https://api.coingecko.com/api/v3/simple/price?ids=warthog&vs_currencies=usd');
         const price = priceResponse.data.warthog?.usd || 0;
@@ -101,9 +135,9 @@ export const WalletProvider = ({ children }) => {
         setUsdBalance('N/A');
       }
 
-      // Nonce (mainnet only for now)
-      if (isMainnetNode(selectedNode) && data?.nonceId !== undefined) {
-        setNextNonce(Number(data.nonceId) + 1);
+      // Nonce
+      if (isMainnetNode(selectedNode) && (data?.nonceId !== undefined || data?.nonce !== undefined)) {
+        setNextNonce(Number(data.nonceId || data.nonce) + 1);
       } else {
         setNextNonce(0);
       }
