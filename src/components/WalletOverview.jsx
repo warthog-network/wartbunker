@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useWallet } from './WalletContext';
 
 const WalletOverview = ({ onLogout }) => {
@@ -11,14 +11,33 @@ const WalletOverview = ({ onLogout }) => {
     selectedNode,
     setCurrentTab,
     refreshBalance,
+    assetBalances,
+    fetchAssetBalance,
   } = useWallet();
+
+  const [manualAssetHash, setManualAssetHash] = useState('');
+  const [isFetching, setIsFetching] = useState(false);
 
   const copyToClipboard = (text) => {
     navigator.clipboard.writeText(text).then(() => {
       alert('Copied to clipboard!');
-    }).catch(err => {
-      console.error('Failed to copy: ', err);
-    });
+    }).catch(err => console.error('Failed to copy:', err));
+  };
+
+  const handleFetchManualAsset = async () => {
+    if (!manualAssetHash || manualAssetHash.length < 60) {
+      alert('Please enter a valid asset hash (64 characters)');
+      return;
+    }
+
+    setIsFetching(true);
+    try {
+      await fetchAssetBalance(manualAssetHash);
+      setManualAssetHash(''); // clear input after success
+    } catch (err) {
+      alert('Failed to fetch asset balance');
+    }
+    setIsFetching(false);
   };
 
   if (!wallet) {
@@ -29,7 +48,7 @@ const WalletOverview = ({ onLogout }) => {
     <section style={{ textAlign: 'left' }}>
       <h2 style={{ textAlign: 'left' }}>Wallet Overview</h2>
 
-      {/* Address section - now on ONE line and clickable to copy */}
+      {/* Address */}
       <div className="result" style={{ textAlign: 'left' }}>
         <p>
           <strong>Address:</strong>
@@ -49,34 +68,78 @@ const WalletOverview = ({ onLogout }) => {
         </p>
       </div>
 
-      {/* Balance section - kept first and clean */}
+      {/* WART Balance */}
       <div className="result" style={{ textAlign: 'left' }}>
         <p><strong>Balance:</strong> {balance !== null ? balance : 'Loading...'} WART</p>
         <p><strong>USD Value:</strong> ${usdBalance || 'N/A'}</p>
       </div>
 
-      {/* Action buttons - Refresh + Send Transaction */}
-      <div className="flex gap-3 mt-4" style={{ textAlign: 'left', display: 'flex', gap: '1rem', marginTop: '1rem' }}>
+      {/* Your Assets Section */}
+      {assetBalances.length > 0 && (
+        <div className="result mt-4" style={{ textAlign: 'left' }}>
+          <p className="font-semibold mb-3 text-blue-400">Your Assets</p>
+          {assetBalances.map((asset, index) => (
+            <div 
+              key={index} 
+              className="flex justify-between items-center py-2 border-t border-zinc-800 first:border-t-0"
+            >
+              <div>
+                <span className="font-medium">{asset.name}</span>
+                <span className="text-xs text-gray-500 ml-2">({asset.hash.slice(0, 10)}...)</span>
+              </div>
+              <div className="font-mono text-right">
+                {asset.balance} <span className="text-xs text-gray-400">{asset.name}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* === MANUAL ASSET FETCH SECTION === */}
+      <div className="result mt-4" style={{ textAlign: 'left' }}>
+        <p className="font-semibold mb-2 text-orange-400">Fetch Asset Balance</p>
+        
+        <div className="flex gap-2">
+          <input
+            type="text"
+            placeholder="Paste asset hash here (64 hex characters)"
+            className="input flex-1 font-mono text-sm"
+            value={manualAssetHash}
+            onChange={(e) => setManualAssetHash(e.target.value.trim())}
+            onKeyDown={(e) => e.key === 'Enter' && handleFetchManualAsset()}
+          />
+          <button 
+            onClick={handleFetchManualAsset} 
+            disabled={isFetching || !manualAssetHash}
+            className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-xl disabled:opacity-50"
+          >
+            {isFetching ? 'Fetching...' : 'Fetch'}
+          </button>
+        </div>
+        
+        <p className="text-xs text-gray-500 mt-1">
+          Paste the asset hash from the creation response to manually add it here.
+        </p>
+      </div>
+
+      {/* Action Buttons */}
+      <div className="flex gap-3 mt-4">
         <button onClick={refreshBalance}>Refresh Balance</button>
-        <button 
-          onClick={() => setCurrentTab('send')}
-        >
+        <button onClick={() => setCurrentTab('send')}>
           Send Transaction
         </button>
       </div>
 
-      {/* Network details - kept in its own result block */}
-      <div className="result" style={{ textAlign: 'left' }}>
+      {/* Network Info */}
+      <div className="result mt-4" style={{ textAlign: 'left' }}>
         <p><strong>Current Node:</strong> {selectedNode}</p>
         <p><strong>Pin Height:</strong> {pinHeight}</p>
         <p><strong>Pin Hash:</strong> {pinHash}</p>
       </div>
 
-      {/* Logout button - at the bottom */}
       <button 
         onClick={onLogout}
-        className="px-4 py-2 text-sm font-medium text-red-600 border border-red-300 rounded-lg hover:bg-red-50 dark:hover:bg-red-950 dark:text-red-400 dark:border-red-700 transition-colors"
-        style={{ textAlign: 'left', display: 'flex', gap: '1rem', marginTop: '1rem' }}
+        className="px-4 py-2 text-sm font-medium text-red-600 border border-red-300 rounded-lg hover:bg-red-50 dark:hover:bg-red-950 dark:text-red-400 dark:border-red-700 transition-colors mt-4"
       >
         Logout
       </button>
