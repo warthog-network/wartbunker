@@ -1,5 +1,8 @@
 import React, { useState } from 'react';
 import { useWallet } from './WalletContext';
+import axios from 'axios';
+
+const API_URL = '/api/proxy';
 
 const WalletOverview = ({ onLogout }) => {
   const {
@@ -17,6 +20,7 @@ const WalletOverview = ({ onLogout }) => {
 
   const [manualAssetHash, setManualAssetHash] = useState('');
   const [isFetching, setIsFetching] = useState(false);
+  const [isMining, setIsMining] = useState(false);
 
   const copyToClipboard = (text) => {
     navigator.clipboard.writeText(text).then(() => {
@@ -33,12 +37,44 @@ const WalletOverview = ({ onLogout }) => {
     setIsFetching(true);
     try {
       await fetchAssetBalance(manualAssetHash);
-      setManualAssetHash(''); // clear input after success
+      setManualAssetHash('');
     } catch (err) {
       alert('Failed to fetch asset balance');
     }
     setIsFetching(false);
   };
+
+  // ==================== IMPROVED FAKE MINE ====================
+  const handleFakeMine = async () => {
+    if (!wallet?.address) {
+      alert('No wallet connected');
+      return;
+    }
+
+    const confirmMine = window.confirm(
+      `Fake mine to this address on testnet?\n\n${wallet.address}`
+    );
+    if (!confirmMine) return;
+
+    setIsMining(true);
+
+    try {
+      await axios.get(
+        `https://warthog-defitestnet.duckdns.org/debug/fakemine/${wallet.address}`
+      );
+    } catch (err) {
+      // Even if the request "fails", we still refresh the balance
+      console.log("Fake mine request finished");
+    }
+
+    // Always refresh balance after attempting fake mine
+    setTimeout(() => {
+      refreshBalance();
+      setIsMining(false);
+      alert("✅ Balance refreshed. Check if fake mining worked.");
+    }, 2000);
+  };
+  // ========================================================
 
   if (!wallet) {
     return <div>Please log in to view your wallet.</div>;
@@ -121,6 +157,22 @@ const WalletOverview = ({ onLogout }) => {
           Paste the asset hash from the creation response to manually add it here.
         </p>
       </div>
+
+      {/* ==================== FAKE MINE BUTTON ==================== */}
+      <div className="result mt-4" style={{ textAlign: 'left' }}>
+        <p className="font-semibold mb-2 text-emerald-400">Testnet Tools</p>
+        <button
+          onClick={handleFakeMine}
+          disabled={isMining}
+          className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-2xl disabled:opacity-60 transition-all"
+        >
+          {isMining ? 'Mining...' : '⛏️ Fake Mine (Add Test Balance)'}
+        </button>
+        <p className="text-xs text-gray-500 mt-1">
+          Only works on DeFi testnet. Use for testing.
+        </p>
+      </div>
+      {/* ======================================================== */}
 
       {/* Action Buttons */}
       <div className="flex gap-3 mt-4">
