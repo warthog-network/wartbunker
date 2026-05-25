@@ -5,8 +5,15 @@ import { useWallet } from './WalletContext';
 
 const API_URL = '/api/proxy';
 
-const AssetPage = ({ selectedNode, wallet: propWallet }) => {
-  const { nextNonce, pinHeight, pinHash } = useWallet();
+const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
+  const {
+    nextNonce: contextNextNonce,
+    pinHeight,
+    pinHash,
+    selectedNode: contextSelectedNode,
+  } = useWallet();
+
+  const selectedNode = propSelectedNode || contextSelectedNode || 'https://warthognode.duckdns.org';
 
   const [results, setResults] = useState({});
   const [loading, setLoading] = useState({});
@@ -14,6 +21,23 @@ const AssetPage = ({ selectedNode, wallet: propWallet }) => {
   const wallet = propWallet || (sessionStorage.getItem('warthogWalletDecrypted')
     ? JSON.parse(sessionStorage.getItem('warthogWalletDecrypted'))
     : null);
+
+  // ==================== SMART NONCE HANDLING ====================
+  const getSmartNonce = () => {
+    if (!wallet?.address) return contextNextNonce ?? 0;
+
+    const stored = localStorage.getItem(`warthogNextNonce_${wallet.address}`);
+    const persistentNonce = stored ? Number(stored) : 0;
+
+    return Math.max(persistentNonce, contextNextNonce ?? 0, 0);
+  };
+
+  const updateNonceAfterSuccess = (usedNonce) => {
+    if (!wallet?.address) return;
+
+    const newNonce = Math.max(getSmartNonce(), usedNonce + 1);
+    localStorage.setItem(`warthogNextNonce_${wallet.address}`, newNonce);
+  };
 
   const query = async (key, path, method = 'GET', data = null) => {
     setLoading(prev => ({ ...prev, [key]: true }));
@@ -39,7 +63,7 @@ const AssetPage = ({ selectedNode, wallet: propWallet }) => {
     }
   };
 
-  // ====================== BINARY HELPERS ======================
+  // ==================== BINARY HELPERS ====================
   const hexToBytes = (hex) => {
     const clean = hex.startsWith('0x') ? hex.slice(2) : hex;
     const bytes = new Uint8Array(clean.length / 2);
@@ -68,221 +92,88 @@ const AssetPage = ({ selectedNode, wallet: propWallet }) => {
     return buf;
   };
 
-// ==================== CREATE ASSET (Fixed - try this version) ====================
-const handleCreateAsset = async () => {
-  const nameInput = document.getElementById('assetName').value.trim().toUpperCase();
-  const supplyStr = document.getElementById('assetSupply').value.trim();
-  const decimalsInput = parseInt(document.getElementById('assetDecimals').value) || 8;
+  const addressToBytes = (addr) => {
+    const clean = addr.startsWith('0x') ? addr.slice(2) : addr;
+    return hexToBytes(clean.slice(0, 40));
+  };
 
-  if (!nameInput || nameInput.length < 1 || nameInput.length > 5) {
-    alert('Asset name must be 1-5 uppercase characters (e.g. HOG)');
-    return;
-  }
-  if (!supplyStr || parseFloat(supplyStr) <= 0) {
-    alert('Please enter a valid total supply greater than 0');
-    return;
-  }
-  if (!wallet?.privateKey) {
-    alert('Wallet not loaded. Please log in again.');
-    return;
-  }
+  // ==================== CREATE ASSET ====================
+  const handleCreateAsset = async () => {
+    const name = document.getElementById('assetName').value.trim().toUpperCase();
+    const supplyStr = document.getElementById('assetSupply').value;
+    const decimals = parseInt(document.getElementById('assetDecimals').value) || 8;
 
-  setLoading(prev => ({ ...prev, createAsset: true }));
-
-  try {
-    const name = nameInput;
-    const decimals = Math.min(Math.max(decimalsInput, 0), 18);
-    const supplyFloat = parseFloat(supplyStr);
-    const supplyU64 = BigInt(Math.floor(supplyFloat * Math.pow(10, decimals)));
-
-    const nonceId = nextNonce !== null && nextNonce !== undefined ? nextNonce : 0;
-    const currentPinHeight = pinHeight || 0;
-    const currentPinHash = pinHash || '0000000000000000000000000000000000000000000000000000000000000000';
-
-    const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
-
-    // === FETCH MINIMUM FEE FROM NODE (critical for "Inexact fee" error) ===
-    const minFeeRes = await axios.get(
-      `${API_URL}?nodePath=transaction/minfee&${nodeBaseParam}`
-    );
-    const minFeeE8 = minFeeRes.data?.data?.minFee?.E8 || minFeeRes.data?.minFee?.E8;
-
-    if (!minFeeE8) {
-      throw new Error('Could not fetch minimum fee');
-    }
-    console.log('Using exact minFeeE8 from node:', minFeeE8);
-
-    // === BINARY ===
-    const pinHashBytes = hexToBytes(currentPinHash.replace('0x', ''));
-    const nameBytes = new Uint8Array(5);
-    nameBytes.set(new TextEncoder().encode(name));
-
-    const binaryParts = [
-      pinHashBytes,
-      uint32BE(currentPinHeight),
-      uint32BE(nonceId),
-      new Uint8Array(3),
-      uint64BE(BigInt(minFeeE8)),
-      uint64BE(supplyU64),
-      new Uint8Array([decimals]),
-      nameBytes
-    ];
-
-    const totalLength = binaryParts.reduce((sum, part) => sum + part.length, 0);
-    const binary = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const part of binaryParts) {
-      binary.set(part, offset);
-      offset += part.length;
-    }
-
-    const hashHex = ethers.sha256(binary);
-    const hash = hashHex.slice(2);
-
-    console.log('=== ASSET CREATION ===');
-    console.log('Name:', name, 'Decimals:', decimals, 'SupplyU64:', supplyU64.toString());
-    console.log('Hash:', hash);
-
-    const signer = new ethers.Wallet(wallet.privateKey);
-    const signature = await signer.signingKey.sign(ethers.getBytes('0x' + hash));
-
-    const r = signature.r.slice(2).padStart(64, '0');
-    const s = signature.s.slice(2).padStart(64, '0');
-    const v = (signature.v - 27).toString(16).padStart(2, '0');
-    const signature65 = r + s + v;
-
-    // === PAYLOAD - Use "decimals" field name + exact fee ===
-    const payload = {
-      type: "assetCreation",
-      name: name,
-      decimals: decimals,                    // ← field name that got us further
-      supplyU64: Number(supplyU64),
-      feeE8: Number(minFeeE8),               // ← exact fee from node
-      nonceId: nonceId,
-      pinHeight: currentPinHeight,
-      signature65: signature65,
-    };
-
-    const response = await axios.post(
-      `${API_URL}?nodePath=transaction/add&${nodeBaseParam}`,
-      payload,
-      { headers: { 'Content-Type': 'application/json' } }
-    );
-
-    if (response.data.code === 0 || response.data.success || response.data.txHash) {
-      const txHash = response.data.txHash || response.data.data?.txHash || 'Pending';
-      alert(`✅ Asset "${name}" creation sent successfully!\nTx Hash: ${txHash}`);
-      document.getElementById('assetName').value = '';
-      document.getElementById('assetSupply').value = '';
-    } else {
-      throw new Error(response.data.error || response.data.message || 'Rejected by node');
-    }
-  } catch (err) {
-    console.error(err);
-    alert('Failed to create asset: ' + (err.response?.data?.error || err.message));
-  } finally {
-    setLoading(prev => ({ ...prev, createAsset: false }));
-  }
-};
-  // ==================== CANCEL TRANSACTION (New - matches docs) ====================
-  const handleCancelTransaction = async () => {
-    const cancelHeightStr = document.getElementById('cancelHeight').value.trim();
-    const cancelNonceIdStr = document.getElementById('cancelNonceId').value.trim();
-
-    if (!cancelHeightStr || !cancelNonceIdStr) {
-      alert('Cancel Height and Cancel Nonce ID are required');
+    if (!name || name.length < 1 || name.length > 5) {
+      alert('Asset name must be 1-5 uppercase characters (e.g. LIQ)');
       return;
     }
-
-    const cancelHeight = parseInt(cancelHeightStr);
-    const cancelNonceId = parseInt(cancelNonceIdStr);
-
+    if (!supplyStr || parseFloat(supplyStr) <= 0) {
+      alert('Please enter a valid total supply greater than 0');
+      return;
+    }
     if (!wallet?.privateKey) {
       alert('Wallet not loaded. Please log in again.');
       return;
     }
 
-    setLoading(prev => ({ ...prev, cancel: true }));
+    setLoading(prev => ({ ...prev, createAsset: true }));
 
     try {
-      const nonceId = nextNonce !== null && nextNonce !== undefined ? nextNonce : 0;
-      const currentPinHeight = pinHeight || 0;
-      const currentPinHash = pinHash || '0000000000000000000000000000000000000000000000000000000000000000';
-      const feeStr = "0.0001";
+      const nonceId = getSmartNonce();
+      const supplyU64 = Math.floor(parseFloat(supplyStr) * Math.pow(10, decimals));
+      const feeE8 = 1000000;
 
-      const pinHashBytes = hexToBytes(currentPinHash.replace('0x', ''));
-
-      // === BINARY LAYOUT FOR cancelation (matches documentation) ===
-      const binaryParts = [
-        pinHashBytes,                    // 32 bytes
-        uint32BE(currentPinHeight),      // 4 bytes
-        uint32BE(nonceId),               // 4 bytes
-        new Uint8Array(3),               // 3 bytes reserved
-        uint64BE(10000),                 // 8 bytes feeE8 (0.0001 WART)
-        uint32BE(cancelHeight),          // 4 bytes cancelHeight
-        uint32BE(cancelNonceId)          // 4 bytes cancelNonceId
-      ];
-
-      const totalLength = binaryParts.reduce((sum, part) => sum + part.length, 0);
-      const binary = new Uint8Array(totalLength);
-      let offset = 0;
-      for (const part of binaryParts) {
-        binary.set(part, offset);
-        offset += part.length;
-      }
-
-      const hashHex = ethers.sha256(binary);
-      const hash = hashHex.slice(2);
-
-      const signer = new ethers.Wallet(wallet.privateKey);
-      const signature = await signer.signingKey.sign(ethers.getBytes('0x' + hash));
-
-      const r = signature.r.slice(2).padStart(64, '0');
-      const s = signature.s.slice(2).padStart(64, '0');
-      const v = (signature.v - 27).toString(16).padStart(2, '0');
-      const signature65 = r + s + v;
-
-      // === PAYLOAD (matches documentation) ===
-      const payload = {
-        type: "cancelation",
-        cancelHeight: cancelHeight,
-        cancelNonceId: cancelNonceId,
-        feeStr: feeStr,
+      const txData = {
+        type: "assetCreation",
+        name: name,
+        precision: decimals,
+        supplyU64: supplyU64,
+        pinHeight: pinHeight || 0,
         nonceId: nonceId,
-        pinHeight: currentPinHeight,
-        signature65: signature65,
+        feeE8: feeE8,
       };
 
-      const response = await axios.post(
-        `${API_URL}?nodePath=transaction/add&nodeBase=${encodeURIComponent(selectedNode)}`,
-        payload,
-        { headers: { 'Content-Type': 'application/json' } }
-      );
+      const walletSigner = new ethers.Wallet(wallet.privateKey);
+      const message = JSON.stringify(txData);
+      let signature = await walletSigner.signMessage(message);
+      if (signature.startsWith('0x')) signature = signature.slice(2);
 
-      if (response.data.code === 0 || response.data.success || response.data.txHash) {
-        const txHash = response.data.txHash || response.data.data?.txHash || 'Pending';
-        alert(`✅ Cancel transaction sent successfully!\n\nCanceling Height: ${cancelHeight}, Nonce: ${cancelNonceId}\nTx Hash: ${txHash}`);
-        
-        document.getElementById('cancelHeight').value = '';
-        document.getElementById('cancelNonceId').value = '';
-      } else {
-        throw new Error(response.data.error || response.data.message || 'Cancel rejected');
-      }
+      const signedTx = { ...txData, signature65: signature };
+
+      await query('createAsset', 'transaction/add', 'POST', signedTx);
+
+      alert('✅ Asset creation transaction sent successfully!\n\nCheck History tab soon.');
+      document.getElementById('assetName').value = '';
+      document.getElementById('assetSupply').value = '';
     } catch (err) {
       console.error(err);
-      alert('Failed to cancel transaction: ' + (err.response?.data?.error || err.message));
+      alert('Failed to create asset: ' + (err.message || 'Unknown error'));
     } finally {
-      setLoading(prev => ({ ...prev, cancel: false }));
+      setLoading(prev => ({ ...prev, createAsset: false }));
     }
   };
 
-  // ==================== TRANSFER ASSET (Updated payload style) ====================
+  // ==================== TRANSFER ASSET ====================
   const handleTransferAsset = async () => {
-    const assetId = document.getElementById('transferAssetId').value.trim();
-    const recipient = document.getElementById('transferRecipient').value.trim();
+    const assetIdRaw = document.getElementById('transferAssetId').value.trim();
+    const recipientRaw = document.getElementById('transferRecipient').value.trim();
     const amountStr = document.getElementById('transferAmount').value.trim();
+    const decimalsStr = document.getElementById('transferDecimals')?.value || '8';
+    const decimals = parseInt(decimalsStr) || 8;
+    const isLiquidityEl = document.getElementById('isLiquidity');
+    const isLiquidity = isLiquidityEl ? isLiquidityEl.checked : false;
 
-    if (!assetId || !recipient || !amountStr) {
+    // NEW: Manual nonce override
+    const nonceOverrideRaw = document.getElementById('transferNonceOverride')?.value.trim();
+    let nonceId = getSmartNonce();
+    if (nonceOverrideRaw !== '') {
+      const parsed = parseInt(nonceOverrideRaw);
+      if (!isNaN(parsed)) {
+        nonceId = parsed;
+      }
+    }
+
+    if (!assetIdRaw || !recipientRaw || !amountStr) {
       alert('All transfer fields are required');
       return;
     }
@@ -291,30 +182,48 @@ const handleCreateAsset = async () => {
       return;
     }
 
+    let assetHash = assetIdRaw;
+    if (assetHash.toLowerCase().startsWith('0x')) assetHash = assetHash.slice(2);
+    let toAddr = recipientRaw;
+    if (toAddr.toLowerCase().startsWith('0x')) toAddr = toAddr.slice(2);
+
+    if (assetHash.length !== 64) {
+      alert('Asset Hash must be exactly 64 hex characters (without 0x)');
+      return;
+    }
+
+    const amountFloat = parseFloat(amountStr.replace(',', '.'));
+    if (!Number.isFinite(amountFloat) || amountFloat <= 0) {
+      alert('Please enter a valid amount greater than 0');
+      return;
+    }
+
     setLoading(prev => ({ ...prev, transferAsset: true }));
 
     try {
-      const nonceId = nextNonce !== null && nextNonce !== undefined ? nextNonce : 0;
       const currentPinHeight = pinHeight || 0;
       const currentPinHash = pinHash || '0000000000000000000000000000000000000000000000000000000000000000';
-      const feeStr = "0.01"; // Consistent with docs style
 
-      const amountFloat = parseFloat(amountStr);
-      // Note: For production, fetch asset decimals. Using 8 as default for now.
-      const amountU64 = BigInt(Math.floor(amountFloat * Math.pow(10, 8)));
+      const effectiveDecimals = isLiquidity ? 8 : decimals;
+      const amountU64 = Math.floor(amountFloat * Math.pow(10, effectiveDecimals));
 
-      const pinHashBytes = hexToBytes(currentPinHash.replace('0x', ''));
+      const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
 
-      // Binary layout kept similar to original (update when full transfer spec is available)
+      // Get current minimum fee
+      const minFeeRes = await axios.get(`${API_URL}?nodePath=transaction/minfee&${nodeBaseParam}`);
+      const minFeeE8 = minFeeRes.data?.data?.minFee?.E8 || minFeeRes.data?.minFee?.E8 || 10000;
+
+      // Build binary preimage
       const binaryParts = [
-        pinHashBytes,
+        hexToBytes(currentPinHash),
         uint32BE(currentPinHeight),
         uint32BE(nonceId),
         new Uint8Array(3),
-        uint64BE(1000000), // feeE8 for signing
-        hexToBytes(recipient.replace('0x', '').padEnd(40, '0').slice(0, 40)),
-        uint64BE(amountU64),
-        new Uint8Array(32) // asset placeholder (update with real asset hash when spec available)
+        uint64BE(BigInt(minFeeE8)),
+        hexToBytes(assetHash),
+        new Uint8Array([isLiquidity ? 1 : 0]),
+        addressToBytes(toAddr),
+        uint64BE(BigInt(amountU64)),
       ];
 
       const totalLength = binaryParts.reduce((sum, part) => sum + part.length, 0);
@@ -336,33 +245,34 @@ const handleCreateAsset = async () => {
       const v = (signature.v - 27).toString(16).padStart(2, '0');
       const signature65 = r + s + v;
 
-      // === PAYLOAD (updated to feeStr style) ===
       const payload = {
         type: "tokenTransfer",
-        asset: assetId,
-        to: recipient,
-        amount: Number(amountU64),
+        assetHash: assetHash,
+        isLiquidity: isLiquidity,
+        toAddr: toAddr,
+        amountU64: amountU64,
+        feeE8: Number(minFeeE8),
         pinHeight: currentPinHeight,
         nonceId: nonceId,
-        feeStr: feeStr,
         signature65: signature65,
       };
 
-      const response = await axios.post(
-        `${API_URL}?nodePath=transaction/add&nodeBase=${encodeURIComponent(selectedNode)}`,
-        payload,
-        { headers: { 'Content-Type': 'application/json' } }
-      );
+      console.log('=== TOKEN TRANSFER PAYLOAD ===', payload);
 
-      if (response.data.code === 0 || response.data.success || response.data.txHash) {
-        const txHash = response.data.txHash || response.data.data?.txHash || 'Pending';
-        alert(`✅ Asset transfer sent successfully!\n\nAsset: ${assetId}\nTo: ${recipient}\nAmount: ${amountStr}\nTx Hash: ${txHash}`);
-      } else {
-        throw new Error(response.data.error || response.data.message || 'Transfer rejected');
+      await query('transferAsset', 'transaction/add', 'POST', payload);
+
+      // Optimistic nonce update
+      updateNonceAfterSuccess(nonceId);
+
+      // Clear the override field after success
+      if (document.getElementById('transferNonceOverride')) {
+        document.getElementById('transferNonceOverride').value = '';
       }
+
+      alert('✅ Asset transfer transaction sent successfully!\n\nCheck History tab soon.');
     } catch (err) {
       console.error(err);
-      alert('Transfer failed: ' + (err.response?.data?.error || err.message));
+      alert('Transfer failed: ' + (err.message || 'Unknown error'));
     } finally {
       setLoading(prev => ({ ...prev, transferAsset: false }));
     }
@@ -372,7 +282,7 @@ const handleCreateAsset = async () => {
     <div className="space-y-8">
       <h2 className="text-3xl font-bold">Asset Tools</h2>
       <p className="mb-6 text-gray-600 dark:text-gray-400">
-        Create, transfer, cancel, search, and look up assets on the DeFi testnet.
+        Create, transfer, search, and look up assets on the DeFi testnet.
       </p>
 
       {/* CREATE ASSET */}
@@ -381,10 +291,10 @@ const handleCreateAsset = async () => {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
             <label className="block text-sm font-medium mb-2">Asset Name (1-5 chars)</label>
-            <input id="assetName" maxLength="5" placeholder="e.g. HOG" className="input mb-4" />
+            <input id="assetName" maxLength="5" placeholder="e.g. LIQ" className="input mb-4" />
 
             <label className="block text-sm font-medium mb-2">Total Supply</label>
-            <input id="assetSupply" type="number" placeholder="1000000" className="input mb-4" />
+            <input id="assetSupply" type="number" placeholder="1000000000" className="input mb-4" />
 
             <label className="block text-sm font-medium mb-2">Decimals</label>
             <input id="assetDecimals" type="number" defaultValue="8" className="input mb-6" />
@@ -396,28 +306,12 @@ const handleCreateAsset = async () => {
             >
               {loading.createAsset ? 'Creating Asset...' : 'Create Asset'}
             </button>
-          </div>
-        </div>
-      </div>
 
-      {/* CANCEL TRANSACTION */}
-      <div className="rounded-3xl p-8 shadow-xl bg-zinc-900">
-        <h3 className="text-2xl font-bold mb-6 text-red-400">Cancel Transaction</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div>
-            <label className="block text-sm font-medium mb-2">Cancel Height</label>
-            <input id="cancelHeight" type="number" placeholder="e.g. 1198900" className="input mb-3" />
-
-            <label className="block text-sm font-medium mb-2">Cancel Nonce ID</label>
-            <input id="cancelNonceId" type="number" placeholder="e.g. 5" className="input mb-6" />
-
-            <button
-              onClick={handleCancelTransaction}
-              disabled={loading.cancel}
-              className="w-full py-4 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-2xl transition-all"
-            >
-              {loading.cancel ? 'Canceling...' : 'Cancel Transaction'}
-            </button>
+            {results.createAsset && (
+              <pre className="result mt-6 text-sm overflow-auto max-h-64">
+                {JSON.stringify(results.createAsset, null, 2)}
+              </pre>
+            )}
           </div>
         </div>
       </div>
@@ -425,16 +319,38 @@ const handleCreateAsset = async () => {
       {/* TRANSFER ASSET */}
       <div className="rounded-3xl p-8 shadow-xl bg-zinc-900">
         <h3 className="text-2xl font-bold mb-6 text-blue-400">Transfer Asset</h3>
+        <p className="text-sm text-gray-400 mb-4">
+          Smart nonce is used by default. Use the Nonce Override field only when you get "Duplicate nonce" errors.
+        </p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
-            <label className="block text-sm font-medium mb-2">Asset ID / Name</label>
-            <input id="transferAssetId" placeholder="e.g. HOG or asset hash" className="input mb-3" />
+            <label className="block text-sm font-medium mb-2">Asset Hash (64 hex chars, no 0x)</label>
+            <input id="transferAssetId" placeholder="e.g. b92b88491b478c22fbc5b3f03f8b5539555ff2680944a8c847a1eb90ef69894e" className="input mb-3" />
+
+            <label className="block text-sm font-medium mb-2">Decimals / Precision</label>
+            <input id="transferDecimals" type="number" defaultValue="8" className="input mb-1" />
+
+            <div className="flex items-center mb-3">
+              <input type="checkbox" id="isLiquidity" className="mr-2 h-4 w-4 accent-blue-600" />
+              <label htmlFor="isLiquidity" className="text-sm font-medium text-gray-300">This is a Liquidity Token (force precision 8)</label>
+            </div>
 
             <label className="block text-sm font-medium mb-2">Recipient Address</label>
-            <input id="transferRecipient" placeholder="0x... recipient address" className="input mb-3" />
+            <input id="transferRecipient" placeholder="recipient address (no 0x)" className="input mb-3" />
 
-            <label className="block text-sm font-medium mb-2">Amount</label>
-            <input id="transferAmount" type="number" step="any" placeholder="amount to transfer" className="input mb-6" />
+            <label className="block text-sm font-medium mb-2">Amount (in token units)</label>
+            <input id="transferAmount" type="number" step="any" placeholder="e.g. 1.5" className="input mb-3" />
+
+            {/* NEW: Manual Nonce Override */}
+            <label className="block text-sm font-medium mb-2 text-amber-400">
+              Nonce Override (only use if you get "Duplicate nonce")
+            </label>
+            <input 
+              id="transferNonceOverride" 
+              type="number" 
+              placeholder="Leave empty for auto" 
+              className="input mb-6" 
+            />
 
             <button
               onClick={handleTransferAsset}
@@ -443,6 +359,12 @@ const handleCreateAsset = async () => {
             >
               {loading.transferAsset ? 'Transferring...' : 'Transfer Asset'}
             </button>
+
+            {results.transferAsset && (
+              <pre className="result mt-6 text-sm overflow-auto max-h-64">
+                {JSON.stringify(results.transferAsset, null, 2)}
+              </pre>
+            )}
           </div>
         </div>
       </div>
@@ -452,8 +374,8 @@ const handleCreateAsset = async () => {
         <h3 className="text-2xl font-bold mb-6 text-blue-400">Asset Search & Lookup</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
           <div>
-            <label className="block text-sm font-medium mb-2">Asset Complete (by name/hash prefix)</label>
-            <input id="namePrefix" placeholder="namePrefix (e.g. HOG)" className="input mb-3" />
+            <label className="block text-sm font-medium mb-2">Asset Complete (by name)</label>
+            <input id="namePrefix" placeholder="namePrefix" className="input mb-3" />
             <input id="hashPrefix" placeholder="hashPrefix (optional)" className="input mb-4" />
             <button
               onClick={() => {
@@ -466,27 +388,31 @@ const handleCreateAsset = async () => {
               disabled={loading.assetComplete}
               className="px-6 py-3 w-full bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-2xl transition-colors"
             >
-              {loading.assetComplete ? 'Querying...' : 'Query Asset Complete'}
+              {loading.assetComplete ? 'Querying...' : 'Query'}
             </button>
             {results.assetComplete && (
-              <pre className="result mt-6 text-sm overflow-auto max-h-64 bg-zinc-950 p-4 rounded-xl">
+              <pre className="result mt-6 text-sm overflow-auto max-h-64">
                 {JSON.stringify(results.assetComplete, null, 2)}
               </pre>
             )}
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-2">Lookup Asset</label>
-            <input id="assetLookup" placeholder="asset identifier (name or hash)" className="input mb-4" />
+            <label className="block text-sm font-medium mb-2">Lookup Asset (by hash)</label>
+            <input id="assetLookup" placeholder="asset hash (64 hex)" className="input mb-4" />
             <button
-              onClick={() => query('assetLookup', `asset/lookup/${encodeURIComponent(document.getElementById('assetLookup').value)}`)}
+              onClick={() => {
+                const val = document.getElementById('assetLookup').value.trim();
+                const clean = val.startsWith('0x') ? val.slice(2) : val;
+                query('assetLookup', `asset/lookup/${encodeURIComponent(clean)}`);
+              }}
               disabled={loading.assetLookup}
               className="px-6 py-3 w-full bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-2xl transition-colors"
             >
-              {loading.assetLookup ? 'Querying...' : 'Lookup Asset'}
+              {loading.assetLookup ? 'Querying...' : 'Query'}
             </button>
             {results.assetLookup && (
-              <pre className="result mt-6 text-sm overflow-auto max-h-64 bg-zinc-950 p-4 rounded-xl">
+              <pre className="result mt-6 text-sm overflow-auto max-h-64">
                 {JSON.stringify(results.assetLookup, null, 2)}
               </pre>
             )}
