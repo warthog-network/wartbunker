@@ -22,6 +22,10 @@ const WalletOverview = ({ onLogout }) => {
   const [isFetching, setIsFetching] = useState(false);
   const [isMining, setIsMining] = useState(false);
 
+  // NEW: Open Limit Orders state
+  const [openOrders, setOpenOrders] = useState(null);
+  const [loadingOpenOrders, setLoadingOpenOrders] = useState(false);
+
   const copyToClipboard = (text) => {
     navigator.clipboard.writeText(text).then(() => {
       alert('Copied to clipboard!');
@@ -44,6 +48,28 @@ const WalletOverview = ({ onLogout }) => {
     setIsFetching(false);
   };
 
+  // ==================== FETCH OPEN LIMIT ORDERS ====================
+  const fetchOpenOrders = async () => {
+    if (!wallet?.address) {
+      alert('No wallet connected');
+      return;
+    }
+
+    setLoadingOpenOrders(true);
+    try {
+      const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
+      const res = await axios.get(
+        `${API_URL}?nodePath=account/${wallet.address}/open_orders&${nodeBaseParam}`
+      );
+      setOpenOrders(res.data);
+    } catch (err) {
+      console.error(err);
+      alert('Failed to fetch open orders: ' + (err.response?.data?.message || err.message));
+    }
+    setLoadingOpenOrders(false);
+  };
+  // ============================================================
+
   // ==================== IMPROVED FAKE MINE ====================
   const handleFakeMine = async () => {
     if (!wallet?.address) {
@@ -63,11 +89,9 @@ const WalletOverview = ({ onLogout }) => {
         `https://warthog-defitestnet.duckdns.org/debug/fakemine/${wallet.address}`
       );
     } catch (err) {
-      // Even if the request "fails", we still refresh the balance
       console.log("Fake mine request finished");
     }
 
-    // Always refresh balance after attempting fake mine
     setTimeout(() => {
       refreshBalance();
       setIsMining(false);
@@ -157,6 +181,37 @@ const WalletOverview = ({ onLogout }) => {
           Paste the asset hash from the creation response to manually add it here.
         </p>
       </div>
+
+      {/* ==================== NEW: OPEN LIMIT ORDERS ==================== */}
+      <div className="result mt-4" style={{ textAlign: 'left' }}>
+        <p className="font-semibold mb-2 text-purple-400">My Open Limit Orders</p>
+        
+        <button
+          onClick={fetchOpenOrders}
+          disabled={loadingOpenOrders}
+          className="w-full py-3 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-2xl disabled:opacity-60 transition-all mb-3"
+        >
+          {loadingOpenOrders ? 'Loading Open Orders...' : 'View My Open Limit Orders'}
+        </button>
+
+        {openOrders && (
+          <div>
+            <p className="text-xs text-gray-400 mb-2">
+              Showing pending limit orders for this wallet
+            </p>
+            <pre className="result text-sm overflow-auto max-h-96 bg-zinc-950 border border-zinc-800">
+              {JSON.stringify(openOrders, null, 2)}
+            </pre>
+          </div>
+        )}
+
+        {!openOrders && (
+          <p className="text-xs text-gray-500">
+            Click the button above to see your pending buy/sell limit orders.
+          </p>
+        )}
+      </div>
+      {/* ============================================================ */}
 
       {/* ==================== FAKE MINE BUTTON ==================== */}
       <div className="result mt-4" style={{ textAlign: 'left' }}>
