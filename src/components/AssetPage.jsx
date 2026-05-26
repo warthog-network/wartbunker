@@ -97,6 +97,131 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     return hexToBytes(clean.slice(0, 40));
   };
 
+  // ==================== STYLIZED ASSET CARD ====================
+  const renderAssetCard = (asset, isCompact = false) => {
+    if (!asset) return null;
+
+    const supply = asset.totalSupply?.str || '0';
+    const hash = asset.hash || '';
+
+    return (
+      <div className={`bg-zinc-950 border border-zinc-700 rounded-2xl overflow-hidden ${isCompact ? 'p-4' : 'p-5'}`}>
+        {/* Header */}
+        <div className="flex items-start justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-blue-500 via-cyan-500 to-teal-500 flex items-center justify-center text-white font-bold text-2xl shadow-inner ring-1 ring-white/20">
+              {asset.name?.[0] || 'A'}
+            </div>
+            <div>
+              <div className="font-bold text-2xl tracking-tight text-white">{asset.name}</div>
+              <div className="text-xs text-zinc-400 font-mono -mt-1">Asset ID {asset.id}</div>
+            </div>
+          </div>
+          <div 
+            onClick={() => copyToClipboard(hash)}
+            className="text-right cursor-pointer group"
+          >
+            <div className="text-xs font-mono text-zinc-400 group-hover:text-blue-400 transition-colors">
+              {hash.slice(0, 10)}…{hash.slice(-8)}
+            </div>
+            <div className="text-[10px] text-zinc-500 group-hover:text-zinc-400">Copy Hash</div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+          <div>
+            <div className="text-xs text-zinc-400 mb-0.5">Decimals</div>
+            <div className="font-mono font-medium text-white">{asset.decimals}</div>
+          </div>
+          <div>
+            <div className="text-xs text-zinc-400 mb-0.5">Block Height</div>
+            <div className="font-mono font-medium text-white">{asset.height}</div>
+          </div>
+          <div>
+            <div className="text-xs text-zinc-400 mb-0.5">Total Supply</div>
+            <div className="font-mono font-medium text-emerald-400 tabular-nums">{supply}</div>
+          </div>
+          <div>
+            <div className="text-xs text-zinc-400 mb-0.5">Owner Account</div>
+            <div className="font-mono font-medium text-white">#{asset.ownerAccountId}</div>
+          </div>
+          {asset.groupId != null && (
+            <div>
+              <div className="text-xs text-zinc-400 mb-0.5">Group ID</div>
+              <div className="font-mono font-medium text-white">{asset.groupId}</div>
+            </div>
+          )}
+          {asset.parentId != null && (
+            <div>
+              <div className="text-xs text-zinc-400 mb-0.5">Parent ID</div>
+              <div className="font-mono font-medium text-white">{asset.parentId}</div>
+            </div>
+          )}
+        </div>
+
+        <div className="mt-4 pt-3 border-t border-zinc-700 text-xs text-zinc-400 flex items-center justify-between">
+          <span>Created on-chain</span>
+          <button 
+            onClick={() => copyToClipboard(hash)}
+            className="px-3 py-1 rounded-lg hover:bg-zinc-800 text-blue-400 hover:text-blue-300 transition-colors text-xs font-medium"
+          >
+            Copy Full Hash
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  // ==================== TRANSACTION RESULT CARD ====================
+  const renderTransactionResult = (result, type) => {
+    if (!result) return null;
+
+    const isSuccess = result.code === 0 || !result.error;
+    const txHash = result.data?.txHash || result.txHash || result.data?.hash || null;
+
+    return (
+      <div className={`mt-6 rounded-2xl border p-5 ${isSuccess ? 'bg-emerald-950/40 border-emerald-700' : 'bg-red-950/40 border-red-700'}`}>
+        <div className="flex items-center gap-3 mb-3">
+          <div className={`w-8 h-8 rounded-full flex items-center justify-center text-lg ${isSuccess ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white'}`}>
+            {isSuccess ? '✓' : '!'}
+          </div>
+          <div>
+            <div className={`font-semibold text-lg ${isSuccess ? 'text-emerald-400' : 'text-red-400'}`}>
+              {isSuccess ? `${type} Submitted Successfully` : `${type} Failed`}
+            </div>
+            <div className="text-xs text-zinc-400">Transaction sent to node • Check History tab for confirmation</div>
+          </div>
+        </div>
+
+        {txHash && (
+          <div className="mt-3 p-3 bg-zinc-950 rounded-xl border border-zinc-700">
+            <div className="text-xs text-zinc-400 mb-1">Transaction Hash</div>
+            <div 
+              onClick={() => copyToClipboard(txHash)}
+              className="font-mono text-sm text-emerald-400 break-all cursor-pointer hover:text-emerald-300"
+            >
+              {txHash}
+            </div>
+          </div>
+        )}
+
+        {result.error && (
+          <div className="mt-3 text-sm text-red-400">
+            {result.error}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Simple copy helper (local to this component)
+  const copyToClipboard = (text) => {
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(() => {
+      alert('Copied to clipboard!');
+    }).catch(() => {});
+  };
+
   // ==================== CREATE ASSET ====================
   const handleCreateAsset = async () => {
     const name = document.getElementById('assetName').value.trim().toUpperCase();
@@ -133,12 +258,23 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
         feeE8: feeE8,
       };
 
-      const walletSigner = new ethers.Wallet(wallet.privateKey);
+      // Use raw signing (same as SendTransactionPage and handleTransferAsset)
+      // signMessage() adds Ethereum prefix which causes "Cannot parse signature"
       const message = JSON.stringify(txData);
-      let signature = await walletSigner.signMessage(message);
-      if (signature.startsWith('0x')) signature = signature.slice(2);
+      const hashHex = ethers.sha256(ethers.toUtf8Bytes(message));
+      const hash = hashHex.slice(2);
 
-      const signedTx = { ...txData, signature65: signature };
+      const signer = new ethers.Wallet(wallet.privateKey);
+      const signature = await signer.signingKey.sign(ethers.getBytes('0x' + hash));
+
+      const r = signature.r.slice(2).padStart(64, '0');
+      const s = signature.s.slice(2).padStart(64, '0');
+      const v = (signature.v - 27).toString(16).padStart(2, '0');
+      const signature65 = r + s + v;
+
+      const signedTx = { ...txData, signature65: signature65 };
+
+      console.log('=== ASSET CREATION PAYLOAD ===', signedTx);
 
       await query('createAsset', 'transaction/add', 'POST', signedTx);
 
@@ -307,11 +443,7 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
               {loading.createAsset ? 'Creating Asset...' : 'Create Asset'}
             </button>
 
-            {results.createAsset && (
-              <pre className="result mt-6 text-sm overflow-auto max-h-64">
-                {JSON.stringify(results.createAsset, null, 2)}
-              </pre>
-            )}
+            {results.createAsset && renderTransactionResult(results.createAsset, 'Asset Creation')}
           </div>
         </div>
       </div>
@@ -360,11 +492,7 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
               {loading.transferAsset ? 'Transferring...' : 'Transfer Asset'}
             </button>
 
-            {results.transferAsset && (
-              <pre className="result mt-6 text-sm overflow-auto max-h-64">
-                {JSON.stringify(results.transferAsset, null, 2)}
-              </pre>
-            )}
+            {results.transferAsset && renderTransactionResult(results.transferAsset, 'Asset Transfer')}
           </div>
         </div>
       </div>
@@ -390,10 +518,32 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
             >
               {loading.assetComplete ? 'Querying...' : 'Query'}
             </button>
-            {results.assetComplete && (
-              <pre className="result mt-6 text-sm overflow-auto max-h-64">
-                {JSON.stringify(results.assetComplete, null, 2)}
-              </pre>
+
+            {results.assetComplete && results.assetComplete.code === 0 && results.assetComplete.data?.matches?.length > 0 && (
+              <div className="mt-6">
+                <div className="flex items-center justify-between mb-3 px-1">
+                  <div className="text-sm text-zinc-400">
+                    Found <span className="font-semibold text-white">{results.assetComplete.data.matches.length}</span> match{results.assetComplete.data.matches.length !== 1 ? 'es' : ''} for “{results.assetComplete.data.namePrefix}”
+                  </div>
+                </div>
+                <div className="space-y-3">
+                  {results.assetComplete.data.matches.map((asset, idx) => (
+                    <div key={idx}>{renderAssetCard(asset, true)}</div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {results.assetComplete && results.assetComplete.code === 0 && results.assetComplete.data?.matches?.length === 0 && (
+              <div className="mt-6 p-4 bg-zinc-950 border border-zinc-700 rounded-2xl text-center text-sm text-zinc-400">
+                No assets found matching your search.
+              </div>
+            )}
+
+            {results.assetComplete && results.assetComplete.error && (
+              <div className="mt-6 p-4 bg-red-950/40 border border-red-700 rounded-2xl text-sm text-red-400">
+                {results.assetComplete.error}
+              </div>
             )}
           </div>
 
@@ -411,10 +561,23 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
             >
               {loading.assetLookup ? 'Querying...' : 'Query'}
             </button>
-            {results.assetLookup && (
-              <pre className="result mt-6 text-sm overflow-auto max-h-64">
-                {JSON.stringify(results.assetLookup, null, 2)}
-              </pre>
+
+            {results.assetLookup && results.assetLookup.code === 0 && results.assetLookup.data && (
+              <div className="mt-6">
+                {renderAssetCard(results.assetLookup.data)}
+              </div>
+            )}
+
+            {results.assetLookup && results.assetLookup.code === 0 && !results.assetLookup.data && (
+              <div className="mt-6 p-4 bg-zinc-950 border border-zinc-700 rounded-2xl text-center text-sm text-zinc-400">
+                Asset not found.
+              </div>
+            )}
+
+            {results.assetLookup && results.assetLookup.error && (
+              <div className="mt-6 p-4 bg-red-950/40 border border-red-700 rounded-2xl text-sm text-red-400">
+                {results.assetLookup.error}
+              </div>
             )}
           </div>
         </div>

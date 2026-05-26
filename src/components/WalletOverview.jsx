@@ -100,6 +100,87 @@ const WalletOverview = ({ onLogout }) => {
   };
   // ========================================================
 
+  // ==================== STYLIZED ORDER CARD RENDERER ====================
+  const renderOrderCard = (order, direction, assetName, assetDecimals, onCopy) => {
+    const isBuy = direction === 'buy';
+    const amountStr = order.amount?.str || '0';
+    const filledStr = order.filled?.str || '0';
+    const price = order.limit?.doubleAdjusted ?? 0;
+    const formattedPrice = price.toFixed(8);
+    const amountNum = parseFloat(amountStr);
+    const filledNum = parseFloat(filledStr);
+    const fillPct = amountNum > 0 ? Math.min(100, Math.floor((filledNum / amountNum) * 100)) : 0;
+
+    return (
+      <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-3 text-sm">
+        <div className="flex justify-between items-start mb-2">
+          <div>
+            <span className={`inline-block text-[10px] font-mono px-2 py-px rounded ${isBuy ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
+              {isBuy ? 'BUY' : 'SELL'}
+            </span>
+          </div>
+          <div className="text-right">
+            <span className="text-xs text-zinc-400">Limit Price</span>
+            <div className="font-mono font-semibold text-white tabular-nums">
+              {formattedPrice} <span className="text-xs text-zinc-400 font-normal">WART/{assetName}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 text-xs mb-2">
+          <div>
+            <span className="text-zinc-400">Amount</span>
+            <div className="font-mono text-white font-medium tabular-nums">{amountStr} <span className="text-zinc-400">{assetName}</span></div>
+          </div>
+          <div className="text-right">
+            <span className="text-zinc-400">Filled</span>
+            <div className="font-mono text-white font-medium tabular-nums">{filledStr} <span className="text-zinc-400">{assetName}</span></div>
+          </div>
+        </div>
+
+        {/* Fill Progress Bar */}
+        <div className="mb-2">
+          <div className="flex justify-between text-[10px] text-zinc-400 mb-px">
+            <span>Fill Progress</span>
+            <span className="tabular-nums">{fillPct}%</span>
+          </div>
+          <div className="h-1.5 w-full bg-zinc-800 rounded-full overflow-hidden">
+            <div 
+              className={`h-full rounded-full transition-all duration-300 ${isBuy ? 'bg-emerald-500' : 'bg-rose-500'}`}
+              style={{ width: `${fillPct}%` }}
+            />
+          </div>
+        </div>
+
+        {/* Transaction Hash */}
+        <div className="pt-2 border-t border-zinc-700 flex items-center justify-between text-xs">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="text-zinc-500 flex-shrink-0">Tx</span>
+            <span 
+              onClick={() => onCopy(order.txHash)}
+              className="font-mono text-purple-400 hover:text-purple-300 cursor-pointer truncate"
+            >
+              {order.txHash?.slice(0, 8)}…{order.txHash?.slice(-6)}
+            </span>
+          </div>
+          <button 
+            onClick={() => onCopy(order.txHash)}
+            className="text-purple-400 hover:text-white active:text-purple-300 px-2 py-0.5 rounded hover:bg-purple-500/10 text-xs font-medium transition-colors"
+          >
+            COPY
+          </button>
+        </div>
+
+        {order.inMempool && (
+          <div className="mt-1.5 text-[10px] text-yellow-400 flex items-center gap-1">
+            <span>●</span> <span>In mempool (unconfirmed)</span>
+          </div>
+        )}
+      </div>
+    );
+  };
+  // ============================================================
+
   if (!wallet) {
     return <div>Please log in to view your wallet.</div>;
   }
@@ -182,32 +263,124 @@ const WalletOverview = ({ onLogout }) => {
         </p>
       </div>
 
-      {/* ==================== NEW: OPEN LIMIT ORDERS ==================== */}
+      {/* ==================== OPEN LIMIT ORDERS (STYLIZED) ==================== */}
       <div className="result mt-4" style={{ textAlign: 'left' }}>
-        <p className="font-semibold mb-2 text-purple-400">My Open Limit Orders</p>
+        <p className="font-semibold mb-2 text-purple-400 flex items-center gap-2">
+          <span>My Open Limit Orders</span>
+          {openOrders && openOrders.data && Array.isArray(openOrders.data) && (
+            <span className="text-xs px-2.5 py-0.5 bg-purple-500/20 text-purple-300 rounded-full font-mono">
+              {openOrders.data.length} asset{openOrders.data.length !== 1 ? 's' : ''}
+            </span>
+          )}
+        </p>
         
         <button
           onClick={fetchOpenOrders}
           disabled={loadingOpenOrders}
-          className="w-full py-3 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-2xl disabled:opacity-60 transition-all mb-3"
+          className="w-full py-3 bg-purple-600 hover:bg-purple-700 active:bg-purple-800 text-white font-semibold rounded-2xl disabled:opacity-60 transition-all mb-3 flex items-center justify-center gap-2"
         >
-          {loadingOpenOrders ? 'Loading Open Orders...' : 'View My Open Limit Orders'}
+          {loadingOpenOrders ? (
+            'Loading Open Orders...'
+          ) : openOrders ? (
+            '⟳ Refresh Open Orders'
+          ) : (
+            'View My Open Limit Orders'
+          )}
         </button>
 
         {openOrders && (
           <div>
-            <p className="text-xs text-gray-400 mb-2">
-              Showing pending limit orders for this wallet
-            </p>
-            <pre className="result text-sm overflow-auto max-h-96 bg-zinc-950 border border-zinc-800">
-              {JSON.stringify(openOrders, null, 2)}
-            </pre>
+            {openOrders.code === 0 && Array.isArray(openOrders.data) && openOrders.data.length > 0 ? (
+              <div className="space-y-4">
+                {openOrders.data.map((assetOrder, idx) => {
+                  const asset = assetOrder.baseAsset;
+                  const buyOrders = assetOrder.wartToAssetSwaps || [];   // WART → Asset = Buy orders
+                  const sellOrders = assetOrder.assetToWartSwaps || [];  // Asset → WART = Sell orders
+                  const totalOrders = buyOrders.length + sellOrders.length;
+
+                  return (
+                    <div key={idx} className="bg-zinc-950 border border-zinc-700 rounded-2xl overflow-hidden shadow-sm">
+                      {/* Asset Header */}
+                      <div className="px-4 py-3 bg-zinc-900/90 border-b border-zinc-700 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-purple-500 via-violet-500 to-fuchsia-500 flex items-center justify-center text-white font-bold text-xl shadow-inner ring-1 ring-white/20">
+                            {asset.name?.[0] || '?'}
+                          </div>
+                          <div>
+                            <div className="font-bold text-xl tracking-[-0.5px] text-white">{asset.name}</div>
+                            <div className="text-[10px] text-zinc-500 font-mono -mt-0.5">Asset ID {asset.id} • {asset.decimals} decimals</div>
+                          </div>
+                        </div>
+                        <div 
+                          onClick={() => copyToClipboard(asset.hash)}
+                          className="text-right cursor-pointer group"
+                        >
+                          <div className="text-xs font-mono text-zinc-400 group-hover:text-purple-400 transition-colors">
+                            {asset.hash?.slice(0, 8)}…{asset.hash?.slice(-6)}
+                          </div>
+                          <div className="text-[10px] text-zinc-500 group-hover:text-zinc-400">Asset Hash ↗</div>
+                        </div>
+                      </div>
+
+                      <div className="p-4 space-y-4">
+                        {/* BUY ORDERS */}
+                        {buyOrders.length > 0 && (
+                          <div>
+                            <div className="flex items-center gap-2 mb-2 px-1">
+                              <span className="inline-block w-2 h-2 rounded-full bg-emerald-400"></span>
+                              <span className="uppercase tracking-[1.5px] text-xs font-semibold text-emerald-400">Buy Orders</span>
+                              <span className="text-xs text-emerald-400/50">({buyOrders.length})</span>
+                            </div>
+                            <div className="space-y-2">
+                              {buyOrders.map((order, oIdx) => renderOrderCard(order, 'buy', asset.name, asset.decimals, copyToClipboard))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* SELL ORDERS */}
+                        {sellOrders.length > 0 && (
+                          <div>
+                            <div className="flex items-center gap-2 mb-2 px-1">
+                              <span className="inline-block w-2 h-2 rounded-full bg-rose-400"></span>
+                              <span className="uppercase tracking-[1.5px] text-xs font-semibold text-rose-400">Sell Orders</span>
+                              <span className="text-xs text-rose-400/50">({sellOrders.length})</span>
+                            </div>
+                            <div className="space-y-2">
+                              {sellOrders.map((order, oIdx) => renderOrderCard(order, 'sell', asset.name, asset.decimals, copyToClipboard))}
+                            </div>
+                          </div>
+                        )}
+
+                        {totalOrders === 0 && (
+                          <div className="text-center py-3 text-xs text-zinc-500 italic">
+                            No open orders for this asset
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : openOrders.code === 0 ? (
+              <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-8 text-center">
+                <div className="text-4xl mb-3 opacity-40">📭</div>
+                <p className="text-zinc-300 font-medium">No open limit orders</p>
+                <p className="text-xs text-zinc-500 mt-1 max-w-[260px] mx-auto">
+                  When you place limit orders on the Warthog DEX, they will appear here with live fill progress.
+                </p>
+              </div>
+            ) : (
+              <div className="bg-red-950/40 border border-red-900 rounded-2xl p-4 text-center">
+                <p className="text-red-400 text-sm font-medium">Failed to load open orders</p>
+                <p className="text-xs text-red-400/70 mt-0.5">API responded with code {openOrders.code}</p>
+              </div>
+            )}
           </div>
         )}
 
         {!openOrders && (
-          <p className="text-xs text-gray-500">
-            Click the button above to see your pending buy/sell limit orders.
+          <p className="text-xs text-gray-500 px-1">
+            Click above to load your pending buy/sell limit orders from the connected node.
           </p>
         )}
       </div>
