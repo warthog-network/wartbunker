@@ -27,6 +27,8 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [localError, setLocalError] = useState(null);
+  const [showRawJson, setShowRawJson] = useState(false);
+  const [sentNonce, setSentNonce] = useState(null); // ← NEW: Remember the nonce we actually sent
 
   useEffect(() => {
     const fetchOriginId = async () => {
@@ -84,6 +86,12 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
     return hexToBytes(clean.slice(0, 40));
   };
 
+  const copyToClipboard = (text) => {
+    navigator.clipboard.writeText(text).then(() => {
+      alert('Copied to clipboard!');
+    });
+  };
+
   const handleSend = async () => {
     if (!wallet || !toAddress || !amount) {
       const msg = 'Please enter To Address and Amount';
@@ -95,23 +103,24 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
     setIsLoading(true);
     setResult(null);
     setLocalError(null);
+    setShowRawJson(false);
 
     try {
       const amountNum = parseFloat(amount);
       const amountE8 = BigInt(Math.floor(amountNum * 100000000));
       const nonceId = parseInt(nonceInput) || 0;
+
+      setSentNonce(nonceId); // ← Capture the nonce we are actually sending
+
       const currentPinHeight = pinHeight || 0;
       const currentPinHash = pinHash || '0000000000000000000000000000000000000000000000000000000000000000';
 
       const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
 
-      // Get current minimum fee from node
-      console.log('Fetching minimum fee from /transaction/minfee');
       const minFeeRes = await axios.get(
         `${API_URL}?nodePath=transaction/minfee&${nodeBaseParam}`
       );
       const minFeeE8 = minFeeRes.data?.data?.minFee?.E8 || minFeeRes.data?.minFee?.E8;
-      console.log('Minimum feeE8 required by node:', minFeeE8);
 
       if (!minFeeE8) {
         throw new Error('Could not fetch minimum fee');
@@ -138,9 +147,6 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
       const hashHex = ethers.sha256(binary);
       const hash = hashHex.slice(2);
 
-      console.log('=== WARTHOG BINARY SIGNING ===');
-      console.log('Message hash:', hash);
-
       const signer = new ethers.Wallet(wallet.privateKey);
       const signature = await signer.signingKey.sign(ethers.getBytes('0x' + hash));
 
@@ -148,8 +154,6 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
       const s = signature.s.slice(2).padStart(64, '0');
       const v = (signature.v - 27).toString(16).padStart(2, '0');
       const signature65 = r + s + v;
-
-      console.log('signature65:', signature65);
 
       const payload = {
         type: 'wartTransfer',
@@ -161,33 +165,16 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
         signature65: signature65,
       };
 
-      console.log('=== FINAL PAYLOAD ===');
-      console.log(JSON.stringify(payload, null, 2));
-
       const response = await axios.post(
         `${API_URL}?nodePath=transaction/add&${nodeBaseParam}`,
         payload,
         { headers: { 'Content-Type': 'application/json' } }
       );
 
-      console.log('=== NODE RESPONSE ===');
-      console.log(response.data);
-
       const resData = response.data;
       setResult(resData);
 
       if (resData.code === 0 || resData.txHash || resData.data?.txHash) {
-        const txHash = resData.txHash || resData.data?.txHash;
-        if (txHash) {
-          setTimeout(async () => {
-            try {
-              const lookupRes = await axios.get(
-                `${API_URL}?nodePath=transaction/lookup/${txHash}&${nodeBaseParam}`
-              );
-              setResult({ ...resData, fullDetails: lookupRes.data.data || lookupRes.data });
-            } catch (e) {}
-          }, 1500);
-        }
         refreshBalance?.();
         alert('Transaction sent successfully!');
       } else {
@@ -196,7 +183,6 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
         setContextError?.(errorMsg);
       }
     } catch (err) {
-      console.error('SEND FAILED:', err);
       const msg = err.response?.data?.error || err.message || 'Failed to send';
       setLocalError(msg);
       setContextError?.(msg);
@@ -204,6 +190,93 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // ==================== STYLIZED TRANSACTION RESULT CARD ====================
+  const renderTransactionCard = () => {
+    if (!result) return null;
+
+    const txHash = result.txHash || result.data?.txHash || result.fullDetails?.transaction?.hash;
+    const fullDetails = result.fullDetails?.transaction || result.transaction || {};
+    const signed = fullDetails.signedCommon || {};
+
+    // Prefer nonce from response → captured sentNonce → current input
+    const usedNonce = signed.nonceId ?? sentNonce ?? nonceInput;
+
+    return (
+      <div className="mt-6 bg-zinc-950 border border-zinc-700 rounded-2xl overflow-hidden text-sm">
+        {/* Header */}
+        <div className="px-5 py-3 bg-zinc-900 border-b border-zinc-700 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-2.5 h-2.5 rounded-full bg-emerald-400"></div>
+            <span className="font-semibold text-emerald-400">Transaction Sent</span>
+          </div>
+          <button
+            onClick={() => setShowRawJson(!showRawJson)}
+            className="text-xs px-3 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white transition-colors"
+          >
+            {showRawJson ? 'Hide JSON' : 'Show JSON'}
+          </button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          {/* Transaction Hash */}
+          <div>
+            <div className="text-[10px] text-zinc-400 mb-0.5">Transaction Hash</div>
+            <div 
+              onClick={() => txHash && copyToClipboard(txHash)}
+              className="font-mono text-emerald-400 text-xs break-all cursor-pointer hover:text-emerald-300"
+            >
+              {txHash || 'Pending...'}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-x-6 gap-y-4">
+            {/* Amount */}
+            <div>
+              <div className="text-[10px] text-zinc-400 mb-0.5">Amount</div>
+              <div className="font-semibold text-white">
+                {fullDetails.data?.amount?.str || amount} <span className="text-xs text-zinc-400">WART</span>
+              </div>
+            </div>
+
+            {/* Fee */}
+            <div>
+              <div className="text-[10px] text-zinc-400 mb-0.5">Fee</div>
+              <div className="font-semibold text-white">
+                {signed.fee?.str || '0.00000001'} <span className="text-xs text-zinc-400">WART</span>
+              </div>
+            </div>
+
+            {/* To Address */}
+            <div className="col-span-2">
+              <div className="text-[10px] text-zinc-400 mb-0.5">To Address</div>
+              <div 
+                onClick={() => copyToClipboard(fullDetails.data?.toAddress || toAddress)}
+                className="font-mono text-xs text-white break-all cursor-pointer hover:text-emerald-400"
+              >
+                {fullDetails.data?.toAddress || toAddress}
+              </div>
+            </div>
+
+            {/* Nonce */}
+            <div>
+              <div className="text-[10px] text-zinc-400 mb-0.5">Nonce</div>
+              <div className="font-mono text-white">{usedNonce}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Raw JSON */}
+        {showRawJson && (
+          <div className="border-t border-zinc-700 p-4 bg-zinc-900">
+            <pre className="text-[10px] text-zinc-300 overflow-auto max-h-80">
+              {JSON.stringify(result, null, 2)}
+            </pre>
+          </div>
+        )}
+      </div>
+    );
   };
 
   if (!wallet) {
@@ -256,7 +329,7 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
           />
         </div>
         <div className="form-group">
-          <label>Nonce (try 0, 1, 2...)</label>
+          <label>Nonce</label>
           <input
             type="number"
             value={nonceInput}
@@ -271,7 +344,7 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
         disabled={isLoading || !toAddress || !amount}
         className="mt-4 w-full py-3.5 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-semibold rounded-2xl text-base shadow-lg shadow-orange-500/30 disabled:opacity-60 active:scale-[0.985] transition-all"
       >
-        {isLoading ? 'Signing...' : 'Sign and Send WART'}
+        {isLoading ? 'Signing & Sending...' : 'Sign and Send WART'}
       </button>
 
       {localError && (
@@ -280,14 +353,8 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
         </div>
       )}
 
-      {result && (
-        <div className="result mt-6">
-          <h3 className="text-emerald-400 mb-3">Transaction Result</h3>
-          <div className="bg-zinc-950 p-4 rounded-2xl text-xs font-mono overflow-auto max-h-[420px] border border-zinc-800">
-            <pre>{JSON.stringify(result, null, 2)}</pre>
-          </div>
-        </div>
-      )}
+      {/* Stylized Transaction Result Card */}
+      {result && renderTransactionCard()}
     </section>
   );
 };
