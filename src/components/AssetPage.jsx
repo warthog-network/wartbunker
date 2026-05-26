@@ -222,14 +222,14 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     }).catch(() => {});
   };
 
-  // ==================== CREATE ASSET ====================
+  // ==================== CREATE ASSET (Updated with correct binary preimage + minFee + nonce override) ====================
   const handleCreateAsset = async () => {
-    const name = document.getElementById('assetName').value.trim().toUpperCase();
-    const supplyStr = document.getElementById('assetSupply').value;
-    const decimals = parseInt(document.getElementById('assetDecimals').value) || 8;
+    const nameInput = document.getElementById('assetName').value.trim().toUpperCase();
+    const supplyStr = document.getElementById('assetSupply').value.trim();
+    const decimalsInput = parseInt(document.getElementById('assetDecimals').value) || 8;
 
-    if (!name || name.length < 1 || name.length > 5) {
-      alert('Asset name must be 1-5 uppercase characters (e.g. LIQ)');
+    if (!nameInput || nameInput.length < 1 || nameInput.length > 5) {
+      alert('Asset name must be 1-5 uppercase characters (e.g. HOG)');
       return;
     }
     if (!supplyStr || parseFloat(supplyStr) <= 0) {
@@ -244,25 +244,62 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     setLoading(prev => ({ ...prev, createAsset: true }));
 
     try {
-      const nonceId = getSmartNonce();
-      const supplyU64 = Math.floor(parseFloat(supplyStr) * Math.pow(10, decimals));
-      const feeE8 = 1000000;
+      const name = nameInput;
+      const decimals = Math.min(Math.max(decimalsInput, 0), 18);
+      const supplyFloat = parseFloat(supplyStr);
+      const supplyU64 = BigInt(Math.floor(supplyFloat * Math.pow(10, decimals)));
 
-      const txData = {
-        type: "assetCreation",
-        name: name,
-        precision: decimals,
-        supplyU64: supplyU64,
-        pinHeight: pinHeight || 0,
-        nonceId: nonceId,
-        feeE8: feeE8,
-      };
+      // Nonce with smart persistence + manual override support (like Transfer)
+      let nonceId = getSmartNonce();
+      const nonceOverrideRaw = document.getElementById('createNonceOverride')?.value.trim();
+      if (nonceOverrideRaw !== '') {
+        const parsed = parseInt(nonceOverrideRaw);
+        if (!isNaN(parsed)) {
+          nonceId = parsed;
+        }
+      }
 
-      // Use raw signing (same as SendTransactionPage and handleTransferAsset)
-      // signMessage() adds Ethereum prefix which causes "Cannot parse signature"
-      const message = JSON.stringify(txData);
-      const hashHex = ethers.sha256(ethers.toUtf8Bytes(message));
+      const currentPinHeight = pinHeight || 0;
+      const currentPinHash = pinHash || '0000000000000000000000000000000000000000000000000000000000000000';
+
+      const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
+
+      // === FETCH CURRENT MINIMUM FEE FROM NODE (important for correct signing) ===
+      const minFeeRes = await axios.get(
+        `${API_URL}?nodePath=transaction/minfee&${nodeBaseParam}`
+      );
+      const minFeeE8 = minFeeRes.data?.data?.minFee?.E8 || minFeeRes.data?.minFee?.E8 || 10000;
+      console.log('Using exact minFeeE8 from node for assetCreation:', minFeeE8);
+
+      // === BUILD BINARY PREIMAGE FOR assetCreation (correct layout) ===
+      const pinHashBytes = hexToBytes(currentPinHash.replace(/^0x/, ''));
+      const nameBytes = new Uint8Array(5);
+      nameBytes.set(new TextEncoder().encode(name));
+
+      const binaryParts = [
+        pinHashBytes,                    // 32 bytes
+        uint32BE(currentPinHeight),      // 4 bytes
+        uint32BE(nonceId),               // 4 bytes
+        new Uint8Array(3),               // 3 bytes reserved
+        uint64BE(BigInt(minFeeE8)),      // 8 bytes
+        uint64BE(supplyU64),             // 8 bytes
+        new Uint8Array([decimals]),      // 1 byte
+        nameBytes                        // 5 bytes (null-padded if shorter)
+      ];
+
+      const totalLength = binaryParts.reduce((sum, part) => sum + part.length, 0);
+      const binary = new Uint8Array(totalLength);
+      let offset = 0;
+      for (const part of binaryParts) {
+        binary.set(part, offset);
+        offset += part.length;
+      }
+
+      const hashHex = ethers.sha256(binary);
       const hash = hashHex.slice(2);
+
+      console.log('=== ASSET CREATION BINARY HASH ===', hash);
+      console.log('Name:', name, 'Decimals:', decimals, 'SupplyU64:', supplyU64.toString());
 
       const signer = new ethers.Wallet(wallet.privateKey);
       const signature = await signer.signingKey.sign(ethers.getBytes('0x' + hash));
@@ -272,18 +309,37 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       const v = (signature.v - 27).toString(16).padStart(2, '0');
       const signature65 = r + s + v;
 
-      const signedTx = { ...txData, signature65: signature65 };
+      // === PAYLOAD (using decimals key as expected by current node) ===
+      const payload = {
+        type: "assetCreation",
+        name: name,
+        decimals: decimals,
+        supplyU64: Number(supplyU64),
+        feeE8: Number(minFeeE8),
+        nonceId: nonceId,
+        pinHeight: currentPinHeight,
+        signature65: signature65,
+      };
 
-      console.log('=== ASSET CREATION PAYLOAD ===', signedTx);
+      console.log('=== ASSET CREATION PAYLOAD ===', payload);
 
-      await query('createAsset', 'transaction/add', 'POST', signedTx);
+      await query('createAsset', 'transaction/add', 'POST', payload);
+
+      // Optimistic nonce tracking (same as Transfer)
+      updateNonceAfterSuccess(nonceId);
+
+      // Clear the override field after success
+      if (document.getElementById('createNonceOverride')) {
+        document.getElementById('createNonceOverride').value = '';
+      }
 
       alert('✅ Asset creation transaction sent successfully!\n\nCheck History tab soon.');
       document.getElementById('assetName').value = '';
       document.getElementById('assetSupply').value = '';
     } catch (err) {
       console.error(err);
-      alert('Failed to create asset: ' + (err.message || 'Unknown error'));
+      const errorDetail = err.response?.data?.error || err.response?.data?.message || err.message;
+      alert('Failed to create asset: ' + errorDetail);
     } finally {
       setLoading(prev => ({ ...prev, createAsset: false }));
     }
@@ -434,6 +490,17 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
 
             <label className="block text-sm font-medium mb-2">Decimals</label>
             <input id="assetDecimals" type="number" defaultValue="8" className="input mb-6" />
+
+            {/* NEW: Manual Nonce Override for Create Asset (consistent with Transfer) */}
+            <label className="block text-sm font-medium mb-2 text-amber-400">
+              Nonce Override (only use if you get "Duplicate nonce")
+            </label>
+            <input 
+              id="createNonceOverride" 
+              type="number" 
+              placeholder="Leave empty for auto" 
+              className="input mb-6" 
+            />
 
             <button
               onClick={handleCreateAsset}
