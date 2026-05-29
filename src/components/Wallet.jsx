@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { WalletProvider, useWallet } from './WalletContext';
+import { ToastProvider, useToast } from './Toast';
 import WalletOverview from './WalletOverview';
 import WalletSetup from './WalletSetup';
 import SendTransactionPage from './SendTransactionPage';
@@ -22,6 +23,8 @@ const WalletContent = () => {
     setSelectedNode,
     error,
   } = useWallet();
+
+  const toast = useToast();
 
   const [deferredPrompt, setDeferredPrompt] = useState(null);
   const [updateAvailable, setUpdateAvailable] = useState(false);
@@ -103,73 +106,78 @@ const WalletContent = () => {
     <div className="container">
 
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 mb-6">
-        <h1 className="text-3xl font-bold text-[#FDB913]">Warthog Network Defi</h1>
+      <div className="flex items-center justify-between px-1 py-4 mb-2">
+        <div>
+          <div className="text-[22px] font-semibold tracking-[-0.4px] text-[#FDB913]">Warthog</div>
+          <div className="text-[10px] text-zinc-500 -mt-0.5 font-mono">NETWORK DEFI</div>
+        </div>
         {/* Hamburger / Close Button */}
         <button
           onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-          className={`mobile-hamburger w-[52px] h-[52px] bg-orange-500 hover:bg-orange-600 rounded-xl flex items-center justify-center text-white transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-orange-400 active:scale-95 ${isMobileMenuOpen ? 'z-[60]' : ''}`}
+          className={`mobile-hamburger w-[48px] h-[48px] bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 rounded-2xl flex items-center justify-center text-white transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50 active:scale-[0.96] ${isMobileMenuOpen ? 'z-[60] bg-zinc-800' : ''}`}
           aria-label={isMobileMenuOpen ? "Close menu" : "Open menu"}
         >
           {isMobileMenuOpen ? (
-            // Close icon (X) - perfectly centered
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="w-9 h-9 transition-all duration-200"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth="3.5"
-            >
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
           ) : (
-            // Hamburger icon - perfectly centered
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="w-9 h-9 transition-all duration-200"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth="3"
-            >
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.25">
               <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           )}
         </button>
       </div>
 
-      {/* PWA Buttons */}
-      {deferredPrompt && (
-        <button onClick={handleInstallClick} className="install-button mb-4">
-          Install App
-        </button>
-      )}
-      {updateAvailable && (
-        <button onClick={handleUpdate} className="install-button mb-4">
-          Update App Available
-        </button>
+      {/* PWA Install / Update (subtle row) */}
+      {(deferredPrompt || updateAvailable) && (
+        <div className="flex flex-wrap gap-2 mb-4 px-1">
+          {deferredPrompt && (
+            <button onClick={handleInstallClick} className="px-4 py-1.5 text-xs font-medium bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 rounded-2xl text-orange-400 transition-colors">
+              Install as App
+            </button>
+          )}
+          {updateAvailable && (
+            <button onClick={handleUpdate} className="px-4 py-1.5 text-xs font-medium bg-emerald-900/60 hover:bg-emerald-900 border border-emerald-800 rounded-2xl text-emerald-400 transition-colors">
+              Update Available
+            </button>
+          )}
+        </div>
       )}
 
-      {/* Desktop Tabs (≥ 768px) */}
-      <div className="desktop-tabs overflow-x-auto pb-4 mb-6 border-b border-gray-700 scrollbar-hide">
-        {tabs.map(tab => (
-          <button
-            key={tab.key}
-            onClick={() => setCurrentTab(tab.key)}
-            className={`flex-shrink-0 px-6 py-3 text-sm font-medium whitespace-nowrap mx-1 rounded-t-lg transition-all duration-200 ${
-              currentTab === tab.key
-                ? 'bg-orange-500 text-white border-b-4 border-orange-400'
-                : 'text-gray-400 hover:text-gray-200 hover:bg-zinc-900'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
+      {/* Desktop Tabs (≥ 768px) — smoother active indicator */}
+      <div className="desktop-tabs relative overflow-x-auto pb-1 mb-6 border-b border-zinc-800 scrollbar-hide">
+        <div className="flex gap-1 px-1">
+          {tabs.map(tab => {
+            const isActive = currentTab === tab.key;
+            return (
+              <button
+                key={tab.key}
+                onClick={() => setCurrentTab(tab.key)}
+                className={`flex-shrink-0 px-5 py-2.5 text-sm font-semibold whitespace-nowrap rounded-xl transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50 ${
+                  isActive
+                    ? 'bg-zinc-900 text-white shadow-sm'
+                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-950'
+                }`}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+        {/* Active underline indicator (subtle) */}
+        <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-orange-500/60 to-transparent" />
       </div>
 
-      {/* Mobile Menu Overlay */}
-      <div className={`mobile-menu fixed top-0 right-0 w-full h-full bg-black/95 z-50 flex flex-col transition-transform duration-300 ease-in-out ${
+      {/* Mobile Menu Overlay + Backdrop */}
+      {isMobileMenuOpen && (
+        <div
+          className="fixed inset-0 bg-black/70 z-40 md:hidden"
+          onClick={() => setIsMobileMenuOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+      <div className={`mobile-menu fixed top-0 right-0 w-full h-full bg-zinc-950 z-50 flex flex-col transition-transform duration-300 ease-out md:hidden ${
         isMobileMenuOpen ? 'translate-x-0' : 'translate-x-full'
       }`}>
         <div className="flex-1 pt-24 px-8 overflow-y-auto">
@@ -205,8 +213,8 @@ const WalletContent = () => {
       {renderTabContent()}
 
       {error && (
-        <div className="error">
-          <strong>Error:</strong> {error}
+        <div className="mt-6 mx-1 rounded-2xl border border-red-900/60 bg-red-950/40 px-4 py-3 text-sm text-red-300">
+          <span className="font-semibold text-red-400">Error:</span> {error}
         </div>
       )}
     </div>
@@ -216,7 +224,9 @@ const WalletContent = () => {
 const Wallet = () => {
   return (
     <WalletProvider>
-      <WalletContent />
+      <ToastProvider>
+        <WalletContent />
+      </ToastProvider>
     </WalletProvider>
   );
 };

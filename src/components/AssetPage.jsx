@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import axios from 'axios';
 import { ethers } from 'ethers';
 import { useWallet } from './WalletContext';
+import { useToast } from './Toast';
 
 const API_URL = '/api/proxy';
 
@@ -14,6 +15,8 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   } = useWallet();
 
   const selectedNode = propSelectedNode || contextSelectedNode || 'https://warthognode.duckdns.org';
+
+  const toast = useToast();
 
   const [results, setResults] = useState({});
   const [loading, setLoading] = useState({});
@@ -218,8 +221,8 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const copyToClipboard = (text) => {
     if (!text) return;
     navigator.clipboard.writeText(text).then(() => {
-      alert('Copied to clipboard!');
-    }).catch(() => {});
+      toast.success('Copied to clipboard');
+    }).catch(() => toast.error('Failed to copy'));
   };
 
   // ==================== CREATE ASSET (Updated with correct binary preimage + minFee + nonce override) ====================
@@ -229,15 +232,15 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     const decimalsInput = parseInt(document.getElementById('assetDecimals').value) || 8;
 
     if (!nameInput || nameInput.length < 1 || nameInput.length > 5) {
-      alert('Asset name must be 1-5 uppercase characters (e.g. HOG)');
+      toast.error('Asset name must be 1-5 uppercase characters (e.g. HOG)');
       return;
     }
     if (!supplyStr || parseFloat(supplyStr) <= 0) {
-      alert('Please enter a valid total supply greater than 0');
+      toast.error('Please enter a valid total supply greater than 0');
       return;
     }
     if (!wallet?.privateKey) {
-      alert('Wallet not loaded. Please log in again.');
+      toast.error('Wallet not loaded. Please log in again.');
       return;
     }
 
@@ -333,13 +336,13 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
         document.getElementById('createNonceOverride').value = '';
       }
 
-      alert('✅ Asset creation transaction sent successfully!\n\nCheck History tab soon.');
+      toast.success('Asset creation transaction sent — check History tab');
       document.getElementById('assetName').value = '';
       document.getElementById('assetSupply').value = '';
     } catch (err) {
       console.error(err);
       const errorDetail = err.response?.data?.error || err.response?.data?.message || err.message;
-      alert('Failed to create asset: ' + errorDetail);
+      toast.error('Failed to create asset: ' + errorDetail);
     } finally {
       setLoading(prev => ({ ...prev, createAsset: false }));
     }
@@ -366,11 +369,11 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     }
 
     if (!assetIdRaw || !recipientRaw || !amountStr) {
-      alert('All transfer fields are required');
+      toast.error('All transfer fields are required');
       return;
     }
     if (!wallet?.privateKey) {
-      alert('Wallet not loaded. Please log in again.');
+      toast.error('Wallet not loaded. Please log in again.');
       return;
     }
 
@@ -380,13 +383,13 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     if (toAddr.toLowerCase().startsWith('0x')) toAddr = toAddr.slice(2);
 
     if (assetHash.length !== 64) {
-      alert('Asset Hash must be exactly 64 hex characters (without 0x)');
+      toast.error('Asset Hash must be exactly 64 hex characters (without 0x)');
       return;
     }
 
     const amountFloat = parseFloat(amountStr.replace(',', '.'));
     if (!Number.isFinite(amountFloat) || amountFloat <= 0) {
-      alert('Please enter a valid amount greater than 0');
+      toast.error('Please enter a valid amount greater than 0');
       return;
     }
 
@@ -461,10 +464,10 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
         document.getElementById('transferNonceOverride').value = '';
       }
 
-      alert('✅ Asset transfer transaction sent successfully!\n\nCheck History tab soon.');
+      toast.success('Asset transfer sent — check History tab');
     } catch (err) {
       console.error(err);
-      alert('Transfer failed: ' + (err.message || 'Unknown error'));
+      toast.error('Transfer failed: ' + (err.message || 'Unknown error'));
     } finally {
       setLoading(prev => ({ ...prev, transferAsset: false }));
     }

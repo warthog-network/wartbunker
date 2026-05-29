@@ -1,6 +1,7 @@
 // TransactionHistory.jsx - COMPLETE FILE (timestamps now work on BOTH public nodes + DeFi testnet)
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { useToast } from './Toast';
 
 const API_URL = '/api/proxy';
 const PAGE_SIZE = 15;
@@ -13,6 +14,8 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
   const [hasMore, setHasMore] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
   const [showTooltip24h, setShowTooltip24h] = useState(false);
+
+  const toast = useToast();
   const [showTooltipWeek, setShowTooltipWeek] = useState(false);
   const [showTooltipMonth, setShowTooltipMonth] = useState(false);
   const [timeoutId24h, setTimeoutId24h] = useState(null);
@@ -231,10 +234,11 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
   };
 
   const copyToClipboard = (text) => {
+    if (!text) return;
     navigator.clipboard.writeText(text).then(() => {
-      alert('Copied to clipboard!');
-    }).catch(err => {
-      console.error('Failed to copy: ', err);
+      toast.success('Copied to clipboard');
+    }).catch(() => {
+      toast.error('Failed to copy to clipboard');
     });
   };
 

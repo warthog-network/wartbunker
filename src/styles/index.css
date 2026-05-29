@@ -28,8 +28,8 @@
 
 
 body {
-  text-align: center;
-  align-items: center;
+  /* Removed global text-align: center — it was forcing awkward overrides everywhere */
+  background-color: #000000;
 }
 
 

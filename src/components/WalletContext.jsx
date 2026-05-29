@@ -28,8 +28,46 @@ export const WalletProvider = ({ children }) => {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
-  // NEW: Asset balances
+  // NEW: Asset balances (live fetched data)
   const [assetBalances, setAssetBalances] = useState([]);
+
+  // NEW: Persisted watched asset hashes (what the user wants to track)
+  const [watchedAssets, setWatchedAssets] = useState([]); // [{ hash: string, customName?: string }]
+
+  const getWatchedAssetsKey = (address) => address ? `warthogWatchedAssets_${address.toLowerCase()}` : null;
+
+  // ==================== AUTO FAKE MINING (Testnet only) ====================
+  const [isAutoMining, setIsAutoMining] = useState(false);
+  const [autoMineCount, setAutoMineCount] = useState(0);
+  const autoMineIntervalRef = React.useRef(null);
+
+  // Refs to always use the latest function versions inside setInterval / setTimeout
+  const performFakeMineRef = React.useRef(null);
+  const refreshBalanceRef = React.useRef(null);
+
+  const isTestnetNode = (node) => {
+    if (!node) return false;
+    const n = node.toLowerCase();
+    return n.includes('localhost') ||
+           n.includes('127.0.0.1') ||
+           n.includes('defitestnet') ||
+           n.includes('testnet');
+  };
+
+  const getFakeMineUrl = (address, node) => {
+    if (!address) return null;
+    // For the public DeFi testnet, we hit the known debug endpoint
+    if (node?.includes('defitestnet') || node?.includes('warthog-defitestnet')) {
+      return `https://warthog-defitestnet.duckdns.org/debug/fakemine/${address}`;
+    }
+    // For local nodes, we assume the debug endpoint is available on the same host
+    try {
+      const url = new URL(node);
+      return `${url.origin}/debug/fakemine/${address}`;
+    } catch {
+      return null;
+    }
+  };
 
   const isMainnetNode = (node) => 
     node === 'https://warthognode.duckdns.org' || 
@@ -187,13 +225,240 @@ export const WalletProvider = ({ children }) => {
 
   } catch (err) {
     console.error('Failed to fetch asset balance:', err);
-    alert('Failed to fetch asset balance. Check the hash.');
+    // Note: UI layer (WalletOverview) shows user-facing toasts for manual fetches.
+    // Context itself intentionally does not depend on the toast system.
   }
 };
+
+  // ==================== WATCHED ASSETS PERSISTENCE ====================
+
+  const loadWatchedAssets = (address) => {
+    if (!address) return [];
+    const key = getWatchedAssetsKey(address);
+    try {
+      const saved = localStorage.getItem(key);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to parse watched assets from localStorage');
+    }
+    return [];
+  };
+
+  const saveWatchedAssets = (address, assets) => {
+    if (!address) return;
+    const key = getWatchedAssetsKey(address);
+    try {
+      localStorage.setItem(key, JSON.stringify(assets));
+    } catch (e) {
+      console.warn('Failed to save watched assets to localStorage');
+    }
+  };
+
+  const addWatchedAsset = (assetHash, customName = '') => {
+    if (!wallet?.address || !assetHash) return;
+
+    const normalizedHash = assetHash.toLowerCase();
+    setWatchedAssets(prev => {
+      const exists = prev.findIndex(a => a.hash.toLowerCase() === normalizedHash);
+      let next;
+      if (exists !== -1) {
+        // Update name if provided
+        next = [...prev];
+        if (customName) next[exists] = { ...next[exists], customName };
+      } else {
+        next = [...prev, { hash: normalizedHash, customName: customName || undefined }];
+      }
+      saveWatchedAssets(wallet.address, next);
+      return next;
+    });
+
+    // Immediately fetch latest balance for it
+    fetchAssetBalance(normalizedHash, customName);
+  };
+
+  const removeWatchedAsset = (assetHash) => {
+    if (!wallet?.address) return;
+
+    const normalizedHash = assetHash.toLowerCase();
+    setWatchedAssets(prev => {
+      const next = prev.filter(a => a.hash.toLowerCase() !== normalizedHash);
+      saveWatchedAssets(wallet.address, next);
+      return next;
+    });
+
+    // Also remove from live balances
+    setAssetBalances(prev => prev.filter(a => a.hash.toLowerCase() !== normalizedHash));
+  };
+
+  const clearWatchedAssets = () => {
+    if (!wallet?.address) return;
+    const key = getWatchedAssetsKey(wallet.address);
+    localStorage.removeItem(key);
+    setWatchedAssets([]);
+    setAssetBalances([]);
+  };
+
+  // ==================== AUTO MINING FUNCTIONS ====================
+
+  const performFakeMine = async () => {
+    if (!wallet?.address || !selectedNode) return false;
+
+    const mineUrl = getFakeMineUrl(wallet.address, selectedNode);
+    if (!mineUrl) {
+      console.warn('Could not determine fake mine URL for current node');
+      return false;
+    }
+
+    // Count the mine attempt (and refresh balance) every time we mine
+    setAutoMineCount(c => c + 1);
+    refreshBalanceRef.current?.();
+
+    try {
+      await axios.get(mineUrl);
+      return true;
+    } catch (err) {
+      console.log('Auto mine request completed (may have rate limits or still succeeded)');
+      return false;
+    }
+  };
+
+  const startAutoMining = () => {
+    if (autoMineIntervalRef.current) return; // already running
+
+    // Do one immediately using latest version
+    performFakeMineRef.current?.();
+
+    autoMineIntervalRef.current = setInterval(() => {
+      performFakeMineRef.current?.();
+    }, 20 * 1000); // every 20 seconds
+  };
+
+  const stopAutoMining = () => {
+    if (autoMineIntervalRef.current) {
+      clearInterval(autoMineIntervalRef.current);
+      autoMineIntervalRef.current = null;
+    }
+  };
+
+  const toggleAutoMining = () => {
+    if (!wallet?.address) {
+      setError('No wallet connected');
+      return;
+    }
+
+    if (!isTestnetNode(selectedNode)) {
+      setError('Auto mining is only available on testnet / localhost nodes');
+      return;
+    }
+
+    const newState = !isAutoMining;
+
+    if (newState) {
+      // Turning ON
+      setIsAutoMining(true);
+      setAutoMineCount(0);
+      startAutoMining();
+      // Persist preference
+      localStorage.setItem(`warthogAutoMine_${wallet.address.toLowerCase()}`, 'true');
+    } else {
+      // Turning OFF
+      setIsAutoMining(false);
+      stopAutoMining();
+      localStorage.removeItem(`warthogAutoMine_${wallet.address.toLowerCase()}`);
+    }
+  };
+
+  // Auto-stop mining if node changes to non-testnet or wallet logs out
+  useEffect(() => {
+    if (isAutoMining && !isTestnetNode(selectedNode)) {
+      setIsAutoMining(false);
+      stopAutoMining();
+      if (wallet?.address) {
+        localStorage.removeItem(`warthogAutoMine_${wallet.address.toLowerCase()}`);
+      }
+    }
+  }, [selectedNode, isAutoMining]);
+
+  // Restore auto-mining preference on login
+  useEffect(() => {
+    if (wallet?.address && isLoggedIn && isTestnetNode(selectedNode)) {
+      const shouldMine = localStorage.getItem(`warthogAutoMine_${wallet.address.toLowerCase()}`) === 'true';
+      if (shouldMine && !isAutoMining) {
+        setIsAutoMining(true);
+        setAutoMineCount(0);
+        // small delay so node is ready
+        setTimeout(() => {
+          startAutoMining();
+        }, 800);
+      }
+    }
+  }, [wallet?.address, isLoggedIn, selectedNode]);
+
+  // Cleanup interval on unmount or logout
+  useEffect(() => {
+    return () => {
+      stopAutoMining();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isLoggedIn || !wallet) {
+      stopAutoMining();
+      setIsAutoMining(false);
+      setAutoMineCount(0);
+    }
+  }, [isLoggedIn, wallet]);
+
+  // ==================== END AUTO MINING ====================
+
+  // Load watched assets when wallet changes or logs in
+  useEffect(() => {
+    if (wallet?.address && isLoggedIn) {
+      const loaded = loadWatchedAssets(wallet.address);
+      setWatchedAssets(loaded);
+
+      // Fetch balances for all watched assets
+      if (loaded.length > 0 && selectedNode) {
+        // Small delay to not hammer the node on login
+        setTimeout(() => {
+          loaded.forEach((asset, idx) => {
+            setTimeout(() => {
+              fetchAssetBalance(asset.hash, asset.customName);
+            }, idx * 180); // stagger requests
+          });
+        }, 250);
+      }
+    }
+  }, [wallet?.address, isLoggedIn, selectedNode]);
+
+  // Clear assets when logging out or wallet is cleared
+  useEffect(() => {
+    if (!isLoggedIn || !wallet) {
+      setAssetBalances([]);
+      setWatchedAssets([]);
+    }
+  }, [isLoggedIn, wallet]);
+
+  // ==================== END WATCHED ASSETS ====================
 
   const refreshBalance = () => {
     setRefreshTrigger(prev => prev + 1);
   };
+
+  // Keep refs pointing to the latest function versions (prevents stale closures in setInterval)
+  // These must be placed AFTER refreshBalance and performFakeMine are declared.
+  useEffect(() => {
+    refreshBalanceRef.current = refreshBalance;
+  }, [refreshBalance]);
+
+  useEffect(() => {
+    performFakeMineRef.current = performFakeMine;
+  }, [performFakeMine]);
 
   const value = {
     wallet,
@@ -217,9 +482,18 @@ export const WalletProvider = ({ children }) => {
     setIsLoggedIn,
     fetchBalanceAndNonce,
     refreshBalance,
-    // NEW
+    // NEW: Asset system
     assetBalances,
     fetchAssetBalance,
+    watchedAssets,
+    addWatchedAsset,
+    removeWatchedAsset,
+    clearWatchedAssets,
+    // Auto fake mining (testnet)
+    isAutoMining,
+    autoMineCount,
+    toggleAutoMining,
+    isTestnetNode,
   };
 
   return (

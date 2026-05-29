@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { useWallet } from './WalletContext';
+import { useToast } from './Toast';
 import { generateWallet, deriveWallet, importFromPrivateKey, encryptWallet, decryptWallet } from '../utils/warthogWalletUtils';
 
 const WalletSetup = () => {
   const { setWallet, setIsLoggedIn, setCurrentTab } = useWallet();
+  const toast = useToast();
 
   const [walletAction, setWalletAction] = useState('create');
   const [mnemonic, setMnemonic] = useState('');
@@ -116,6 +118,13 @@ const WalletSetup = () => {
   const getSavedWallets = () => {
     const keys = Object.keys(localStorage);
     return keys.filter(key => key.startsWith('warthogWallet_')).map(key => key.replace('warthogWallet_', ''));
+  };
+
+  const copyToClipboard = (text, label = 'Copied') => {
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(() => {
+      toast.success(label);
+    }).catch(() => toast.error('Failed to copy'));
   };
 
   return (
@@ -276,26 +285,38 @@ const WalletSetup = () => {
         <div className="modal-overlay">
           <div className="modal-content">
             <h2>Wallet Information</h2>
-            <p className="warning">
-              Warning: Please write down your seed phrase (if available) and private key on a piece of paper and store them securely. Do not share them with anyone.
-            </p>
+            <div className="rounded-xl bg-amber-950/60 border border-amber-900/70 px-4 py-3 text-sm text-amber-300">
+              <strong>Critical:</strong> Write your seed phrase and private key on paper and store them offline. Never share them. Anyone with this information can steal your funds.
+            </div>
             {walletData.mnemonic && (
               <div className="result">
-                <p><strong>Mnemonic:</strong></p>
-                <pre>{walletData.mnemonic}</pre>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-medium text-amber-400">MNEMONIC (SAVE THIS SECURELY)</span>
+                  <button onClick={() => copyToClipboard(walletData.mnemonic, 'Mnemonic copied')} className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 hover:text-white">COPY</button>
+                </div>
+                <pre onClick={() => copyToClipboard(walletData.mnemonic, 'Mnemonic copied')} className="cursor-pointer select-all">{walletData.mnemonic}</pre>
               </div>
             )}
             <div className="result">
-              <p><strong>Private Key:</strong></p>
-              <pre>{walletData.privateKey}</pre>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-medium text-red-400">PRIVATE KEY — NEVER SHARE</span>
+                <button onClick={() => copyToClipboard(walletData.privateKey, 'Private key copied')} className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 hover:text-white">COPY</button>
+              </div>
+              <pre onClick={() => copyToClipboard(walletData.privateKey, 'Private key copied')} className="cursor-pointer select-all">{walletData.privateKey}</pre>
             </div>
             <div className="result">
-              <p><strong>Public Key:</strong></p>
-              <pre>{walletData.publicKey}</pre>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-medium text-zinc-400">Public Key</span>
+                <button onClick={() => copyToClipboard(walletData.publicKey, 'Public key copied')} className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 hover:text-white">COPY</button>
+              </div>
+              <pre onClick={() => copyToClipboard(walletData.publicKey)} className="cursor-pointer select-all text-xs">{walletData.publicKey}</pre>
             </div>
             <div className="result">
-              <p><strong>Address:</strong></p>
-              <pre>{walletData.address}</pre>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-medium text-emerald-400">Address</span>
+                <button onClick={() => copyToClipboard(walletData.address, 'Address copied')} className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 hover:text-white">COPY</button>
+              </div>
+              <pre onClick={() => copyToClipboard(walletData.address, 'Address copied')} className="cursor-pointer select-all font-mono text-sm">{walletData.address}</pre>
             </div>
             <div className="form-group">
               <label>

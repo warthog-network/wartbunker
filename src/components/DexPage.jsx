@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import axios from 'axios';
 import { ethers } from 'ethers';
 import { useWallet } from './WalletContext';
+import { useToast } from './Toast';
 
 const API_URL = '/api/proxy';
 
@@ -18,6 +19,8 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const wallet = propWallet || (sessionStorage.getItem('warthogWalletDecrypted')
     ? JSON.parse(sessionStorage.getItem('warthogWalletDecrypted'))
     : null);
+
+  const toast = useToast();
 
   const [results, setResults] = useState({});
   const [loading, setLoading] = useState({});
@@ -99,7 +102,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const copyToClipboard = (text) => {
     if (!text) return;
     navigator.clipboard.writeText(text).then(() => {
-      alert('Copied to clipboard!');
+      toast.success('Copied to clipboard');
     }).catch(() => {});
   };
 
@@ -514,32 +517,32 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     }
 
     if (!assetHashRaw || !assetAmountStr || !wartAmountStr) {
-      alert('Asset Hash, Asset Amount, and WART Amount are required');
+      toast.error('Asset Hash, Asset Amount, and WART Amount are required');
       return;
     }
     if (!wallet?.privateKey) {
-      alert('Wallet not loaded. Please log in again.');
+      toast.error('Wallet not loaded. Please log in again.');
       return;
     }
 
     let assetHash = assetHashRaw;
     if (assetHash.toLowerCase().startsWith('0x')) assetHash = assetHash.slice(2);
     if (assetHash.length !== 64) {
-      alert('Asset Hash must be exactly 64 hex characters (without 0x)');
+      toast.error('Asset Hash must be exactly 64 hex characters (without 0x)');
       return;
     }
 
     const assetAmountFloat = parseFloat(assetAmountStr.replace(',', '.'));
     const decimals = parseInt(decimalsStr) || 8;
     if (!Number.isFinite(assetAmountFloat) || assetAmountFloat <= 0) {
-      alert('Please enter a valid Asset Amount greater than 0');
+      toast.error('Please enter a valid Asset Amount greater than 0');
       return;
     }
     const amountU64 = Math.floor(assetAmountFloat * Math.pow(10, decimals));
 
     const wartAmountFloat = parseFloat(wartAmountStr.replace(',', '.'));
     if (!Number.isFinite(wartAmountFloat) || wartAmountFloat < 0) {
-      alert('Please enter a valid WART Amount');
+      toast.error('Please enter a valid WART Amount');
       return;
     }
     const wartE8 = Math.floor(wartAmountFloat * 100000000);
@@ -606,10 +609,10 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
         document.getElementById('liquidityNonceOverride').value = '';
       }
 
-      alert('✅ Liquidity deposit sent successfully!\n\nAfter confirmation, scroll down to "Pool Info & My Liquidity Position" to verify.');
+      toast.success('Liquidity deposit sent — check pool info below');
     } catch (err) {
       console.error(err);
-      alert('Liquidity deposit failed: ' + (err.message || 'Unknown error'));
+      toast.error('Liquidity deposit failed: ' + (err.message || 'Unknown error'));
     } finally {
       setLoading(prev => ({ ...prev, liquidityDeposit: false }));
     }
@@ -619,14 +622,14 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const loadPoolAndPosition = async () => {
     const assetRaw = document.getElementById('poolAssetHash')?.value.trim() || '';
     if (!assetRaw) {
-      alert('Please enter an Asset Hash');
+      toast.error('Please enter an Asset Hash');
       return;
     }
 
     let assetHash = assetRaw;
     if (assetHash.toLowerCase().startsWith('0x')) assetHash = assetHash.slice(2);
     if (assetHash.length !== 64) {
-      alert('Asset Hash must be exactly 64 hex characters');
+      toast.error('Asset Hash must be exactly 64 hex characters');
       return;
     }
 
@@ -654,22 +657,22 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     }
 
     if (!assetHashRaw || !amountStr || !limitHex) {
-      alert('Asset Hash, Amount, and Encoded Limit Price are required');
+      toast.error('Asset Hash, Amount, and Encoded Limit Price are required');
       return;
     }
     if (!wallet?.privateKey) {
-      alert('Wallet not loaded. Please log in again.');
+      toast.error('Wallet not loaded. Please log in again.');
       return;
     }
 
     let assetHash = assetHashRaw;
     if (assetHash.toLowerCase().startsWith('0x')) assetHash = assetHash.slice(2);
     if (assetHash.length !== 64) {
-      alert('Asset Hash must be exactly 64 hex characters (without 0x)');
+      toast.error('Asset Hash must be exactly 64 hex characters (without 0x)');
       return;
     }
     if (limitHex.length !== 6) {
-      alert('Limit price must be exactly 6 hex characters (3 bytes)');
+      toast.error('Limit price must be exactly 6 hex characters (3 bytes)');
       return;
     }
 
@@ -742,10 +745,10 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
         document.getElementById('limitNonceOverride').value = '';
       }
 
-      alert('✅ Limit order submitted successfully!');
+      toast.success('Limit order submitted successfully');
     } catch (err) {
       console.error(err);
-      alert('Limit order failed: ' + (err.message || 'Unknown error'));
+      toast.error('Limit order failed: ' + (err.message || 'Unknown error'));
     } finally {
       setLoading(prev => ({ ...prev, limitSwap: false }));
     }
@@ -757,7 +760,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     const decimalsStr = document.getElementById('limitPriceDecimals')?.value.trim() || '8';
 
     if (!priceStr) {
-      alert('Please enter a price');
+      toast.error('Please enter a price');
       return;
     }
 
@@ -772,14 +775,14 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
 
       if (encoded && encoded.length === 6) {
         document.getElementById('limitEncoded').value = encoded;
-        alert(`✅ Encoded limit: ${encoded}`);
+        toast.success(`Encoded limit: ${encoded}`);
       } else {
-        alert("Could not extract encoded limit. Check browser console for the response structure.");
+        toast.error("Could not extract encoded limit (see console)");
         console.warn("Unexpected response format:", res.data);
       }
     } catch (err) {
       console.error(err);
-      alert('Failed to encode price: ' + (err.response?.data?.message || err.message));
+      toast.error('Failed to encode price: ' + (err.response?.data?.message || err.message));
     }
   };
 

@@ -25,7 +25,7 @@ const DeFiTestnetPage = ({ selectedNode, wallet }) => {
   return (
     <section>
       <h2>DeFi Testnet Tools</h2>
-      <p className="mb-6">These endpoints only work on custom/testnet nodes (e.g. http://localhost:3000)</p>
+      <p className="mb-6">These endpoints only work on custom/testnet nodes (e.g. https://warthog-defitestnet.duckdns.org)</p>
 
       {/* Asset Endpoints */}
       <div className="mb-8">

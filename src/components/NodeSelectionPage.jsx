@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 const defaultNodeList = [
   'https://warthognode.duckdns.org',
   'http://217.182.64.43:3001',
+  'https://warthog-defitestnet.duckdns.org',
 ];
 
 const NodeSelectionPage = ({ onNodeChange }) => {
@@ -22,7 +23,7 @@ const NodeSelectionPage = ({ onNodeChange }) => {
   };
 
   const useTestnet = () => {
-    const testnetUrl = 'http://localhost:3000';
+    const testnetUrl = 'https://warthog-defitestnet.duckdns.org';
     setSelectedNode(testnetUrl);
     setCustomNode(testnetUrl);
     localStorage.setItem('selectedNode', testnetUrl);
@@ -37,7 +38,7 @@ const NodeSelectionPage = ({ onNodeChange }) => {
     }
   };
 
-  const isCustomSelected = !defaultNodeList.includes(selectedNode);
+  const isTestnetOrCustom = !defaultNodeList.includes(selectedNode) || selectedNode.toLowerCase().includes('defitestnet');
 
   return (
     <section>
@@ -62,23 +63,27 @@ const NodeSelectionPage = ({ onNodeChange }) => {
           type="text"
           value={customNode}
           onChange={(e) => setCustomNode(e.target.value)}
-          placeholder="http://localhost:3000"
+          placeholder="https://warthog-defitestnet.duckdns.org"
           className="input"
         />
-        <button onClick={saveCustomNode} className="mt-2"  style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>Save Custom Node</button>
+        <button 
+          onClick={saveCustomNode} 
+          className="mt-3 w-full py-2.5 text-sm font-medium bg-zinc-800 hover:bg-zinc-700 rounded-2xl border border-zinc-700"
+        >
+          Save Custom Node
+        </button>
       </div>
 
       <button
         onClick={useTestnet}
-        className="px-4 py-2 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700"
-       style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}
+        className="mt-2 w-full py-2.5 text-sm font-semibold bg-emerald-600 hover:bg-emerald-700 rounded-2xl transition-colors"
       >
-        Use DeFi Testnet (localhost:3000)
+        Use DeFi Testnet (warthog-defitestnet.duckdns.org)
       </button>
 
       <div className="result">
         <p><strong>Current Node:</strong> {selectedNode}</p>
-        {isCustomSelected && <p className="text-emerald-600">✅ Testnet / Custom node active → DeFi tools enabled</p>}
+        {isTestnetOrCustom && <p className="text-emerald-600">✅ Testnet / Custom node active → DeFi tools enabled</p>}
       </div>
     </section>
   );

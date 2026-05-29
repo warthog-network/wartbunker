@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { useWallet } from './WalletContext';
+import { useToast } from './Toast';
+// Removed old ConfirmDialog import (auto-mining no longer needs one-shot confirmation)
 import axios from 'axios';
 
 const API_URL = '/api/proxy';
@@ -16,34 +18,48 @@ const WalletOverview = ({ onLogout }) => {
     refreshBalance,
     assetBalances,
     fetchAssetBalance,
+    addWatchedAsset,
+    removeWatchedAsset,
+    // Auto mining
+    isAutoMining,
+    autoMineCount,
+    toggleAutoMining,
+    isTestnetNode,
   } = useWallet();
+
+  const toast = useToast();
 
   const [manualAssetHash, setManualAssetHash] = useState('');
   const [isFetching, setIsFetching] = useState(false);
-  const [isMining, setIsMining] = useState(false);
 
   // NEW: Open Limit Orders state
   const [openOrders, setOpenOrders] = useState(null);
   const [loadingOpenOrders, setLoadingOpenOrders] = useState(false);
 
   const copyToClipboard = (text) => {
+    if (!text) return;
     navigator.clipboard.writeText(text).then(() => {
-      alert('Copied to clipboard!');
-    }).catch(err => console.error('Failed to copy:', err));
+      toast.success('Copied to clipboard');
+    }).catch(() => {
+      toast.error('Failed to copy to clipboard');
+    });
   };
 
   const handleFetchManualAsset = async () => {
     if (!manualAssetHash || manualAssetHash.length < 60) {
-      alert('Please enter a valid asset hash (64 characters)');
+      toast.error('Please enter a valid asset hash (64 hex characters)');
       return;
     }
 
     setIsFetching(true);
     try {
       await fetchAssetBalance(manualAssetHash);
+      // Persist it so it survives refresh / reload
+      addWatchedAsset(manualAssetHash);
       setManualAssetHash('');
+      toast.success('Asset added to your wallet');
     } catch (err) {
-      alert('Failed to fetch asset balance');
+      toast.error('Failed to fetch asset balance');
     }
     setIsFetching(false);
   };
@@ -51,7 +67,7 @@ const WalletOverview = ({ onLogout }) => {
   // ==================== FETCH OPEN LIMIT ORDERS ====================
   const fetchOpenOrders = async () => {
     if (!wallet?.address) {
-      alert('No wallet connected');
+      toast.error('No wallet connected');
       return;
     }
 
@@ -64,41 +80,13 @@ const WalletOverview = ({ onLogout }) => {
       setOpenOrders(res.data);
     } catch (err) {
       console.error(err);
-      alert('Failed to fetch open orders: ' + (err.response?.data?.message || err.message));
+      toast.error('Failed to fetch open orders: ' + (err.response?.data?.message || err.message));
     }
     setLoadingOpenOrders(false);
   };
   // ============================================================
 
-  // ==================== IMPROVED FAKE MINE ====================
-  const handleFakeMine = async () => {
-    if (!wallet?.address) {
-      alert('No wallet connected');
-      return;
-    }
-
-    const confirmMine = window.confirm(
-      `Fake mine to this address on testnet?\n\n${wallet.address}`
-    );
-    if (!confirmMine) return;
-
-    setIsMining(true);
-
-    try {
-      await axios.get(
-        `https://warthog-defitestnet.duckdns.org/debug/fakemine/${wallet.address}`
-      );
-    } catch (err) {
-      console.log("Fake mine request finished");
-    }
-
-    setTimeout(() => {
-      refreshBalance();
-      setIsMining(false);
-      alert("✅ Balance refreshed. Check if fake mining worked.");
-    }, 2000);
-  };
-  // ========================================================
+  // Note: Fake mining is now handled via toggleAutoMining() in context (continuous every 60s)
 
   // ==================== STYLIZED ORDER CARD RENDERER ====================
   const renderOrderCard = (order, direction, assetName, assetDecimals, onCopy) => {
@@ -186,7 +174,8 @@ const WalletOverview = ({ onLogout }) => {
   }
 
   return (
-    <section style={{ textAlign: 'left' }}>
+    <>
+      <section style={{ textAlign: 'left' }}>
       <h2 style={{ textAlign: 'left' }}>Wallet Overview</h2>
 
       {/* Address */}
@@ -215,35 +204,60 @@ const WalletOverview = ({ onLogout }) => {
         <p><strong>USD Value:</strong> ${usdBalance || 'N/A'}</p>
       </div>
 
-      {/* Your Assets Section */}
-      {assetBalances.length > 0 && (
-        <div className="result mt-4" style={{ textAlign: 'left' }}>
-          <p className="font-semibold mb-3 text-blue-400">Your Assets</p>
-          {assetBalances.map((asset, index) => (
-            <div 
-              key={index} 
-              className="flex justify-between items-center py-2 border-t border-zinc-800 first:border-t-0"
-            >
-              <div>
-                <span className="font-medium">{asset.name}</span>
-                <span className="text-xs text-gray-500 ml-2">({asset.hash.slice(0, 10)}...)</span>
-              </div>
-              <div className="font-mono text-right">
-                {asset.balance} <span className="text-xs text-gray-400">{asset.name}</span>
-              </div>
-            </div>
-          ))}
+      {/* Your Assets (Watched Tokens) */}
+      <div className="result mt-4" style={{ textAlign: 'left' }}>
+        <div className="flex items-center justify-between mb-3">
+          <p className="font-semibold text-blue-400">Your Assets</p>
+          {assetBalances.length > 0 && (
+            <span className="text-xs text-zinc-500">{assetBalances.length} tracked</span>
+          )}
         </div>
-      )}
+
+        {assetBalances.length > 0 ? (
+          <div className="space-y-1">
+            {assetBalances.map((asset, index) => (
+              <div 
+                key={index} 
+                className="flex justify-between items-center py-2 border-t border-zinc-800 first:border-t-0 group"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium truncate">{asset.name}</div>
+                  <div className="text-[10px] text-zinc-500 font-mono truncate">
+                    {asset.hash.slice(0, 8)}…{asset.hash.slice(-6)}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5 flex-shrink-0">
+                  <div className="font-mono text-right text-sm">
+                    {asset.balance} <span className="text-xs text-zinc-400">{asset.name}</span>
+                  </div>
+                  <button
+                    onClick={() => removeWatchedAsset(asset.hash)}
+                    className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded text-[10px] leading-none text-red-400/60 hover:bg-red-950 hover:text-red-400 transition-all"
+                    title="Remove from wallet"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="text-xs text-zinc-500 py-2">
+            No custom tokens tracked yet.<br />
+            Use the box below to add asset hashes you care about.
+          </div>
+        )}
+      </div>
 
       {/* === MANUAL ASSET FETCH SECTION === */}
       <div className="result mt-4" style={{ textAlign: 'left' }}>
-        <p className="font-semibold mb-2 text-orange-400">Fetch Asset Balance</p>
+        <p className="font-semibold mb-2 text-orange-400">Add Token to Wallet</p>
         
         <div className="flex gap-2">
           <input
             type="text"
-            placeholder="Paste asset hash here (64 hex characters)"
+            placeholder="Paste 64-char asset hash"
             className="input flex-1 font-mono text-sm"
             value={manualAssetHash}
             onChange={(e) => setManualAssetHash(e.target.value.trim())}
@@ -258,8 +272,8 @@ const WalletOverview = ({ onLogout }) => {
           </button>
         </div>
         
-        <p className="text-xs text-gray-500 mt-1">
-          Paste the asset hash from the creation response to manually add it here.
+        <p className="text-xs text-zinc-500 mt-1">
+          Adding a token here will save it to your wallet. It will reload automatically next time you log in.
         </p>
       </div>
 
@@ -386,19 +400,44 @@ const WalletOverview = ({ onLogout }) => {
       </div>
       {/* ============================================================ */}
 
-      {/* ==================== FAKE MINE BUTTON ==================== */}
+      {/* ==================== AUTO FAKE MINING (Testnet) ==================== */}
       <div className="result mt-4" style={{ textAlign: 'left' }}>
-        <p className="font-semibold mb-2 text-emerald-400">Testnet Tools</p>
-        <button
-          onClick={handleFakeMine}
-          disabled={isMining}
-          className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-2xl disabled:opacity-60 transition-all"
-        >
-          {isMining ? 'Mining...' : '⛏️ Fake Mine (Add Test Balance)'}
-        </button>
-        <p className="text-xs text-gray-500 mt-1">
-          Only works on DeFi testnet. Use for testing.
+        <p className="font-semibold mb-3 text-emerald-400 flex items-center justify-between">
+          <span>Testnet Auto-Miner</span>
+          {isAutoMining && (
+            <span className="text-[10px] font-mono px-2 py-0.5 bg-emerald-500/20 text-emerald-400 rounded-full">
+              ACTIVE
+            </span>
+          )}
         </p>
+
+        <button
+          onClick={toggleAutoMining}
+          disabled={!isTestnetNode(selectedNode)}
+          className={`w-full py-3 font-semibold rounded-2xl transition-all flex items-center justify-center gap-2 ${
+            isAutoMining
+              ? 'bg-red-600 hover:bg-red-700 text-white'
+              : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+          } disabled:opacity-50 disabled:cursor-not-allowed`}
+        >
+          {isAutoMining ? (
+            <>⏹ Stop Auto-Mining ({autoMineCount} mined)</>
+          ) : (
+            <>⛏️ Start Auto-Mining (every 20s)</>
+          )}
+        </button>
+
+        <div className="mt-2 text-xs">
+          {isTestnetNode(selectedNode) ? (
+            isAutoMining ? (
+              <span className="text-emerald-400">Mining is running in the background. Balance refreshes automatically.</span>
+            ) : (
+              <span className="text-zinc-500">Turn on to repeatedly call the debug fakemine endpoint every 20 seconds.</span>
+            )
+          ) : (
+            <span className="text-amber-400">Auto-mining is only available when connected to a testnet or localhost node.</span>
+          )}
+        </div>
       </div>
       {/* ======================================================== */}
 
@@ -424,6 +463,7 @@ const WalletOverview = ({ onLogout }) => {
         Logout
       </button>
     </section>
+    </>
   );
 };
 

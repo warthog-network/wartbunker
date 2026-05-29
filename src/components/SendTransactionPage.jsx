@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useWallet } from './WalletContext';
+import { useToast } from './Toast';
 import axios from 'axios';
 import { ethers } from 'ethers';
 
@@ -18,6 +19,8 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
 
   const wallet = propWallet || contextWallet;
   const selectedNode = propSelectedNode || contextSelectedNode || 'https://warthognode.duckdns.org';
+
+  const toast = useToast();
 
   const [toAddress, setToAddress] = useState('');
   const [amount, setAmount] = useState('0.00100000');
@@ -87,9 +90,10 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
   };
 
   const copyToClipboard = (text) => {
+    if (!text) return;
     navigator.clipboard.writeText(text).then(() => {
-      alert('Copied to clipboard!');
-    });
+      toast.success('Copied to clipboard');
+    }).catch(() => toast.error('Failed to copy'));
   };
 
   const handleSend = async () => {
@@ -176,17 +180,19 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
 
       if (resData.code === 0 || resData.txHash || resData.data?.txHash) {
         refreshBalance?.();
-        alert('Transaction sent successfully!');
+        toast.success('Transaction sent successfully');
       } else {
         const errorMsg = resData.error || 'Transaction rejected by node';
         setLocalError(errorMsg);
         setContextError?.(errorMsg);
+        toast.error(errorMsg);
       }
     } catch (err) {
       const msg = err.response?.data?.error || err.message || 'Failed to send';
       setLocalError(msg);
       setContextError?.(msg);
       setResult({ error: msg });
+      toast.error(msg);
     } finally {
       setIsLoading(false);
     }
