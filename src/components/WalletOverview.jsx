@@ -233,7 +233,7 @@ const WalletOverview = ({ onLogout }) => {
                   </div>
                   <button
                     onClick={() => removeWatchedAsset(asset.hash)}
-                    className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded text-[10px] leading-none text-red-400/60 hover:bg-red-950 hover:text-red-400 transition-all"
+                    className="remove-token-btn flex h-5 w-5 sm:h-4 sm:w-4 flex-shrink-0 items-center justify-center rounded text-base sm:text-[10px] leading-none text-red-400/60 hover:bg-red-950 hover:text-red-400 transition-all"
                     title="Remove from wallet"
                   >
                     ×
@@ -254,7 +254,7 @@ const WalletOverview = ({ onLogout }) => {
       <div className="result mt-4" style={{ textAlign: 'left' }}>
         <p className="font-semibold mb-2 text-orange-400">Add Token to Wallet</p>
         
-        <div className="flex gap-2">
+        <div className="flex flex-col md:flex-row gap-2">
           <input
             type="text"
             placeholder="Paste 64-char asset hash"
@@ -266,7 +266,7 @@ const WalletOverview = ({ onLogout }) => {
           <button 
             onClick={handleFetchManualAsset} 
             disabled={isFetching || !manualAssetHash}
-            className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-xl disabled:opacity-50"
+            className="w-full md:w-auto px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-xl disabled:opacity-50"
           >
             {isFetching ? 'Fetching...' : 'Fetch'}
           </button>

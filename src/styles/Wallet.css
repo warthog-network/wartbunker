@@ -348,7 +348,7 @@
     box-sizing: border-box;
   }
 
-  .container button:not(.mobile-hamburger) {
+  .container button:not(.mobile-hamburger):not(.remove-token-btn) {
     font-size: 1rem;
     width: 100%;
     margin-right: 0;
@@ -442,10 +442,20 @@
 
 /* Enhanced touch targets for mobile */
 @media (max-width: 767px) {
-  button {
+  button:not(.remove-token-btn) {
     min-height: 48px;
     touch-action: manipulation;
   }
+}
+
+/* Keep remove token X buttons compact on all screen sizes (overrides legacy mobile button rules) */
+.remove-token-btn {
+  min-height: 0 !important;
+  min-width: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  width: auto !important;
+  height: auto !important;
 }
 
 /* === RESPONSIVE MENU CONTROLS (fixed) === */
