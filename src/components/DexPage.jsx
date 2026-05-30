@@ -25,6 +25,37 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const [results, setResults] = useState({});
   const [loading, setLoading] = useState({});
 
+  // ==================== SAFE RENDER HELPERS ====================
+  const safeStr = (v, fallback = '0') => {
+    if (v == null) return fallback;
+    if (typeof v === 'string' || typeof v === 'number') return String(v);
+    if (typeof v === 'object') {
+      if (v.str != null) return String(v.str);
+      if (v.E8 !== undefined) return (Number(v.E8) / 100000000).toFixed(8);
+      if (v.u64 !== undefined) return String(v.u64);
+      if (v.doubleAdjusted != null) return String(v.doubleAdjusted);
+    }
+    return fallback;
+  };
+
+  const safeRender = (v, fallback = '') => {
+    if (v == null) return fallback;
+    if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return v;
+    return fallback;
+  };
+
+  // NEW: Clean, human-friendly balance formatter (removes trailing .00000000 etc.)
+  const formatBalance = (v) => {
+    let s = safeStr(v, '0');
+    if (typeof s !== 'string') s = String(s || '0');
+    if (!s.includes('.')) return s;
+    // Trim insignificant trailing zeros while preserving meaningful precision
+    // 476990.00000000 → 476990
+    // 123.45600000  → 123.456
+    // 0.0001234500  → 0.00012345
+    return s.replace(/(\.\d*?[1-9])0+$|\.0+$/, '$1') || '0';
+  };
+
   // ==================== SMART NONCE HANDLING ====================
   const getSmartNonce = () => {
     if (!wallet?.address) return contextNextNonce ?? 0;
@@ -42,7 +73,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     localStorage.setItem(`warthogNextNonce_${wallet.address}`, newNonce);
   };
 
-  // ==================== ENHANCED QUERY (supports POST) ====================
+  // ==================== ENHANCED QUERY ====================
   const query = async (key, path, method = 'GET', data = null) => {
     setLoading(prev => ({ ...prev, [key]: true }));
     try {
@@ -106,7 +137,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     }).catch(() => {});
   };
 
-  // ==================== TRANSACTION RESULT CARD (matches AssetPage style) ====================
+  // ==================== TRANSACTION RESULT CARD ====================
   const renderTransactionResult = (result, type) => {
     if (!result) return null;
 
@@ -150,211 +181,247 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
 
   // ==================== STYLIZED POOL / MARKET CARD ====================
   const renderPoolMarketCard = (result) => {
-    if (!result || result.code !== 0 || !result.data) {
+    try {
+      if (!result || result.code !== 0 || !result.data) {
+        return (
+          <div className="mt-4 p-4 bg-zinc-950 border border-zinc-700 rounded-2xl text-sm text-zinc-400">
+            No pool/market data available.
+          </div>
+        );
+      }
+
+      const d = result.data;
+      const asset = d.asset || d.baseAsset || d.market?.asset || {};
+      const liquidity = d.liquidityPool || d.liquidity || d.reserves || d.poolReserves || d.pool || {};
+      
+      const wartReserve = safeStr(liquidity.wart || liquidity.WART, '0');
+      const assetReserve = safeStr(liquidity.asset || liquidity[asset.name] || liquidity.assetE8, '0');
+      
+      let priceRaw = d.price || d.spotPrice || d.doubleAdjustedPrice || d.marketPrice;
+      let price = safeStr(priceRaw, '—');
+      if (price === '—' && priceRaw && typeof priceRaw === 'object') {
+        price = priceRaw.doubleAdjusted != null ? String(priceRaw.doubleAdjusted) : price;
+      }
+      
+      const tvl = d.tvl || d.totalLiquidity || d.liquidityWart || null;
+
       return (
-        <div className="mt-4 p-4 bg-zinc-950 border border-zinc-700 rounded-2xl text-sm text-zinc-400">
-          No pool/market data available.
+        <div className="mt-6 bg-zinc-950 border border-emerald-700/60 rounded-3xl overflow-hidden shadow-xl">
+          {/* Header */}
+          <div className="px-6 py-5 bg-zinc-900 flex items-center justify-between border-b border-zinc-800">
+            <div className="flex items-center gap-4">
+              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-emerald-400 via-teal-500 to-cyan-500 flex items-center justify-center text-white text-3xl font-bold shadow-inner ring-1 ring-white/20">
+                {asset.name?.[0] || 'P'}
+              </div>
+              <div>
+                <div className="text-3xl font-semibold tracking-[-1.5px] text-white">
+                  {asset.name} <span className="text-emerald-400/60">/ WART</span>
+                </div>
+                <div className="font-mono text-[10px] text-zinc-500 -mt-1">
+                  POOL • {asset.decimals || 8} decimals • Asset ID {asset.id || '—'}
+                </div>
+              </div>
+            </div>
+            
+            {asset.hash && (
+              <div 
+                onClick={() => copyToClipboard(asset.hash)}
+                className="text-right cursor-pointer group"
+              >
+                <div className="font-mono text-xs text-zinc-400 group-hover:text-emerald-400 transition-colors">
+                  {asset.hash.slice(0, 10)}…{asset.hash.slice(-8)}
+                </div>
+                <div className="text-[10px] text-emerald-500/70 group-hover:text-emerald-400">Copy Asset Hash</div>
+              </div>
+            )}
+          </div>
+
+          <div className="p-6">
+            {/* Key Metrics Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              {/* WART Reserve */}
+              <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-3">
+                <div className="flex items-center gap-1.5 text-[9px] uppercase tracking-[1px] text-amber-400 mb-0.5">
+                  <div className="w-1 h-1 rounded-full bg-amber-400"></div>
+                  WART RESERVE
+                </div>
+                <div className="font-mono text-2xl sm:text-3xl md:text-[26px] leading-none font-semibold text-white tabular-nums tracking-[-1.5px]">
+                  {formatBalance(wartReserve)}
+                </div>
+                <div className="text-[10px] text-zinc-500 mt-0.5">WART</div>
+              </div>
+
+              {/* Asset Reserve */}
+              <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-3">
+                <div className="flex items-center gap-1.5 text-[9px] uppercase tracking-[1px] text-emerald-400 mb-0.5">
+                  <div className="w-1 h-1 rounded-full bg-emerald-400"></div>
+                  {asset.name || 'ASSET'} RESERVE
+                </div>
+                <div className="font-mono text-2xl sm:text-3xl md:text-[26px] leading-none font-semibold text-white tabular-nums tracking-[-1.5px]">
+                  {formatBalance(assetReserve)}
+                </div>
+                <div className="text-[10px] text-zinc-500 mt-0.5">{asset.name || 'Asset'}</div>
+              </div>
+
+              {/* Spot Price */}
+              <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-3 flex flex-col">
+                <div className="flex items-center gap-1.5 text-[9px] uppercase tracking-[1px] text-violet-400 mb-0.5">
+                  <div className="w-1 h-1 rounded-full bg-violet-400"></div>
+                  SPOT PRICE
+                </div>
+                <div className="font-mono text-2xl sm:text-3xl md:text-[26px] leading-none font-semibold text-white tabular-nums tracking-[-1.5px] mt-auto">
+                  {price}
+                </div>
+                <div className="text-[10px] text-zinc-500 mt-0.5">WART per {asset.name || 'asset'}</div>
+              </div>
+            </div>
+
+            {/* Compact Stats Row */}
+            <div className="mt-3 flex flex-wrap gap-x-6 gap-y-0.5 px-1 text-sm">
+              {liquidity.shares && (
+                <div>
+                  <span className="text-emerald-400">Shares:</span>{" "}
+                  <span className="font-mono text-white">{safeStr(liquidity.shares, '')}</span>
+                </div>
+              )}
+              <div>
+                <span className="text-emerald-400">Buy orders:</span>{" "}
+                <span className="font-mono text-white">{d.wartToAssetSwaps?.length || 0}</span>
+              </div>
+              <div>
+                <span className="text-rose-400">Sell orders:</span>{" "}
+                <span className="font-mono text-white">{d.assetToWartSwaps?.length || 0}</span>
+              </div>
+            </div>
+
+            {/* Open Orders — collapsed by default */}
+            {(d.wartToAssetSwaps?.length > 0 || d.assetToWartSwaps?.length > 0) && (
+              <details className="mt-3 group">
+                <summary className="cursor-pointer text-sm text-emerald-400 hover:text-emerald-300 flex items-center gap-2 px-1 select-none">
+                  <span className="group-open:rotate-90 inline-block transition">▶</span> 
+                  View open orders ({(d.wartToAssetSwaps?.length || 0) + (d.assetToWartSwaps?.length || 0)})
+                </summary>
+
+                <div className="mt-2 space-y-2 text-xs">
+                  {d.wartToAssetSwaps?.length > 0 && (
+                    <div>
+                      <div className="text-emerald-400 mb-1 px-1">Buy (WART → {asset.name})</div>
+                      {d.wartToAssetSwaps.slice(0, 2).map((order, idx) => (
+                        <div key={idx} className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 flex items-center justify-between font-mono">
+                          <span className="text-white">Limit {safeStr(order.limit?.doubleAdjusted || order.limit, '—')} • {order.amount?.str || '0'} (filled {order.filled?.str || '0'})</span>
+                          <span onClick={() => copyToClipboard(order.txHash)} className="text-purple-400 hover:text-purple-300 cursor-pointer text-[10px]">
+                            {order.txHash?.slice(0,8)}…{order.txHash?.slice(-6)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {d.assetToWartSwaps?.length > 0 && (
+                    <div>
+                      <div className="text-rose-400 mb-1 px-1">Sell ({asset.name} → WART)</div>
+                      {d.assetToWartSwaps.slice(0, 2).map((order, idx) => (
+                        <div key={idx} className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 flex items-center justify-between font-mono">
+                          <span className="text-white">Limit {safeStr(order.limit?.doubleAdjusted || order.limit, '—')} • {order.amount?.str || '0'} (filled {order.filled?.str || '0'})</span>
+                          <span onClick={() => copyToClipboard(order.txHash)} className="text-purple-400 hover:text-purple-300 cursor-pointer text-[10px]">
+                            {order.txHash?.slice(0,8)}…{order.txHash?.slice(-6)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </details>
+            )}
+
+            {/* Raw toggle for advanced users */}
+            <details className="mt-6 group">
+              <summary className="cursor-pointer text-xs text-zinc-500 hover:text-zinc-400 flex items-center gap-1.5 select-none">
+                <span className="group-open:rotate-90 inline-block transition">▶</span> 
+                Show full JSON response
+              </summary>
+              <pre className="mt-3 text-[10px] bg-black/60 p-4 rounded-xl overflow-auto max-h-80 text-zinc-400 border border-zinc-800">
+                {JSON.stringify(result, null, 2)}
+              </pre>
+            </details>
+          </div>
+        </div>
+      );
+    } catch (renderErr) {
+      console.warn('renderPoolMarketCard failed to render safely:', renderErr);
+      return (
+        <div className="mt-4 p-4 bg-red-950/40 border border-red-700 rounded-2xl text-sm">
+          <div className="text-red-400 font-medium mb-2">Could not render pool data (unexpected response shape)</div>
+          <pre className="text-[10px] bg-black/60 p-3 rounded-xl overflow-auto max-h-80 text-red-300/80 border border-red-900">
+            {JSON.stringify(result, null, 2)}
+          </pre>
         </div>
       );
     }
+  };
 
-    const d = result.data;
-    const asset = d.asset || d.baseAsset || d.market?.asset || {};
+  // ==================== MY LIQUIDITY POSITION CARD (FIXED RESPONSIVE + CLEAN NUMBER) ====================
+  const renderPositionCard = (result) => {
+    try {
+      if (!result || result.code !== 0 || !result.data) {
+        return (
+          <div className="mt-4 p-4 bg-zinc-950 border border-zinc-700 rounded-2xl text-sm text-zinc-400">
+            No position data. Deposit liquidity first, then refresh.
+          </div>
+        );
+      }
 
-    // Support multiple possible structures from the node
-    const liquidity = d.liquidityPool || d.liquidity || d.reserves || d.poolReserves || d.pool || {};
-    
-    const wartReserve = liquidity.wart?.str || liquidity.wart?.E8 || liquidity.WART?.str || '0';
-    const assetReserve = liquidity.asset?.str || liquidity[asset.name]?.str || liquidity.assetE8?.str || '0';
-    
-    const price = d.price || d.spotPrice || d.doubleAdjustedPrice || d.marketPrice || '—';
-    const tvl = d.tvl || d.totalLiquidity || d.liquidityWart || null;
+      const balData = result.data || {};
+      const assetInfo = balData.asset || balData.token || {};
 
-    return (
-      <div className="mt-6 bg-zinc-950 border border-emerald-700/60 rounded-3xl overflow-hidden shadow-xl">
-        {/* Header */}
-        <div className="px-6 py-5 bg-zinc-900 flex items-center justify-between border-b border-zinc-800">
-          <div className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-emerald-400 via-teal-500 to-cyan-500 flex items-center justify-center text-white text-3xl font-bold shadow-inner ring-1 ring-white/20">
-              {asset.name?.[0] || 'P'}
+      let balanceInfo = balData.balance?.total || balData.balance || balData;
+      if (balanceInfo && typeof balanceInfo === 'object' && (balanceInfo.total || balanceInfo.locked || balanceInfo.mempool)) {
+        balanceInfo = balanceInfo.total || {};
+      }
+
+      const assetName = assetInfo.name || balData.asset?.name || 'Asset';
+
+      return (
+        <div className="mt-6 bg-emerald-950/30 border border-emerald-700 rounded-3xl p-6">
+          {/* RESPONSIVE LAYOUT: stacked on mobile, side-by-side on sm+ */}
+          <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between mb-4 gap-1 sm:gap-4">
+            <div className="min-w-0 flex-1">
+              <div className="text-emerald-400 text-xs tracking-[2px] font-medium">YOUR LIQUIDITY POSITION</div>
+              {/* Smaller base size + responsive scale. break-all only on mobile to prevent cutoff */}
+              <div className="text-4xl sm:text-5xl font-semibold tabular-nums tracking-[-1.5px] text-white font-mono mt-1 break-all sm:break-normal">
+                {formatBalance(balanceInfo)}
+              </div>
             </div>
-            <div>
-              <div className="text-3xl font-semibold tracking-[-1.5px] text-white">
-                {asset.name} <span className="text-emerald-400/60">/ WART</span>
-              </div>
-              <div className="font-mono text-[10px] text-zinc-500 -mt-1">
-                POOL • {asset.decimals || 8} decimals • Asset ID {asset.id || '—'}
-              </div>
+            <div className="text-left sm:text-right mt-0.5 sm:mt-0 flex-shrink-0">
+              <div className="text-xs text-emerald-400/70">Current holding in</div>
+              <div className="font-semibold text-lg text-white">{assetName}</div>
             </div>
           </div>
           
-          {asset.hash && (
-            <div 
-              onClick={() => copyToClipboard(asset.hash)}
-              className="text-right cursor-pointer group"
-            >
-              <div className="font-mono text-xs text-zinc-400 group-hover:text-emerald-400 transition-colors">
-                {asset.hash.slice(0, 10)}…{asset.hash.slice(-8)}
-              </div>
-              <div className="text-[10px] text-emerald-500/70 group-hover:text-emerald-400">Copy Asset Hash</div>
-            </div>
-          )}
-        </div>
-
-        <div className="p-6">
-          {/* Key Metrics Grid - very compact, fits nicely in one row on desktop */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-            {/* WART Reserve */}
-            <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-3">
-              <div className="flex items-center gap-1.5 text-[9px] uppercase tracking-[1px] text-amber-400 mb-0.5">
-                <div className="w-1 h-1 rounded-full bg-amber-400"></div>
-                WART RESERVE
-              </div>
-              <div className="font-mono text-[26px] leading-none font-semibold text-white tabular-nums tracking-[-1.5px]">
-                {wartReserve}
-              </div>
-              <div className="text-[10px] text-zinc-500 mt-0.5">WART</div>
-            </div>
-
-            {/* Asset Reserve */}
-            <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-3">
-              <div className="flex items-center gap-1.5 text-[9px] uppercase tracking-[1px] text-emerald-400 mb-0.5">
-                <div className="w-1 h-1 rounded-full bg-emerald-400"></div>
-                {asset.name || 'ASSET'} RESERVE
-              </div>
-              <div className="font-mono text-[26px] leading-none font-semibold text-white tabular-nums tracking-[-1.5px]">
-                {assetReserve}
-              </div>
-              <div className="text-[10px] text-zinc-500 mt-0.5">{asset.name || 'Asset'}</div>
-            </div>
-
-            {/* Spot Price */}
-            <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-3 flex flex-col">
-              <div className="flex items-center gap-1.5 text-[9px] uppercase tracking-[1px] text-violet-400 mb-0.5">
-                <div className="w-1 h-1 rounded-full bg-violet-400"></div>
-                SPOT PRICE
-              </div>
-              <div className="font-mono text-[26px] leading-none font-semibold text-white tabular-nums tracking-[-1.5px] mt-auto">
-                {price}
-              </div>
-              <div className="text-[10px] text-zinc-500 mt-0.5">WART per {asset.name || 'asset'}</div>
-            </div>
+          <div className="text-[10px] text-emerald-500/70 border-t border-emerald-800 pt-3">
+            This reflects your share of the pool after confirmed deposits. Larger positions = higher fee share.
           </div>
 
-          {/* Compact Stats Row */}
-          <div className="mt-3 flex flex-wrap gap-x-6 gap-y-0.5 px-1 text-sm">
-            {liquidity.shares && (
-              <div>
-                <span className="text-emerald-400">Shares:</span>{" "}
-                <span className="font-mono text-white">{liquidity.shares.str || liquidity.shares}</span>
-              </div>
-            )}
-            <div>
-              <span className="text-emerald-400">Buy orders:</span>{" "}
-              <span className="font-mono text-white">{d.wartToAssetSwaps?.length || 0}</span>
-            </div>
-            <div>
-              <span className="text-rose-400">Sell orders:</span>{" "}
-              <span className="font-mono text-white">{d.assetToWartSwaps?.length || 0}</span>
-            </div>
-          </div>
-
-          {/* Open Orders — collapsed by default */}
-          {(d.wartToAssetSwaps?.length > 0 || d.assetToWartSwaps?.length > 0) && (
-            <details className="mt-3 group">
-              <summary className="cursor-pointer text-sm text-emerald-400 hover:text-emerald-300 flex items-center gap-2 px-1 select-none">
-                <span className="group-open:rotate-90 inline-block transition">▶</span> 
-                View open orders ({(d.wartToAssetSwaps?.length || 0) + (d.assetToWartSwaps?.length || 0)})
-              </summary>
-
-              <div className="mt-2 space-y-2 text-xs">
-                {d.wartToAssetSwaps?.length > 0 && (
-                  <div>
-                    <div className="text-emerald-400 mb-1 px-1">Buy (WART → {asset.name})</div>
-                    {d.wartToAssetSwaps.slice(0, 2).map((order, idx) => (
-                      <div key={idx} className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 flex items-center justify-between font-mono">
-                        <span className="text-white">Limit {order.limit?.doubleAdjusted?.toFixed(6) || order.limit} • {order.amount?.str} (filled {order.filled?.str})</span>
-                        <span onClick={() => copyToClipboard(order.txHash)} className="text-purple-400 hover:text-purple-300 cursor-pointer text-[10px]">
-                          {order.txHash?.slice(0,8)}…{order.txHash?.slice(-6)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {d.assetToWartSwaps?.length > 0 && (
-                  <div>
-                    <div className="text-rose-400 mb-1 px-1">Sell ({asset.name} → WART)</div>
-                    {d.assetToWartSwaps.slice(0, 2).map((order, idx) => (
-                      <div key={idx} className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 flex items-center justify-between font-mono">
-                        <span className="text-white">Limit {order.limit?.doubleAdjusted?.toFixed(6) || order.limit} • {order.amount?.str} (filled {order.filled?.str})</span>
-                        <span onClick={() => copyToClipboard(order.txHash)} className="text-purple-400 hover:text-purple-300 cursor-pointer text-[10px]">
-                          {order.txHash?.slice(0,8)}…{order.txHash?.slice(-6)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </details>
-          )}
-
-          {/* Raw toggle for advanced users */}
-          <details className="mt-6 group">
-            <summary className="cursor-pointer text-xs text-zinc-500 hover:text-zinc-400 flex items-center gap-1.5 select-none">
-              <span className="group-open:rotate-90 inline-block transition">▶</span> 
-              Show full JSON response
-            </summary>
-            <pre className="mt-3 text-[10px] bg-black/60 p-4 rounded-xl overflow-auto max-h-80 text-zinc-400 border border-zinc-800">
-              {JSON.stringify(result, null, 2)}
-            </pre>
+          <details className="mt-4">
+            <summary className="cursor-pointer text-xs text-emerald-400/60 hover:text-emerald-400">View raw balance JSON</summary>
+            <pre className="mt-2 text-[10px] bg-black/40 p-3 rounded-xl text-emerald-300/80 overflow-auto">{JSON.stringify(result, null, 2)}</pre>
           </details>
         </div>
-      </div>
-    );
-  };
-
-  // ==================== MY LIQUIDITY POSITION CARD ====================
-  const renderPositionCard = (result) => {
-    if (!result || result.code !== 0 || !result.data) {
+      );
+    } catch (renderErr) {
+      console.warn('renderPositionCard failed to render safely:', renderErr);
       return (
-        <div className="mt-4 p-4 bg-zinc-950 border border-zinc-700 rounded-2xl text-sm text-zinc-400">
-          No position data. Deposit liquidity first, then refresh.
+        <div className="mt-4 p-4 bg-red-950/40 border border-red-700 rounded-2xl text-sm">
+          <div className="text-red-400 font-medium mb-2">Could not render your position (unexpected balance shape from node)</div>
+          <pre className="text-[10px] bg-black/60 p-3 rounded-xl overflow-auto max-h-80 text-red-300/80 border border-red-900">
+            {JSON.stringify(result, null, 2)}
+          </pre>
         </div>
       );
     }
-
-    const balData = result.data;
-    const balance = balData.balance || balData;
-    const balStr = balance?.str || balance?.balance || balance || '0';
-    const assetName = balData.asset?.name || 'Asset';
-
-    return (
-      <div className="mt-6 bg-emerald-950/30 border border-emerald-700 rounded-3xl p-6">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <div className="text-emerald-400 text-xs tracking-[2px] font-medium">YOUR LIQUIDITY POSITION</div>
-            <div className="text-5xl font-semibold tabular-nums tracking-[-2px] text-white font-mono mt-1">{balStr}</div>
-          </div>
-          <div className="text-right">
-            <div className="text-xs text-emerald-400/70">Current holding in</div>
-            <div className="font-semibold text-lg text-white">{assetName}</div>
-          </div>
-        </div>
-        
-        <div className="text-[10px] text-emerald-500/70 border-t border-emerald-800 pt-3">
-          This reflects your share of the pool after confirmed deposits. Larger positions = higher fee share.
-        </div>
-
-        <details className="mt-4">
-          <summary className="cursor-pointer text-xs text-emerald-400/60 hover:text-emerald-400">View raw balance JSON</summary>
-          <pre className="mt-2 text-[10px] bg-black/40 p-3 rounded-xl text-emerald-300/80 overflow-auto">{JSON.stringify(result, null, 2)}</pre>
-        </details>
-      </div>
-    );
   };
 
-  // ==================== OPEN ORDERS RENDERER (handles BOTH grouped + flat responses) ====================
+  // ==================== OPEN ORDERS RENDERER ====================
   const renderOpenOrdersCompact = (result, queriedAssetHash = null) => {
     if (!result || result.code !== 0) {
       return (
@@ -366,10 +433,6 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       );
     }
 
-    // Normalize: support both response shapes from the node
-    // - View All:     data = [ {baseAsset, wartToAssetSwaps, ...}, ... ]   ← array
-    // - Specific:     data =   {baseAsset, wartToAssetSwaps, ...}          ← single object
-    // - Flat orders:  data = [ order, order, ... ]
     let assetGroups = [];
     let isFlat = false;
 
@@ -378,10 +441,8 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     if (Array.isArray(rawData) && rawData.length > 0) {
       const first = rawData[0];
       if (first && (first.baseAsset || first.wartToAssetSwaps || first.assetToWartSwaps)) {
-        // Array of grouped assets (View All)
         assetGroups = rawData;
       } else {
-        // Flat list of orders
         isFlat = true;
         assetGroups = [{
           baseAsset: { name: 'Asset', hash: queriedAssetHash || 'unknown', id: '?' },
@@ -391,7 +452,6 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       }
     } 
     else if (rawData && typeof rawData === 'object' && (rawData.baseAsset || rawData.wartToAssetSwaps)) {
-      // Single asset object (this is what your specific asset query returns)
       assetGroups = [rawData];
     }
 
@@ -423,7 +483,6 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
 
           return (
             <div key={idx} className="bg-zinc-950 border border-zinc-700 rounded-2xl overflow-hidden">
-              {/* Asset Header */}
               <div className="px-4 py-3 bg-zinc-900 flex items-center justify-between border-b border-zinc-700">
                 <div className="flex items-center gap-3">
                   <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-purple-500 via-violet-500 to-fuchsia-500 flex items-center justify-center text-white font-bold text-xl">
@@ -443,7 +502,6 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
               </div>
 
               <div className="p-4 space-y-4">
-                {/* BUY ORDERS */}
                 {buyOrders.length > 0 && (
                   <div>
                     <div className="uppercase text-emerald-400 text-xs tracking-widest mb-2 px-1 flex items-center gap-2">
@@ -454,7 +512,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                       {buyOrders.slice(0, 5).map((order, oIdx) => (
                         <div key={oIdx} className="bg-zinc-900 border border-zinc-700 rounded-xl p-3 text-sm">
                           <div className="flex justify-between text-xs mb-1">
-                            <span className="text-emerald-400">Limit: {order.limit?.doubleAdjusted?.toFixed(8) || order.limit || '—'}</span>
+                            <span className="text-emerald-400">Limit: {safeStr(order.limit?.doubleAdjusted || order.limit, '—')}</span>
                             <span className="text-zinc-400">Filled: {order.filled?.str || '0'} / {order.amount?.str || '0'}</span>
                           </div>
                           <div onClick={() => copyToClipboard(order.txHash)} className="font-mono text-purple-400 text-xs cursor-pointer hover:underline">
@@ -466,7 +524,6 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                   </div>
                 )}
 
-                {/* SELL ORDERS */}
                 {sellOrders.length > 0 && (
                   <div>
                     <div className="uppercase text-rose-400 text-xs tracking-widest mb-2 px-1 flex items-center gap-2">
@@ -477,7 +534,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                       {sellOrders.slice(0, 5).map((order, oIdx) => (
                         <div key={oIdx} className="bg-zinc-900 border border-zinc-700 rounded-xl p-3 text-sm">
                           <div className="flex justify-between text-xs mb-1">
-                            <span className="text-rose-400">Limit: {order.limit?.doubleAdjusted?.toFixed(8) || order.limit || '—'}</span>
+                            <span className="text-rose-400">Limit: {safeStr(order.limit?.doubleAdjusted || order.limit, '—')}</span>
                             <span className="text-zinc-400">Filled: {order.filled?.str || '0'} / {order.amount?.str || '0'}</span>
                           </div>
                           <div onClick={() => copyToClipboard(order.txHash)} className="font-mono text-purple-400 text-xs cursor-pointer hover:underline">
@@ -551,7 +608,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
 
     try {
       const currentPinHeight = pinHeight || 0;
-      const currentPinHash = pinHash || '000000000000000000000000000000000000000000000000im0000000000000000';
+      const currentPinHash = pinHash || '000000000000000000000im0000000000000000000000000000000000000000';
 
       const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
 
@@ -682,7 +739,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
 
     try {
       const currentPinHeight = pinHeight || 0;
-      const currentPinHash = pinHash || '0000000000000000000000000000000000000000000000000000000000000000';
+      const currentPinHash = pinHash || '000000000000000000000000000000000im0000000000000000000000000000000';
 
       const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
 
@@ -811,7 +868,6 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
               {loading.dexMarket ? 'Querying...' : 'Query Market'}
             </button>
             
-            {/* STYLIZED MARKET RESULT */}
             {results.dexMarket && renderPoolMarketCard(results.dexMarket)}
           </div>
         </div>
@@ -838,7 +894,6 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
               {loading.openOrders ? 'Loading...' : 'View All Open Orders'}
             </button>
             
-            {/* STYLIZED OPEN ORDERS */}
             {results.openOrders && renderOpenOrdersCompact(results.openOrders)}
           </div>
 
@@ -859,7 +914,6 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
               document.getElementById('assetForOrders')?.value.trim()
             )}
 
-            {/* Temporary debug: show raw response for the specific asset query */}
             {results.openOrdersAsset && (
               <details className="mt-3 text-xs">
                 <summary className="cursor-pointer text-orange-400 hover:text-orange-300">Show raw node response (for debugging)</summary>
@@ -923,7 +977,6 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
               {loading.liquidityDeposit ? 'Depositing Liquidity...' : 'Deposit Liquidity'}
             </button>
 
-            {/* STYLIZED TX RESULT */}
             {results.liquidityDeposit && renderTransactionResult(results.liquidityDeposit, 'Liquidity Deposit')}
           </div>
         </div>
@@ -953,10 +1006,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
           </button>
         </div>
 
-        {/* STYLIZED POOL CARD */}
         {results.poolMarket && renderPoolMarketCard(results.poolMarket)}
-
-        {/* STYLIZED POSITION CARD */}
         {results.myAssetBalance && renderPositionCard(results.myAssetBalance)}
 
         {!results.poolMarket && !results.myAssetBalance && (
@@ -989,14 +1039,12 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
             <label className="block text-sm font-medium mb-2">Amount</label>
             <input id="limitAmount" type="number" step="any" placeholder="Amount in WART (buy) or asset units (sell)" className="input mb-4" />
 
-            {/* ==================== IMPROVED PRICE ENCODER ==================== */}
             <div className="bg-zinc-900 border border-violet-700 p-4 rounded-2xl mb-4">
               <div className="text-sm font-medium text-violet-300 mb-3">
                 Quick Limit Price Encoder
               </div>
 
               <div className="flex flex-col md:flex-row gap-3 items-end">
-                {/* Price Input */}
                 <div className="flex-1">
                   <label className="text-xs text-gray-400 block mb-1.5">Price</label>
                   <input
@@ -1007,7 +1055,6 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                   />
                 </div>
 
-                {/* Decimals Input */}
                 <div className="w-full md:w-28">
                   <label className="text-xs text-gray-400 block mb-1.5">Decimals</label>
                   <input
@@ -1018,7 +1065,6 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                   />
                 </div>
 
-                {/* Encode Button */}
                 <button
                   onClick={encodeLimitPrice}
                   className="h-[50px] px-8 bg-orange-500 hover:bg-orange-600 active:bg-orange-700 text-white font-semibold rounded-2xl transition-colors whitespace-nowrap"
@@ -1048,7 +1094,6 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
               {loading.limitSwap ? 'Submitting Limit Order...' : 'Submit Limit Order'}
             </button>
 
-            {/* STYLIZED TX RESULT */}
             {results.limitSwap && renderTransactionResult(results.limitSwap, 'Limit Order')}
           </div>
         </div>
