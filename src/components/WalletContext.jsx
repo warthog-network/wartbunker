@@ -155,10 +155,10 @@ export const WalletProvider = ({ children }) => {
 
       setBalance(balanceInWart);
 
-      // USD price
+      // USD price (via server proxy to avoid CORS)
       try {
-        const priceResponse = await axios.get('https://api.coingecko.com/api/v3/simple/price?ids=warthog&vs_currencies=usd');
-        const price = priceResponse.data.warthog?.usd || 0;
+        const priceResponse = await axios.get('/api/price');
+        const price = priceResponse.data?.usd || 0;
         setUsdBalance((parseFloat(balanceInWart) * price).toFixed(2));
       } catch {
         setUsdBalance('N/A');
