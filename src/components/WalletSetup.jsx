@@ -4,7 +4,7 @@ import { useToast } from './Toast';
 import { generateWallet, deriveWallet, importFromPrivateKey, encryptWallet, decryptWallet } from '../utils/warthogWalletUtils';
 
 const WalletSetup = () => {
-  const { setWallet, setIsLoggedIn, setCurrentTab } = useWallet();
+  const { setWallet, setIsLoggedIn, setCurrentTab, setCurrentWalletName } = useWallet();
   const toast = useToast();
 
   const [walletAction, setWalletAction] = useState('create');
@@ -40,6 +40,8 @@ const WalletSetup = () => {
           const decrypted = decryptWallet(encrypted, password);
           setWallet(decrypted);
           sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(decrypted));
+          sessionStorage.setItem('warthogCurrentWalletName', selectedSavedWallet);
+          setCurrentWalletName?.(selectedSavedWallet);
           setIsLoggedIn(true);
           setCurrentTab('overview');
         } catch (err) {
@@ -59,6 +61,9 @@ const WalletSetup = () => {
             const decrypted = decryptWallet(e.target.result, password);
             setWallet(decrypted);
             sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(decrypted));
+            // loaded from file: no name yet — the post-login prompt will offer to name/tag it
+            sessionStorage.removeItem('warthogCurrentWalletName');
+            setCurrentWalletName?.(null);
             setIsLoggedIn(true);
             setCurrentTab('overview');
             setShowModal(false);
@@ -103,9 +108,12 @@ const WalletSetup = () => {
     }
     try {
       const encrypted = encryptWallet(walletData, password);
-      localStorage.setItem(`warthogWallet_${walletName}`, encrypted);
+      const name = walletName.trim();
+      localStorage.setItem(`warthogWallet_${name}`, encrypted);
       setWallet(walletData);
       sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(walletData));
+      sessionStorage.setItem('warthogCurrentWalletName', name);
+      setCurrentWalletName?.(name);
       setIsLoggedIn(true);
       setCurrentTab('overview');
       setShowModal(false);
@@ -115,9 +123,36 @@ const WalletSetup = () => {
     }
   };
 
+  const handleUseNow = () => {
+    // Use the fresh wallet in this session without tagging/saving a named copy.
+    // After login the UI will prompt to name & save it (unless dismissed).
+    if (!consentToClose) {
+      setError('Please confirm you have saved the seed/private key securely');
+      return;
+    }
+    try {
+      setWallet(walletData);
+      sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(walletData));
+      // ensure no stale name
+      sessionStorage.removeItem('warthogCurrentWalletName');
+      setCurrentWalletName?.(null);
+      setIsLoggedIn(true);
+      setCurrentTab('overview');
+      setShowModal(false);
+      setError(null);
+    } catch (err) {
+      setError('Failed to use wallet: ' + err.message);
+    }
+  };
+
   const getSavedWallets = () => {
-    const keys = Object.keys(localStorage);
-    return keys.filter(key => key.startsWith('warthogWallet_')).map(key => key.replace('warthogWallet_', ''));
+    try {
+      if (typeof localStorage === 'undefined') return [];
+      const keys = Object.keys(localStorage);
+      return keys.filter(key => key.startsWith('warthogWallet_')).map(key => key.replace('warthogWallet_', ''));
+    } catch {
+      return [];
+    }
   };
 
   const copyToClipboard = (text, label = 'Copied') => {
@@ -325,7 +360,7 @@ const WalletSetup = () => {
                   checked={saveWalletConsent}
                   onChange={(e) => setSaveWalletConsent(e.target.checked)}
                 />
-                I consent to save the wallet encrypted with a password
+                I consent to save the wallet encrypted with a password (optional)
               </label>
             </div>
             {saveWalletConsent && (
@@ -336,7 +371,7 @@ const WalletSetup = () => {
                     type="text"
                     value={walletName}
                     onChange={(e) => setWalletName(e.target.value)}
-                    placeholder="Enter a name for your wallet"
+                    placeholder="Enter a name for your wallet (e.g. main)"
                     className="input"
                   />
                 </div>
@@ -350,18 +385,18 @@ const WalletSetup = () => {
                     className="input"
                   />
                 </div>
+                <div className="form-group">
+                  <label>Confirm Password:</label>
+                  <input
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Confirm password"
+                    className="input"
+                  />
+                </div>
               </>
             )}
-            <div className="form-group">
-              <label>Confirm Password:</label>
-              <input
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                placeholder="Confirm password"
-                className="input"
-              />
-            </div>
             <div className="form-group">
               <label>
                 <input
@@ -369,11 +404,32 @@ const WalletSetup = () => {
                   checked={consentToClose}
                   onChange={(e) => setConsentToClose(e.target.checked)}
                 />
-                I have saved the information securely
+                I have saved the seed phrase / private key securely (required)
               </label>
             </div>
-            <button onClick={handleSaveWallet}>Save Wallet</button>
-            <button onClick={() => setShowModal(false)}>Close</button>
+
+            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+              <button
+                onClick={handleUseNow}
+                disabled={!consentToClose}
+                style={{ flex: 1 }}
+              >
+                Use Wallet Now
+              </button>
+              <button
+                onClick={handleSaveWallet}
+                disabled={!consentToClose || !saveWalletConsent || !walletName || !password || password !== confirmPassword}
+                style={{ flex: 1 }}
+              >
+                Save Named Wallet
+              </button>
+            </div>
+            <button
+              onClick={() => setShowModal(false)}
+              style={{ marginTop: '0.25rem', background: 'transparent', color: '#888', border: '1px solid #444' }}
+            >
+              Cancel
+            </button>
           </div>
         </div>
       )}

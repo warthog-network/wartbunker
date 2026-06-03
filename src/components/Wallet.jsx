@@ -22,6 +22,9 @@ const WalletContent = () => {
     selectedNode,
     setSelectedNode,
     error,
+    currentWalletName,
+    setCurrentWalletName,
+    saveNamedWallet,
   } = useWallet();
 
   const toast = useToast();
@@ -29,6 +32,14 @@ const WalletContent = () => {
   const [deferredPrompt, setDeferredPrompt] = useState(null);
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  // For prompting to name/tag a wallet on login if not already saved under a name
+  const [showNamePrompt, setShowNamePrompt] = useState(false);
+  const [promptWalletName, setPromptWalletName] = useState('');
+  const [promptPassword, setPromptPassword] = useState('');
+  const [promptConfirmPassword, setPromptConfirmPassword] = useState('');
+  const [promptError, setPromptError] = useState(null);
+  const [namePromptDismissed, setNamePromptDismissed] = useState(false);
 
   // PWA logic (unchanged)
   useEffect(() => {
@@ -48,6 +59,15 @@ const WalletContent = () => {
     };
   }, []);
 
+  // Auto-open the name/tag prompt when logged in with a wallet that has no current name (i.e. not loaded from a saved named entry)
+  useEffect(() => {
+    if (isLoggedIn && wallet && !currentWalletName && !namePromptDismissed) {
+      setShowNamePrompt(true);
+    } else if (!isLoggedIn || currentWalletName) {
+      setShowNamePrompt(false);
+    }
+  }, [isLoggedIn, wallet, currentWalletName, namePromptDismissed]);
+
   const handleInstallClick = () => {
     if (deferredPrompt) {
       deferredPrompt.prompt();
@@ -57,12 +77,51 @@ const WalletContent = () => {
 
   const handleUpdate = () => window.location.reload();
 
+  const handlePromptSaveWallet = () => {
+    setPromptError(null);
+    const name = promptWalletName.trim();
+    if (!name || !promptPassword || promptPassword !== promptConfirmPassword) {
+      setPromptError('Please provide a wallet name and matching passwords to save');
+      return;
+    }
+    const ok = saveNamedWallet(name, promptPassword);
+    if (ok) {
+      toast.success(`Wallet saved as "${name}"`);
+      setShowNamePrompt(false);
+      setPromptWalletName('');
+      setPromptPassword('');
+      setPromptConfirmPassword('');
+      setPromptError(null);
+      setNamePromptDismissed(false);
+    } else {
+      setPromptError('Save failed (check console or top error)');
+    }
+  };
+
+  const handleSkipNamePrompt = () => {
+    setShowNamePrompt(false);
+    setNamePromptDismissed(true);
+    setPromptWalletName('');
+    setPromptPassword('');
+    setPromptConfirmPassword('');
+    setPromptError(null);
+    toast.info('Wallet session active. You can name & save it later for easy login.');
+  };
+
   const handleLogout = () => {
     sessionStorage.removeItem('warthogWalletDecrypted');
+    sessionStorage.removeItem('warthogCurrentWalletName');
     setWallet(null);
     setIsLoggedIn(false);
     setCurrentTab('wallet');
     setIsMobileMenuOpen(false);
+    // reset prompt state for next login
+    setShowNamePrompt(false);
+    setNamePromptDismissed(false);
+    setPromptWalletName('');
+    setPromptPassword('');
+    setPromptConfirmPassword('');
+    setPromptError(null);
   };
 
   // Close mobile menu when tab changes
@@ -215,6 +274,56 @@ const WalletContent = () => {
       {error && (
         <div className="mt-6 mx-1 rounded-2xl border border-red-900/60 bg-red-950/40 px-4 py-3 text-sm text-red-300">
           <span className="font-semibold text-red-400">Error:</span> {error}
+        </div>
+      )}
+
+      {/* Prompt to name/tag the wallet if logged in but not from a pre-named saved wallet entry */}
+      {showNamePrompt && (
+        <div className="modal-overlay" style={{ zIndex: 1100 }}>
+          <div className="modal-content">
+            <h2>Name &amp; Save This Wallet</h2>
+            <p className="text-sm mb-3 text-zinc-300">
+              This wallet isn't tagged with an account name yet. Give it a name and password so you can select it easily from "Login to Saved Wallet" next time.
+            </p>
+            {promptError && <div className="error"><p>{promptError}</p></div>}
+            <div className="form-group">
+              <label>Wallet Name:</label>
+              <input
+                type="text"
+                value={promptWalletName}
+                onChange={(e) => setPromptWalletName(e.target.value)}
+                placeholder="e.g. main-wallet or trading"
+                className="input"
+              />
+            </div>
+            <div className="form-group">
+              <label>Password:</label>
+              <input
+                type="password"
+                value={promptPassword}
+                onChange={(e) => setPromptPassword(e.target.value)}
+                placeholder="Password to encrypt saved wallet"
+                className="input"
+              />
+            </div>
+            <div className="form-group">
+              <label>Confirm Password:</label>
+              <input
+                type="password"
+                value={promptConfirmPassword}
+                onChange={(e) => setPromptConfirmPassword(e.target.value)}
+                placeholder="Confirm password"
+                className="input"
+              />
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
+              <button onClick={handlePromptSaveWallet} style={{ flex: 1 }}>Save &amp; Tag Wallet</button>
+              <button onClick={handleSkipNamePrompt} style={{ flex: 1, background: '#3f3f46' }}>Skip for Now</button>
+            </div>
+            <p className="text-[10px] text-zinc-500 mt-3">
+              This stores an encrypted copy (private key only) in localStorage under your chosen name. Mnemonic is never saved. Skip if you prefer loading from file each time.
+            </p>
+          </div>
         </div>
       )}
     </div>

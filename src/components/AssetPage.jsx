@@ -21,9 +21,15 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const [results, setResults] = useState({});
   const [loading, setLoading] = useState({});
 
-  const wallet = propWallet || (sessionStorage.getItem('warthogWalletDecrypted')
-    ? JSON.parse(sessionStorage.getItem('warthogWalletDecrypted'))
-    : null);
+  const wallet = propWallet || (() => {
+    try {
+      if (typeof sessionStorage === 'undefined') return null;
+      const saved = sessionStorage.getItem('warthogWalletDecrypted');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  })();
 
   // ==================== SMART NONCE HANDLING ====================
   const getSmartNonce = () => {

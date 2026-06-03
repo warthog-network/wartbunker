@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import axios from 'axios';
+import { encryptWallet } from '../utils/warthogWalletUtils';
 
 const API_URL = '/api/proxy';
 
@@ -14,19 +15,55 @@ export const useWallet = () => {
 };
 
 export const WalletProvider = ({ children }) => {
-  const [wallet, setWallet] = useState(null);
+  // IMPORTANT: These are initialized from storage (not useEffect) so that
+  // a "saved" (named/tagged) wallet's currentWalletName association, login state,
+  // etc. reliably survive page refreshes. Effect-based restore was prone to
+  // being nulled by later clear effects on mount.
+  const [wallet, setWallet] = useState(() => {
+    try {
+      if (typeof sessionStorage === 'undefined') return null;
+      const saved = sessionStorage.getItem('warthogWalletDecrypted');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      // corrupt session data; treat as logged out
+      return null;
+    }
+  });
   const [balance, setBalance] = useState(null);
   const [usdBalance, setUsdBalance] = useState(null);
   const [nextNonce, setNextNonce] = useState(null);
   const [pinHeight, setPinHeight] = useState(null);
   const [pinHash, setPinHash] = useState(null);
-  const [selectedNode, setSelectedNode] = useState('');
+  const [selectedNode, setSelectedNode] = useState(() => {
+    try {
+      if (typeof localStorage === 'undefined') return 'https://warthognode.duckdns.org';
+      return localStorage.getItem('selectedNode') || 'https://warthognode.duckdns.org';
+    } catch {
+      return 'https://warthognode.duckdns.org';
+    }
+  });
   const [sentTransactions, setSentTransactions] = useState([]);
   const [failedTransactions, setFailedTransactions] = useState([]);
   const [error, setError] = useState(null);
   const [currentTab, setCurrentTab] = useState('overview');
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(() => {
+    try {
+      if (typeof sessionStorage === 'undefined') return false;
+      const saved = sessionStorage.getItem('warthogWalletDecrypted');
+      return !!saved && JSON.parse(saved) != null;
+    } catch {
+      return false;
+    }
+  });
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [currentWalletName, setCurrentWalletName] = useState(() => {
+    try {
+      if (typeof sessionStorage === 'undefined') return null;
+      return sessionStorage.getItem('warthogCurrentWalletName') || null;
+    } catch {
+      return null;
+    }
+  });
 
   // NEW: Asset balances (live fetched data)
   const [assetBalances, setAssetBalances] = useState([]);
@@ -73,18 +110,7 @@ export const WalletProvider = ({ children }) => {
     node === 'https://warthognode.duckdns.org' || 
     node === 'http://217.182.64.43:3001';
 
-  // Load initial state
-  useEffect(() => {
-    const savedNode = localStorage.getItem('selectedNode') || 'https://warthognode.duckdns.org';
-    setSelectedNode(savedNode);
 
-    const decryptedWallet = sessionStorage.getItem('warthogWalletDecrypted');
-    if (decryptedWallet) {
-      setWallet(JSON.parse(decryptedWallet));
-      setIsLoggedIn(true);
-      setCurrentTab('overview');
-    }
-  }, []);
 
   useEffect(() => {
     if (wallet?.address && selectedNode) {
@@ -303,6 +329,29 @@ export const WalletProvider = ({ children }) => {
     setAssetBalances([]);
   };
 
+  // ==================== NAMED WALLET SAVE (for tagging unsaved logins) ====================
+  const saveNamedWallet = (name, password) => {
+    if (!wallet || !name || !password) {
+      setError('Cannot save: no active wallet or missing name/password');
+      return false;
+    }
+    if (typeof name !== 'string' || name.trim().length === 0) {
+      setError('Wallet name is required');
+      return false;
+    }
+    try {
+      const encrypted = encryptWallet(wallet, password);
+      localStorage.setItem(`warthogWallet_${name.trim()}`, encrypted);
+      const trimmed = name.trim();
+      setCurrentWalletName(trimmed);
+      sessionStorage.setItem('warthogCurrentWalletName', trimmed);
+      return true;
+    } catch (err) {
+      setError('Failed to save named wallet: ' + err.message);
+      return false;
+    }
+  };
+
   // ==================== AUTO MINING FUNCTIONS ====================
 
   const performFakeMine = async () => {
@@ -441,6 +490,7 @@ export const WalletProvider = ({ children }) => {
     if (!isLoggedIn || !wallet) {
       setAssetBalances([]);
       setWatchedAssets([]);
+      setCurrentWalletName(null);
     }
   }, [isLoggedIn, wallet]);
 
@@ -480,6 +530,9 @@ export const WalletProvider = ({ children }) => {
     setCurrentTab,
     isLoggedIn,
     setIsLoggedIn,
+    currentWalletName,
+    setCurrentWalletName,
+    saveNamedWallet,
     fetchBalanceAndNonce,
     refreshBalance,
     // NEW: Asset system

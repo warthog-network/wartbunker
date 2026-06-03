@@ -6,7 +6,14 @@ const API_URL = '/api/proxy';
 const ToolsPage = ({ selectedNode: propSelectedNode }) => {
   const [address, setAddress] = useState('');
   const [validateResult, setValidateResult] = useState(null);
-  const selectedNode = propSelectedNode || localStorage.getItem('selectedNode') || 'https://warthognode.duckdns.org';
+  const selectedNode = propSelectedNode || (() => {
+    try {
+      if (typeof localStorage === 'undefined') return 'https://warthognode.duckdns.org';
+      return localStorage.getItem('selectedNode') || 'https://warthognode.duckdns.org';
+    } catch {
+      return 'https://warthognode.duckdns.org';
+    }
+  })();
 
   const handleValidateAddress = async () => {
     if (!address) {

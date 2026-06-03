@@ -25,6 +25,7 @@ const WalletOverview = ({ onLogout }) => {
     autoMineCount,
     toggleAutoMining,
     isTestnetNode,
+    currentWalletName,
   } = useWallet();
 
   const toast = useToast();
@@ -177,6 +178,12 @@ const WalletOverview = ({ onLogout }) => {
     <>
       <section style={{ textAlign: 'left' }}>
       <h2 style={{ textAlign: 'left' }}>Wallet Overview</h2>
+
+      {currentWalletName && (
+        <div style={{ fontSize: '12px', color: '#a1a1aa', marginBottom: '4px' }}>
+          Saved as: <span style={{ color: '#f4a261', fontFamily: 'monospace' }}>{currentWalletName}</span>
+        </div>
+      )}
 
       {/* Address */}
       <div className="result" style={{ textAlign: 'left' }}>
