@@ -16,7 +16,8 @@
 
 /* DEX sub-tabs — override .container button (uses orange --primary in dark mode) */
 .container .dex-tabs button.dex-tab-btn {
-  flex: 1;
+  flex-shrink: 0;
+  min-width: fit-content;
   display: flex;
   align-items: center;
   justify-content: center;
