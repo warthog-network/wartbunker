@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, Fragment } from 'react';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
 // Removed old ConfirmDialog import (auto-mining no longer needs one-shot confirmation)
@@ -224,7 +224,7 @@ const WalletOverview = ({ onLogout }) => {
           <div className="space-y-1">
             {assetBalances.map((asset, index) => (
               <div 
-                key={index} 
+                key={asset.hash || index} 
                 className="flex justify-between items-center py-2 border-t border-zinc-800 first:border-t-0 group"
               >
                 <div className="min-w-0 flex-1">
@@ -320,7 +320,7 @@ const WalletOverview = ({ onLogout }) => {
                   const totalOrders = buyOrders.length + sellOrders.length;
 
                   return (
-                    <div key={idx} className="bg-zinc-950 border border-zinc-700 rounded-2xl overflow-hidden shadow-sm">
+                    <div key={asset.hash || asset.id || idx} className="bg-zinc-950 border border-zinc-700 rounded-2xl overflow-hidden shadow-sm">
                       {/* Asset Header */}
                       <div className="px-4 py-3 bg-zinc-900/90 border-b border-zinc-700 flex items-center justify-between">
                         <div className="flex items-center gap-3">
@@ -353,7 +353,11 @@ const WalletOverview = ({ onLogout }) => {
                               <span className="text-xs text-emerald-400/50">({buyOrders.length})</span>
                             </div>
                             <div className="space-y-2">
-                              {buyOrders.map((order, oIdx) => renderOrderCard(order, 'buy', asset.name, asset.decimals, copyToClipboard))}
+                              {buyOrders.map((order, oIdx) => (
+                                <Fragment key={order.txHash || `buy-${oIdx}-${asset.hash || ''}`}>
+                                  {renderOrderCard(order, 'buy', asset.name, asset.decimals, copyToClipboard)}
+                                </Fragment>
+                              ))}
                             </div>
                           </div>
                         )}
@@ -367,7 +371,11 @@ const WalletOverview = ({ onLogout }) => {
                               <span className="text-xs text-rose-400/50">({sellOrders.length})</span>
                             </div>
                             <div className="space-y-2">
-                              {sellOrders.map((order, oIdx) => renderOrderCard(order, 'sell', asset.name, asset.decimals, copyToClipboard))}
+                              {sellOrders.map((order, oIdx) => (
+                                <Fragment key={order.txHash || `sell-${oIdx}-${asset.hash || ''}`}>
+                                  {renderOrderCard(order, 'sell', asset.name, asset.decimals, copyToClipboard)}
+                                </Fragment>
+                              ))}
                             </div>
                           </div>
                         )}

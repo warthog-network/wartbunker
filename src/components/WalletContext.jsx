@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useLayoutEffect } from 'react';
 import axios from 'axios';
 import { encryptWallet } from '../utils/warthogWalletUtils';
 
@@ -15,55 +15,22 @@ export const useWallet = () => {
 };
 
 export const WalletProvider = ({ children }) => {
-  // IMPORTANT: These are initialized from storage (not useEffect) so that
-  // a "saved" (named/tagged) wallet's currentWalletName association, login state,
-  // etc. reliably survive page refreshes. Effect-based restore was prone to
-  // being nulled by later clear effects on mount.
-  const [wallet, setWallet] = useState(() => {
-    try {
-      if (typeof sessionStorage === 'undefined') return null;
-      const saved = sessionStorage.getItem('warthogWalletDecrypted');
-      return saved ? JSON.parse(saved) : null;
-    } catch {
-      // corrupt session data; treat as logged out
-      return null;
-    }
-  });
+  // Always start with safe defaults. This ensures the first render (server HTML + client hydrate)
+  // produces identical output. Storage restore happens in useLayoutEffect after hydration.
+  const [wallet, setWallet] = useState(null);
   const [balance, setBalance] = useState(null);
   const [usdBalance, setUsdBalance] = useState(null);
   const [nextNonce, setNextNonce] = useState(null);
   const [pinHeight, setPinHeight] = useState(null);
   const [pinHash, setPinHash] = useState(null);
-  const [selectedNode, setSelectedNode] = useState(() => {
-    try {
-      if (typeof localStorage === 'undefined') return 'https://warthognode.duckdns.org';
-      return localStorage.getItem('selectedNode') || 'https://warthognode.duckdns.org';
-    } catch {
-      return 'https://warthognode.duckdns.org';
-    }
-  });
+  const [selectedNode, setSelectedNode] = useState('https://warthognode.duckdns.org');
   const [sentTransactions, setSentTransactions] = useState([]);
   const [failedTransactions, setFailedTransactions] = useState([]);
   const [error, setError] = useState(null);
   const [currentTab, setCurrentTab] = useState('overview');
-  const [isLoggedIn, setIsLoggedIn] = useState(() => {
-    try {
-      if (typeof sessionStorage === 'undefined') return false;
-      const saved = sessionStorage.getItem('warthogWalletDecrypted');
-      return !!saved && JSON.parse(saved) != null;
-    } catch {
-      return false;
-    }
-  });
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
-  const [currentWalletName, setCurrentWalletName] = useState(() => {
-    try {
-      if (typeof sessionStorage === 'undefined') return null;
-      return sessionStorage.getItem('warthogCurrentWalletName') || null;
-    } catch {
-      return null;
-    }
-  });
+  const [currentWalletName, setCurrentWalletName] = useState(null);
 
   // NEW: Asset balances (live fetched data)
   const [assetBalances, setAssetBalances] = useState([]);
@@ -110,7 +77,32 @@ export const WalletProvider = ({ children }) => {
     node === 'https://warthognode.duckdns.org' || 
     node === 'http://217.182.64.43:3001';
 
+  // Client-only restore from storage. Using useLayoutEffect so state updates happen
+  // synchronously before the browser paints. This guarantees the *first* render
+  // (server + hydrate) always matches, avoiding hydration mismatch, while still
+  // restoring the logged-in named wallet state immediately after.
+  useLayoutEffect(() => {
+    // Restore preferred node
+    const savedNode = localStorage.getItem('selectedNode') || 'https://warthognode.duckdns.org';
+    setSelectedNode(savedNode);
 
+    // Restore active wallet session (decrypted data lives in sessionStorage)
+    try {
+      const decryptedWallet = sessionStorage.getItem('warthogWalletDecrypted');
+      if (decryptedWallet) {
+        const parsed = JSON.parse(decryptedWallet);
+        setWallet(parsed);
+
+        const name = sessionStorage.getItem('warthogCurrentWalletName') || null;
+        setCurrentWalletName(name);
+
+        setIsLoggedIn(true);
+        setCurrentTab('overview');
+      }
+    } catch {
+      // corrupt or missing data — stay logged out
+    }
+  }, []);
 
   useEffect(() => {
     if (wallet?.address && selectedNode) {
@@ -490,7 +482,10 @@ export const WalletProvider = ({ children }) => {
     if (!isLoggedIn || !wallet) {
       setAssetBalances([]);
       setWatchedAssets([]);
-      setCurrentWalletName(null);
+      // Note: we do NOT clear currentWalletName here. It is only nulled explicitly
+      // on logout paths or "use without naming". Clearing it here was causing the
+      // restored name (from useLayoutEffect) to be wiped during the mount/restore
+      // phase after hydration.
     }
   }, [isLoggedIn, wallet]);
 

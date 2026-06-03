@@ -113,6 +113,7 @@ const WalletContent = () => {
     sessionStorage.removeItem('warthogCurrentWalletName');
     setWallet(null);
     setIsLoggedIn(false);
+    setCurrentWalletName(null);  // explicitly clear the saved name association
     setCurrentTab('wallet');
     setIsMobileMenuOpen(false);
     // reset prompt state for next login

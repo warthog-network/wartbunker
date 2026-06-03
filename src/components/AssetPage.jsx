@@ -20,6 +20,7 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
 
   const [results, setResults] = useState({});
   const [loading, setLoading] = useState({});
+  const [activeTab, setActiveTab] = useState('create');
 
   const wallet = propWallet || (() => {
     try {
@@ -231,7 +232,7 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     }).catch(() => toast.error('Failed to copy'));
   };
 
-  // ==================== CREATE ASSET (Updated with correct binary preimage + minFee + nonce override) ====================
+  // ==================== CREATE ASSET ====================
   const handleCreateAsset = async () => {
     const nameInput = document.getElementById('assetName').value.trim().toUpperCase();
     const supplyStr = document.getElementById('assetSupply').value.trim();
@@ -258,7 +259,6 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       const supplyFloat = parseFloat(supplyStr);
       const supplyU64 = BigInt(Math.floor(supplyFloat * Math.pow(10, decimals)));
 
-      // Nonce with smart persistence + manual override support (like Transfer)
       let nonceId = getSmartNonce();
       const nonceOverrideRaw = document.getElementById('createNonceOverride')?.value.trim();
       if (nonceOverrideRaw !== '') {
@@ -273,27 +273,24 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
 
       const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
 
-      // === FETCH CURRENT MINIMUM FEE FROM NODE (important for correct signing) ===
       const minFeeRes = await axios.get(
         `${API_URL}?nodePath=transaction/minfee&${nodeBaseParam}`
       );
       const minFeeE8 = minFeeRes.data?.data?.minFee?.E8 || minFeeRes.data?.minFee?.E8 || 10000;
-      console.log('Using exact minFeeE8 from node for assetCreation:', minFeeE8);
 
-      // === BUILD BINARY PREIMAGE FOR assetCreation (correct layout) ===
       const pinHashBytes = hexToBytes(currentPinHash.replace(/^0x/, ''));
       const nameBytes = new Uint8Array(5);
       nameBytes.set(new TextEncoder().encode(name));
 
       const binaryParts = [
-        pinHashBytes,                    // 32 bytes
-        uint32BE(currentPinHeight),      // 4 bytes
-        uint32BE(nonceId),               // 4 bytes
-        new Uint8Array(3),               // 3 bytes reserved
-        uint64BE(BigInt(minFeeE8)),      // 8 bytes
-        uint64BE(supplyU64),             // 8 bytes
-        new Uint8Array([decimals]),      // 1 byte
-        nameBytes                        // 5 bytes (null-padded if shorter)
+        pinHashBytes,
+        uint32BE(currentPinHeight),
+        uint32BE(nonceId),
+        new Uint8Array(3),
+        uint64BE(BigInt(minFeeE8)),
+        uint64BE(supplyU64),
+        new Uint8Array([decimals]),
+        nameBytes
       ];
 
       const totalLength = binaryParts.reduce((sum, part) => sum + part.length, 0);
@@ -307,9 +304,6 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       const hashHex = ethers.sha256(binary);
       const hash = hashHex.slice(2);
 
-      console.log('=== ASSET CREATION BINARY HASH ===', hash);
-      console.log('Name:', name, 'Decimals:', decimals, 'SupplyU64:', supplyU64.toString());
-
       const signer = new ethers.Wallet(wallet.privateKey);
       const signature = await signer.signingKey.sign(ethers.getBytes('0x' + hash));
 
@@ -318,7 +312,6 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       const v = (signature.v - 27).toString(16).padStart(2, '0');
       const signature65 = r + s + v;
 
-      // === PAYLOAD (using decimals key as expected by current node) ===
       const payload = {
         type: "assetCreation",
         name: name,
@@ -330,14 +323,10 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
         signature65: signature65,
       };
 
-      console.log('=== ASSET CREATION PAYLOAD ===', payload);
-
       await query('createAsset', 'transaction/add', 'POST', payload);
 
-      // Optimistic nonce tracking (same as Transfer)
       updateNonceAfterSuccess(nonceId);
 
-      // Clear the override field after success
       if (document.getElementById('createNonceOverride')) {
         document.getElementById('createNonceOverride').value = '';
       }
@@ -364,7 +353,6 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     const isLiquidityEl = document.getElementById('isLiquidity');
     const isLiquidity = isLiquidityEl ? isLiquidityEl.checked : false;
 
-    // NEW: Manual nonce override
     const nonceOverrideRaw = document.getElementById('transferNonceOverride')?.value.trim();
     let nonceId = getSmartNonce();
     if (nonceOverrideRaw !== '') {
@@ -410,11 +398,9 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
 
       const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
 
-      // Get current minimum fee
       const minFeeRes = await axios.get(`${API_URL}?nodePath=transaction/minfee&${nodeBaseParam}`);
       const minFeeE8 = minFeeRes.data?.data?.minFee?.E8 || minFeeRes.data?.minFee?.E8 || 10000;
 
-      // Build binary preimage
       const binaryParts = [
         hexToBytes(currentPinHash),
         uint32BE(currentPinHeight),
@@ -458,14 +444,10 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
         signature65: signature65,
       };
 
-      console.log('=== TOKEN TRANSFER PAYLOAD ===', payload);
-
       await query('transferAsset', 'transaction/add', 'POST', payload);
 
-      // Optimistic nonce update
       updateNonceAfterSuccess(nonceId);
 
-      // Clear the override field after success
       if (document.getElementById('transferNonceOverride')) {
         document.getElementById('transferNonceOverride').value = '';
       }
@@ -479,6 +461,12 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     }
   };
 
+  const tabs = [
+    { id: 'create', label: 'Create Asset' },
+    { id: 'transfer', label: 'Transfer Asset' },
+    { id: 'search', label: 'Search & Lookup' },
+  ];
+
   return (
     <div className="space-y-8">
       <h2 className="text-3xl font-bold">Asset Tools</h2>
@@ -486,178 +474,199 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
         Create, transfer, search, and look up assets on the DeFi testnet.
       </p>
 
-      {/* CREATE ASSET */}
-      <div className="rounded-3xl p-8 shadow-xl bg-zinc-900">
-        <h3 className="text-2xl font-bold mb-6 text-blue-400">Create New Asset</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div>
-            <label className="block text-sm font-medium mb-2">Asset Name (1-5 chars)</label>
-            <input id="assetName" maxLength="5" placeholder="e.g. LIQ" className="input mb-4" />
-
-            <label className="block text-sm font-medium mb-2">Total Supply</label>
-            <input id="assetSupply" type="number" placeholder="1000000000" className="input mb-4" />
-
-            <label className="block text-sm font-medium mb-2">Decimals</label>
-            <input id="assetDecimals" type="number" defaultValue="8" className="input mb-6" />
-
-            {/* NEW: Manual Nonce Override for Create Asset (consistent with Transfer) */}
-            <label className="block text-sm font-medium mb-2 text-amber-400">
-              Nonce Override (only use if you get "Duplicate nonce")
-            </label>
-            <input 
-              id="createNonceOverride" 
-              type="number" 
-              placeholder="Leave empty for auto" 
-              className="input mb-6" 
-            />
-
+      {/* SUB TABS - consistent with DexPage styling */}
+      <div className="dex-tabs flex w-full gap-1 p-1 mb-6 bg-zinc-950 border border-zinc-800 rounded-xl overflow-x-auto scrollbar-hide">
+        {tabs.map((tab) => {
+          const isActive = activeTab === tab.id;
+          return (
             <button
-              onClick={handleCreateAsset}
-              disabled={loading.createAsset}
-              className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-2xl transition-all"
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              className={`dex-tab-btn whitespace-nowrap${isActive ? ' dex-tab-btn--active' : ''}`}
             >
-              {loading.createAsset ? 'Creating Asset...' : 'Create Asset'}
+              {tab.label}
             </button>
-
-            {results.createAsset && renderTransactionResult(results.createAsset, 'Asset Creation')}
-          </div>
-        </div>
+          );
+        })}
       </div>
 
-      {/* TRANSFER ASSET */}
-      <div className="rounded-3xl p-8 shadow-xl bg-zinc-900">
-        <h3 className="text-2xl font-bold mb-6 text-blue-400">Transfer Asset</h3>
-        <p className="text-sm text-gray-400 mb-4">
-          Smart nonce is used by default. Use the Nonce Override field only when you get "Duplicate nonce" errors.
-        </p>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div>
-            <label className="block text-sm font-medium mb-2">Asset Hash (64 hex chars, no 0x)</label>
-            <input id="transferAssetId" placeholder="e.g. b92b88491b478c22fbc5b3f03f8b5539555ff2680944a8c847a1eb90ef69894e" className="input mb-3" />
+      {/* CREATE ASSET TAB */}
+      {activeTab === 'create' && (
+        <section className="border-2 border-blue-500 rounded-3xl p-8 bg-blue-50 dark:bg-blue-950 shadow-xl">
+          <h3 className="text-2xl font-bold mb-6 text-blue-700 dark:text-blue-300">Create New Asset</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label className="block text-sm font-medium mb-2">Asset Name (1-5 chars)</label>
+              <input id="assetName" maxLength="5" placeholder="e.g. LIQ" className="input mb-4" />
 
-            <label className="block text-sm font-medium mb-2">Decimals / Precision</label>
-            <input id="transferDecimals" type="number" defaultValue="8" className="input mb-1" />
+              <label className="block text-sm font-medium mb-2">Total Supply</label>
+              <input id="assetSupply" type="number" placeholder="1000000000" className="input mb-4" />
 
-            <div className="flex items-center mb-3">
-              <input type="checkbox" id="isLiquidity" className="mr-2 h-4 w-4 accent-blue-600" />
-              <label htmlFor="isLiquidity" className="text-sm font-medium text-gray-300">This is a Liquidity Token (force precision 8)</label>
+              <label className="block text-sm font-medium mb-2">Decimals</label>
+              <input id="assetDecimals" type="number" defaultValue="8" className="input mb-6" />
+
+              <label className="block text-sm font-medium mb-2 text-amber-400">
+                Nonce Override (only use if you get "Duplicate nonce")
+              </label>
+              <input 
+                id="createNonceOverride" 
+                type="number" 
+                placeholder="Leave empty for auto" 
+                className="input mb-6" 
+              />
+
+              <button
+                onClick={handleCreateAsset}
+                disabled={loading.createAsset}
+                className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-2xl transition-all"
+              >
+                {loading.createAsset ? 'Creating Asset...' : 'Create Asset'}
+              </button>
+
+              {results.createAsset && renderTransactionResult(results.createAsset, 'Asset Creation')}
             </div>
-
-            <label className="block text-sm font-medium mb-2">Recipient Address</label>
-            <input id="transferRecipient" placeholder="recipient address (no 0x)" className="input mb-3" />
-
-            <label className="block text-sm font-medium mb-2">Amount (in token units)</label>
-            <input id="transferAmount" type="number" step="any" placeholder="e.g. 1.5" className="input mb-3" />
-
-            {/* NEW: Manual Nonce Override */}
-            <label className="block text-sm font-medium mb-2 text-amber-400">
-              Nonce Override (only use if you get "Duplicate nonce")
-            </label>
-            <input 
-              id="transferNonceOverride" 
-              type="number" 
-              placeholder="Leave empty for auto" 
-              className="input mb-6" 
-            />
-
-            <button
-              onClick={handleTransferAsset}
-              disabled={loading.transferAsset}
-              className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-2xl transition-all"
-            >
-              {loading.transferAsset ? 'Transferring...' : 'Transfer Asset'}
-            </button>
-
-            {results.transferAsset && renderTransactionResult(results.transferAsset, 'Asset Transfer')}
           </div>
-        </div>
-      </div>
+        </section>
+      )}
 
-      {/* SEARCH & LOOKUP */}
-      <div className="rounded-3xl p-8 shadow-xl bg-zinc-900">
-        <h3 className="text-2xl font-bold mb-6 text-blue-400">Asset Search & Lookup</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          <div>
-            <label className="block text-sm font-medium mb-2">Asset Complete (by name)</label>
-            <input id="namePrefix" placeholder="namePrefix" className="input mb-3" />
-            <input id="hashPrefix" placeholder="hashPrefix (optional)" className="input mb-4" />
-            <button
-              onClick={() => {
-                const name = document.getElementById('namePrefix').value;
-                const hash = document.getElementById('hashPrefix').value;
-                let path = `asset/complete?namePrefix=${encodeURIComponent(name)}`;
-                if (hash) path += `&hashPrefix=${encodeURIComponent(hash)}`;
-                query('assetComplete', path);
-              }}
-              disabled={loading.assetComplete}
-              className="px-6 py-3 w-full bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-2xl transition-colors"
-            >
-              {loading.assetComplete ? 'Querying...' : 'Query'}
-            </button>
+      {/* TRANSFER ASSET TAB */}
+      {activeTab === 'transfer' && (
+        <section className="border-2 border-cyan-500 rounded-3xl p-8 bg-cyan-50 dark:bg-cyan-950 shadow-xl">
+          <h3 className="text-2xl font-bold mb-6 text-cyan-700 dark:text-cyan-300">Transfer Asset</h3>
+          <p className="text-sm text-cyan-600 dark:text-cyan-400 mb-4">
+            Smart nonce is used by default. Use the Nonce Override field only when you get "Duplicate nonce" errors.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label className="block text-sm font-medium mb-2">Asset Hash (64 hex chars, no 0x)</label>
+              <input id="transferAssetId" placeholder="e.g. b92b88491b478c22fbc5b3f03f8b5539555ff2680944a8c847a1eb90ef69894e" className="input mb-3" />
 
-            {results.assetComplete && results.assetComplete.code === 0 && results.assetComplete.data?.matches?.length > 0 && (
-              <div className="mt-6">
-                <div className="flex items-center justify-between mb-3 px-1">
-                  <div className="text-sm text-zinc-400">
-                    Found <span className="font-semibold text-white">{results.assetComplete.data.matches.length}</span> match{results.assetComplete.data.matches.length !== 1 ? 'es' : ''} for “{results.assetComplete.data.namePrefix}”
+              <label className="block text-sm font-medium mb-2">Decimals / Precision</label>
+              <input id="transferDecimals" type="number" defaultValue="8" className="input mb-1" />
+
+              <div className="flex items-center mb-3">
+                <input type="checkbox" id="isLiquidity" className="mr-2 h-4 w-4 accent-blue-600" />
+                <label htmlFor="isLiquidity" className="text-sm font-medium text-gray-300">This is a Liquidity Token (force precision 8)</label>
+              </div>
+
+              <label className="block text-sm font-medium mb-2">Recipient Address</label>
+              <input id="transferRecipient" placeholder="recipient address (no 0x)" className="input mb-3" />
+
+              <label className="block text-sm font-medium mb-2">Amount (in token units)</label>
+              <input id="transferAmount" type="number" step="any" placeholder="e.g. 1.5" className="input mb-3" />
+
+              <label className="block text-sm font-medium mb-2 text-amber-400">
+                Nonce Override (only use if you get "Duplicate nonce")
+              </label>
+              <input 
+                id="transferNonceOverride" 
+                type="number" 
+                placeholder="Leave empty for auto" 
+                className="input mb-6" 
+              />
+
+              <button
+                onClick={handleTransferAsset}
+                disabled={loading.transferAsset}
+                className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-2xl transition-all"
+              >
+                {loading.transferAsset ? 'Transferring...' : 'Transfer Asset'}
+              </button>
+
+              {results.transferAsset && renderTransactionResult(results.transferAsset, 'Asset Transfer')}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* SEARCH & LOOKUP TAB */}
+      {activeTab === 'search' && (
+        <section className="border-2 border-violet-500 rounded-3xl p-8 bg-violet-50 dark:bg-violet-950 shadow-xl">
+          <h3 className="text-2xl font-bold mb-6 text-violet-700 dark:text-violet-300">Asset Search & Lookup</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div>
+              <label className="block text-sm font-medium mb-2">Asset Complete (by name)</label>
+              <input id="namePrefix" placeholder="namePrefix" className="input mb-3" />
+              <input id="hashPrefix" placeholder="hashPrefix (optional)" className="input mb-4" />
+              <button
+                onClick={() => {
+                  const name = document.getElementById('namePrefix').value;
+                  const hash = document.getElementById('hashPrefix').value;
+                  let path = `asset/complete?namePrefix=${encodeURIComponent(name)}`;
+                  if (hash) path += `&hashPrefix=${encodeURIComponent(hash)}`;
+                  query('assetComplete', path);
+                }}
+                disabled={loading.assetComplete}
+                className="px-6 py-3 w-full bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-2xl transition-colors"
+              >
+                {loading.assetComplete ? 'Querying...' : 'Query'}
+              </button>
+
+              {results.assetComplete && results.assetComplete.code === 0 && results.assetComplete.data?.matches?.length > 0 && (
+                <div className="mt-6">
+                  <div className="flex items-center justify-between mb-3 px-1">
+                    <div className="text-sm text-zinc-400">
+                      Found <span className="font-semibold text-white">{results.assetComplete.data.matches.length}</span> match{results.assetComplete.data.matches.length !== 1 ? 'es' : ''} for “{results.assetComplete.data.namePrefix}”
+                    </div>
+                  </div>
+                  <div className="space-y-3">
+                    {results.assetComplete.data.matches.map((asset, idx) => (
+                      <div key={idx}>{renderAssetCard(asset, true)}</div>
+                    ))}
                   </div>
                 </div>
-                <div className="space-y-3">
-                  {results.assetComplete.data.matches.map((asset, idx) => (
-                    <div key={idx}>{renderAssetCard(asset, true)}</div>
-                  ))}
+              )}
+
+              {results.assetComplete && results.assetComplete.code === 0 && results.assetComplete.data?.matches?.length === 0 && (
+                <div className="mt-6 p-4 bg-zinc-950 border border-zinc-700 rounded-2xl text-center text-sm text-zinc-400">
+                  No assets found matching your search.
                 </div>
-              </div>
-            )}
+              )}
 
-            {results.assetComplete && results.assetComplete.code === 0 && results.assetComplete.data?.matches?.length === 0 && (
-              <div className="mt-6 p-4 bg-zinc-950 border border-zinc-700 rounded-2xl text-center text-sm text-zinc-400">
-                No assets found matching your search.
-              </div>
-            )}
+              {results.assetComplete && results.assetComplete.error && (
+                <div className="mt-6 p-4 bg-red-950/40 border border-red-700 rounded-2xl text-sm text-red-400">
+                  {results.assetComplete.error}
+                </div>
+              )}
+            </div>
 
-            {results.assetComplete && results.assetComplete.error && (
-              <div className="mt-6 p-4 bg-red-950/40 border border-red-700 rounded-2xl text-sm text-red-400">
-                {results.assetComplete.error}
-              </div>
-            )}
+            <div>
+              <label className="block text-sm font-medium mb-2">Lookup Asset (by hash)</label>
+              <input id="assetLookup" placeholder="asset hash (64 hex)" className="input mb-4" />
+              <button
+                onClick={() => {
+                  const val = document.getElementById('assetLookup').value.trim();
+                  const clean = val.startsWith('0x') ? val.slice(2) : val;
+                  query('assetLookup', `asset/lookup/${encodeURIComponent(clean)}`);
+                }}
+                disabled={loading.assetLookup}
+                className="px-6 py-3 w-full bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-2xl transition-colors"
+              >
+                {loading.assetLookup ? 'Querying...' : 'Query'}
+              </button>
+
+              {results.assetLookup && results.assetLookup.code === 0 && results.assetLookup.data && (
+                <div className="mt-6">
+                  {renderAssetCard(results.assetLookup.data)}
+                </div>
+              )}
+
+              {results.assetLookup && results.assetLookup.code === 0 && !results.assetLookup.data && (
+                <div className="mt-6 p-4 bg-zinc-950 border border-zinc-700 rounded-2xl text-center text-sm text-zinc-400">
+                  Asset not found.
+                </div>
+              )}
+
+              {results.assetLookup && results.assetLookup.error && (
+                <div className="mt-6 p-4 bg-red-950/40 border border-red-700 rounded-2xl text-sm text-red-400">
+                  {results.assetLookup.error}
+                </div>
+              )}
+            </div>
           </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-2">Lookup Asset (by hash)</label>
-            <input id="assetLookup" placeholder="asset hash (64 hex)" className="input mb-4" />
-            <button
-              onClick={() => {
-                const val = document.getElementById('assetLookup').value.trim();
-                const clean = val.startsWith('0x') ? val.slice(2) : val;
-                query('assetLookup', `asset/lookup/${encodeURIComponent(clean)}`);
-              }}
-              disabled={loading.assetLookup}
-              className="px-6 py-3 w-full bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-2xl transition-colors"
-            >
-              {loading.assetLookup ? 'Querying...' : 'Query'}
-            </button>
-
-            {results.assetLookup && results.assetLookup.code === 0 && results.assetLookup.data && (
-              <div className="mt-6">
-                {renderAssetCard(results.assetLookup.data)}
-              </div>
-            )}
-
-            {results.assetLookup && results.assetLookup.code === 0 && !results.assetLookup.data && (
-              <div className="mt-6 p-4 bg-zinc-950 border border-zinc-700 rounded-2xl text-center text-sm text-zinc-400">
-                Asset not found.
-              </div>
-            )}
-
-            {results.assetLookup && results.assetLookup.error && (
-              <div className="mt-6 p-4 bg-red-950/40 border border-red-700 rounded-2xl text-sm text-red-400">
-                {results.assetLookup.error}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
+        </section>
+      )}
     </div>
   );
 };
