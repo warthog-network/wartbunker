@@ -1,0 +1,38 @@
+---
+
+const { title } = Astro.props;
+
+import '../styles/index.css';
+import '../styles/Wallet.css';
+import '../styles/global.css';
+---
+
+<!doctype html>
+
+<html lang="en">
+
+	<head>
+
+		<meta charset="UTF-8" />
+
+		<meta name="description" content="Warthog Network Defi" />
+
+		<meta name="viewport" content="width=device-width" />
+
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+		<meta name="generator" content={Astro.generator} />
+
+		<title>{title}</title>
+
+		<!-- Styles are imported via Layout.astro (Astro handles bundling) -->
+
+	</head>
+
+	<body>
+
+		<slot />
+
+	</body>
+
+</html>

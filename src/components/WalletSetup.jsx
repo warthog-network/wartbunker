@@ -1,0 +1,440 @@
+import React, { useState } from 'react';
+import { useWallet } from './WalletContext';
+import { useToast } from './Toast';
+import { generateWallet, deriveWallet, importFromPrivateKey, encryptWallet, decryptWallet } from '../utils/warthogWalletUtils';
+
+const WalletSetup = () => {
+  const { setWallet, setIsLoggedIn, setCurrentTab, setCurrentWalletName } = useWallet();
+  const toast = useToast();
+
+  const [walletAction, setWalletAction] = useState('create');
+  const [mnemonic, setMnemonic] = useState('');
+  const [privateKeyInput, setPrivateKeyInput] = useState('');
+  const [wordCount, setWordCount] = useState('12');
+  const [pathType, setPathType] = useState('hardened');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [uploadedFile, setUploadedFile] = useState(null);
+  const [saveWalletConsent, setSaveWalletConsent] = useState(false);
+  const [showModal, setShowModal] = useState(false);
+  const [walletData, setWalletData] = useState(null);
+  const [consentToClose, setConsentToClose] = useState(false);
+  const [error, setError] = useState(null);
+  const [walletName, setWalletName] = useState('');
+  const [selectedSavedWallet, setSelectedSavedWallet] = useState('');
+
+  const handleWalletAction = async () => {
+    setError(null);
+    try {
+      if (walletAction === 'login') {
+        if (!selectedSavedWallet || !password) {
+          setError('Please select a saved wallet and enter password');
+          return;
+        }
+        const encrypted = localStorage.getItem(`warthogWallet_${selectedSavedWallet}`);
+        if (!encrypted) {
+          setError('Selected wallet not found');
+          return;
+        }
+        try {
+          const decrypted = decryptWallet(encrypted, password);
+          setWallet(decrypted);
+          sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(decrypted));
+          sessionStorage.setItem('warthogCurrentWalletName', selectedSavedWallet);
+          setCurrentWalletName?.(selectedSavedWallet);
+          setIsLoggedIn(true);
+          setCurrentTab('overview');
+        } catch (err) {
+          setError('Failed to decrypt wallet: ' + err.message);
+        }
+        return;
+      }
+
+      if (walletAction === 'load') {
+        if (!uploadedFile || !password) {
+          setError('Please upload the wallet file and enter password');
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const decrypted = decryptWallet(e.target.result, password);
+            setWallet(decrypted);
+            sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(decrypted));
+            // loaded from file: no name yet — the post-login prompt will offer to name/tag it
+            sessionStorage.removeItem('warthogCurrentWalletName');
+            setCurrentWalletName?.(null);
+            setIsLoggedIn(true);
+            setCurrentTab('overview');
+            setShowModal(false);
+          } catch (err) {
+            setError('Failed to load wallet: ' + err.message);
+          }
+        };
+        reader.readAsText(uploadedFile);
+        return;
+      }
+
+      let wallet;
+      if (walletAction === 'create') {
+        wallet = generateWallet(wordCount, pathType);
+      } else if (walletAction === 'derive') {
+        if (!mnemonic) {
+          setError('Please enter a mnemonic phrase');
+          return;
+        }
+        wallet = deriveWallet(mnemonic, wordCount, pathType);
+      } else if (walletAction === 'import') {
+        if (!privateKeyInput) {
+          setError('Please enter a private key');
+          return;
+        }
+        wallet = importFromPrivateKey(privateKeyInput);
+      }
+
+      if (wallet) {
+        setWalletData(wallet);
+        setShowModal(true);
+      }
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleSaveWallet = () => {
+    if (!saveWalletConsent || !walletName || !password || password !== confirmPassword) {
+      setError('Please provide a wallet name, matching passwords and consent to save');
+      return;
+    }
+    try {
+      const encrypted = encryptWallet(walletData, password);
+      const name = walletName.trim();
+      localStorage.setItem(`warthogWallet_${name}`, encrypted);
+      setWallet(walletData);
+      sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(walletData));
+      sessionStorage.setItem('warthogCurrentWalletName', name);
+      setCurrentWalletName?.(name);
+      setIsLoggedIn(true);
+      setCurrentTab('overview');
+      setShowModal(false);
+      setError(null);
+    } catch (err) {
+      setError('Failed to save wallet: ' + err.message);
+    }
+  };
+
+  const handleUseNow = () => {
+    // Use the fresh wallet in this session without tagging/saving a named copy.
+    // After login the UI will prompt to name & save it (unless dismissed).
+    if (!consentToClose) {
+      setError('Please confirm you have saved the seed/private key securely');
+      return;
+    }
+    try {
+      setWallet(walletData);
+      sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(walletData));
+      // ensure no stale name
+      sessionStorage.removeItem('warthogCurrentWalletName');
+      setCurrentWalletName?.(null);
+      setIsLoggedIn(true);
+      setCurrentTab('overview');
+      setShowModal(false);
+      setError(null);
+    } catch (err) {
+      setError('Failed to use wallet: ' + err.message);
+    }
+  };
+
+  const getSavedWallets = () => {
+    try {
+      if (typeof localStorage === 'undefined') return [];
+      const keys = Object.keys(localStorage);
+      return keys.filter(key => key.startsWith('warthogWallet_')).map(key => key.replace('warthogWallet_', ''));
+    } catch {
+      return [];
+    }
+  };
+
+  const copyToClipboard = (text, label = 'Copied') => {
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(() => {
+      toast.success(label);
+    }).catch(() => toast.error('Failed to copy'));
+  };
+
+  return (
+    <div className="container">
+      <h1>Warthog Network Defi</h1>
+
+      <section>
+        <h2>Login to Existing Wallet</h2>
+        <p className="mb-4 text-gray-600 dark:text-gray-400">
+          If you have a saved encrypted wallet file, use the button below to login.
+        </p>
+        <button
+          onClick={() => setWalletAction('load')}
+          className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-2xl transition-colors w-full mb-6"
+        >
+          Login with Encrypted Wallet File
+        </button>
+      </section>
+
+      <section>
+        <h2>Wallet Setup</h2>
+
+        <div className="form-group">
+          <label>Action:</label>
+          <select value={walletAction} onChange={(e) => setWalletAction(e.target.value)} className="input">
+            <option value="create">Create New Wallet</option>
+            <option value="derive">Derive from Mnemonic</option>
+            <option value="import">Import Private Key</option>
+            <option value="login">Login to Saved Wallet</option>
+            <option value="load">Login with Encrypted File</option>
+          </select>
+        </div>
+
+        {walletAction === 'login' && (
+          <>
+            <div className="form-group">
+              <label>Select Saved Wallet:</label>
+              <select value={selectedSavedWallet} onChange={(e) => setSelectedSavedWallet(e.target.value)} className="input">
+                <option value="">-- Select Wallet --</option>
+                {getSavedWallets().map(name => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Password:</label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter password"
+                className="input"
+              />
+            </div>
+          </>
+        )}
+
+        {walletAction === 'load' && (
+          <>
+            <div className="form-group">
+              <label>Upload Wallet File:</label>
+              <input type="file" accept=".txt" onChange={(e) => setUploadedFile(e.target.files[0])} className="input" />
+            </div>
+            <div className="form-group">
+              <label>Password:</label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter password"
+                className="input"
+              />
+            </div>
+          </>
+        )}
+
+        {walletAction === 'create' && (
+          <>
+            <div className="form-group">
+              <label>Word Count:</label>
+              <select value={wordCount} onChange={(e) => setWordCount(e.target.value)} className="input">
+                <option value="12">12 words</option>
+                <option value="24">24 words</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Path Type:</label>
+              <select value={pathType} onChange={(e) => setPathType(e.target.value)} className="input">
+                <option value="hardened">Hardened (BIP44)</option>
+                <option value="legacy">Legacy</option>
+              </select>
+            </div>
+          </>
+        )}
+
+        {walletAction === 'derive' && (
+          <>
+            <div className="form-group">
+              <label>Mnemonic:</label>
+              <textarea
+                value={mnemonic}
+                onChange={(e) => setMnemonic(e.target.value)}
+                placeholder="Enter your 12 or 24 word mnemonic"
+                className="input"
+                rows="4"
+              />
+            </div>
+            <div className="form-group">
+              <label>Word Count:</label>
+              <select value={wordCount} onChange={(e) => setWordCount(e.target.value)} className="input">
+                <option value="12">12 words</option>
+                <option value="24">24 words</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Path Type:</label>
+              <select value={pathType} onChange={(e) => setPathType(e.target.value)} className="input">
+                <option value="hardened">Hardened (BIP44)</option>
+                <option value="legacy">Legacy</option>
+              </select>
+            </div>
+          </>
+        )}
+
+        {walletAction === 'import' && (
+          <div className="form-group">
+            <label>Private Key:</label>
+            <input
+              type="text"
+              value={privateKeyInput}
+              onChange={(e) => setPrivateKeyInput(e.target.value.trim())}
+              placeholder="Enter 64-character private key"
+              className="input"
+            />
+          </div>
+        )}
+
+        <button
+          onClick={handleWalletAction}
+          disabled={(walletAction === 'load' && (!password || !uploadedFile)) || (walletAction === 'login' && (!password || !selectedSavedWallet))}
+          className="px-4 py-2 text-sm font-medium text-white bg-zinc-700 rounded-lg hover:bg-zinc-800 focus:ring-4 focus:outline-none focus:ring-zinc-300 transition-colors duration-200 dark:bg-zinc-600 dark:hover:bg-zinc-700 dark:focus:ring-zinc-800 w-full"
+        >
+          {walletAction === 'create'
+            ? 'Create Wallet'
+            : walletAction === 'derive'
+            ? 'Derive Wallet'
+            : walletAction === 'import'
+            ? 'Import Wallet'
+            : walletAction === 'login'
+            ? 'Login to Wallet'
+            : 'Decrypt Wallet & Login'}
+        </button>
+
+        {error && <div className="error"><p>{error}</p></div>}
+      </section>
+
+      {showModal && walletData && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <h2>Wallet Information</h2>
+            <div className="rounded-xl bg-amber-950/60 border border-amber-900/70 px-4 py-3 text-sm text-amber-300">
+              <strong>Critical:</strong> Write your seed phrase and private key on paper and store them offline. Never share them. Anyone with this information can steal your funds.
+            </div>
+            {walletData.mnemonic && (
+              <div className="result">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-medium text-amber-400">MNEMONIC (SAVE THIS SECURELY)</span>
+                  <button onClick={() => copyToClipboard(walletData.mnemonic, 'Mnemonic copied')} className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 hover:text-white">COPY</button>
+                </div>
+                <pre onClick={() => copyToClipboard(walletData.mnemonic, 'Mnemonic copied')} className="cursor-pointer select-all">{walletData.mnemonic}</pre>
+              </div>
+            )}
+            <div className="result">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-medium text-red-400">PRIVATE KEY — NEVER SHARE</span>
+                <button onClick={() => copyToClipboard(walletData.privateKey, 'Private key copied')} className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 hover:text-white">COPY</button>
+              </div>
+              <pre onClick={() => copyToClipboard(walletData.privateKey, 'Private key copied')} className="cursor-pointer select-all">{walletData.privateKey}</pre>
+            </div>
+            <div className="result">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-medium text-zinc-400">Public Key</span>
+                <button onClick={() => copyToClipboard(walletData.publicKey, 'Public key copied')} className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 hover:text-white">COPY</button>
+              </div>
+              <pre onClick={() => copyToClipboard(walletData.publicKey)} className="cursor-pointer select-all text-xs">{walletData.publicKey}</pre>
+            </div>
+            <div className="result">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-medium text-emerald-400">Address</span>
+                <button onClick={() => copyToClipboard(walletData.address, 'Address copied')} className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 hover:text-white">COPY</button>
+              </div>
+              <pre onClick={() => copyToClipboard(walletData.address, 'Address copied')} className="cursor-pointer select-all font-mono text-sm">{walletData.address}</pre>
+            </div>
+            <div className="form-group">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={saveWalletConsent}
+                  onChange={(e) => setSaveWalletConsent(e.target.checked)}
+                />
+                I consent to save the wallet encrypted with a password (optional)
+              </label>
+            </div>
+            {saveWalletConsent && (
+              <>
+                <div className="form-group">
+                  <label>Wallet Name:</label>
+                  <input
+                    type="text"
+                    value={walletName}
+                    onChange={(e) => setWalletName(e.target.value)}
+                    placeholder="Enter a name for your wallet (e.g. main)"
+                    className="input"
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Password:</label>
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Enter password"
+                    className="input"
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Confirm Password:</label>
+                  <input
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Confirm password"
+                    className="input"
+                  />
+                </div>
+              </>
+            )}
+            <div className="form-group">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={consentToClose}
+                  onChange={(e) => setConsentToClose(e.target.checked)}
+                />
+                I have saved the seed phrase / private key securely (required)
+              </label>
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+              <button
+                onClick={handleUseNow}
+                disabled={!consentToClose}
+                style={{ flex: 1 }}
+              >
+                Use Wallet Now
+              </button>
+              <button
+                onClick={handleSaveWallet}
+                disabled={!consentToClose || !saveWalletConsent || !walletName || !password || password !== confirmPassword}
+                style={{ flex: 1 }}
+              >
+                Save Named Wallet
+              </button>
+            </div>
+            <button
+              onClick={() => setShowModal(false)}
+              style={{ marginTop: '0.25rem', background: 'transparent', color: '#888', border: '1px solid #444' }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default WalletSetup;
