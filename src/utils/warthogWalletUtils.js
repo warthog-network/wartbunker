@@ -76,6 +76,28 @@ export const decryptWallet = (encrypted, password) => {
   return JSON.parse(decryptedStr);
 };
 
+// Derive the Warthog address (the app-specific 40-hex-char format) from a public key hex.
+// Accepts either compressed (66 hex chars, 02/03 prefix) or uncompressed (128 hex + "04" prefix).
+// The address derivation in this app is performed over the *compressed* public key bytes.
+export const deriveWarthogAddress = (publicKeyHex) => {
+  if (!publicKeyHex) return null;
+  let pk = publicKeyHex.startsWith('0x') ? publicKeyHex.slice(2) : publicKeyHex;
+
+  // Uncompressed form from signature recovery etc: 04 + 64 bytes (130 hex chars after 0x strip)
+  if (pk.length === 130 && pk.startsWith('04')) {
+    const x = pk.slice(2, 66); // 32 bytes
+    const y = pk.slice(66);    // 32 bytes
+    const yLast = parseInt(y.slice(-2), 16);
+    const prefix = (yLast % 2 === 0) ? '02' : '03';
+    pk = prefix + x;
+  }
+
+  const sha = ethers.sha256('0x' + pk).slice(2);
+  const ripemd = ethers.ripemd160('0x' + sha).slice(2);
+  const checksum = ethers.sha256('0x' + ripemd).slice(2, 10);
+  return ripemd + checksum;
+};
+
 export const downloadWallet = (walletData, password) => {
   const encrypted = encryptWallet(walletData, password);
   const blob = new Blob([encrypted], { type: 'text/plain' });

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useLayoutEffect } from 'react';
 import axios from 'axios';
-import { encryptWallet } from '../utils/warthogWalletUtils';
+import { encryptWallet, decryptWallet } from '../utils/warthogWalletUtils';
 
 const API_URL = '/api/proxy';
 
@@ -398,6 +398,74 @@ export const WalletProvider = ({ children }) => {
     }
   };
 
+  // ==================== LOCK WALLET (strip private key from session) ====================
+  // Removes the private key (and mnemonic) from memory and sessionStorage while
+  // keeping the address/publicKey so read-only features (balances, history, watched assets)
+  // and the overall "logged in" UI continue to work. Signing-dependent features
+  // (send, asset ops, server-gated content proof) will see no privateKey and refuse.
+  // For named/saved wallets the user can fully re-login via the setup screen (enter password)
+  // to restore a session that has the private key.
+  const lockWallet = () => {
+    if (!wallet) return;
+    if (!wallet.privateKey) return; // already locked / no key present
+
+    const lockedWallet = {
+      address: wallet.address,
+      publicKey: wallet.publicKey,
+      // intentionally no privateKey, no mnemonic
+    };
+
+    setWallet(lockedWallet);
+    try {
+      sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(lockedWallet));
+    } catch {
+      // ignore storage errors; in-memory is already stripped
+    }
+  };
+
+  // ==================== UNLOCK WALLET (re-decrypt private key into session) ====================
+  // Only works for sessions that have a currentWalletName (i.e. were originally loaded
+  // from a password-protected named wallet saved in localStorage). Prompts for that
+  // same password, decrypts, and restores the full wallet (with privateKey) into
+  // memory + sessionStorage. This is the "lighter" counterpart to Lock.
+  const unlockWallet = (password) => {
+    if (!currentWalletName) {
+      setError('No saved wallet name for this session. Log out and use "Login to Saved Wallet" instead.');
+      return false;
+    }
+    if (!wallet?.address) {
+      setError('No active wallet session to unlock.');
+      return false;
+    }
+    const key = `warthogWallet_${currentWalletName}`;
+    const encrypted = localStorage.getItem(key);
+    if (!encrypted) {
+      setError(`Saved data for "${currentWalletName}" not found in this browser.`);
+      return false;
+    }
+    try {
+      const decrypted = decryptWallet(encrypted, password);
+      if (!decrypted || !decrypted.address) {
+        throw new Error('Invalid decrypted wallet data');
+      }
+      if (decrypted.address.toLowerCase() !== wallet.address.toLowerCase()) {
+        setError('Decrypted wallet does not match the current locked session address.');
+        return false;
+      }
+      setWallet(decrypted);
+      sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(decrypted));
+      setError(null);
+      return true;
+    } catch (err) {
+      const msg = err?.message || 'Invalid password or corrupted data';
+      setError('Unlock failed: ' + msg);
+      return false;
+    }
+  };
+
+  // Derived flag for UI: we have an identity + name but no signing key in this session.
+  const isSessionLocked = !!(isLoggedIn && wallet && !wallet.privateKey && currentWalletName);
+
   // ==================== AUTO MINING FUNCTIONS ====================
 
   const performFakeMine = async () => {
@@ -599,6 +667,10 @@ export const WalletProvider = ({ children }) => {
     // Token gating helpers (pure, non-mutating)
     checkAssetBalance,
     hasAssetBalance,
+    // Session key lock/unlock (removes or restores private key without full logout)
+    lockWallet,
+    unlockWallet,
+    isSessionLocked,
   };
 
   return (

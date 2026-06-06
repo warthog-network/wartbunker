@@ -467,12 +467,25 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     { id: 'search', label: 'Search & Lookup' },
   ];
 
+  const isKnownMainnet = ['https://warthognode.duckdns.org', 'http://217.182.64.43:3001'].includes(selectedNode);
+
   return (
     <div className="space-y-8">
       <h2 className="text-3xl font-bold">Asset Tools</h2>
       <p className="mb-6 text-gray-600 dark:text-gray-400">
-        Create, transfer, search, and look up assets on the DeFi testnet.
+        Create, transfer, search, and look up assets.
       </p>
+
+      {isKnownMainnet && (
+        <div className="rounded-2xl border border-amber-600/60 bg-amber-950/30 p-4 text-sm">
+          <div className="font-semibold text-amber-400 mb-1">⚠️ Connected to mainnet</div>
+          <div className="text-amber-300/90">
+            Asset creation and transfers here will execute on the live Warthog mainnet (real fees, permanent assets).
+            For safe experimentation, switch to the DeFi testnet in the <span className="font-semibold">Node</span> tab
+            (preset: <span className="font-mono">https://warthog-defitestnet.duckdns.org</span>).
+          </div>
+        </div>
+      )}
 
       {/* SUB TABS - consistent with DexPage styling */}
       <div className="dex-tabs flex w-full gap-1 p-1 mb-6 bg-zinc-950 border border-zinc-800 rounded-xl overflow-x-auto scrollbar-hide">

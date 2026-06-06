@@ -14,7 +14,7 @@ import { useWallet } from './WalletContext';
  * in the client bundle until the gate passes.
  */
 const GatedPage = () => {
-  const { wallet, selectedNode } = useWallet();
+  const { wallet, selectedNode, currentWalletName, isSessionLocked } = useWallet();
 
   const API_URL = '/api/proxy';
 
@@ -143,7 +143,7 @@ const GatedPage = () => {
         <div className="flex flex-wrap items-center gap-3">
           <button
             onClick={fetchServerSecret}
-            disabled={serverLoading || !wallet?.address}
+            disabled={serverLoading || !wallet?.address || !wallet?.privateKey}
             className="px-6 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold"
           >
             {serverLoading ? 'Verifying with server...' : 'Unlock Protected Content (sign & verify)'}
@@ -155,6 +155,18 @@ const GatedPage = () => {
             </button>
           )}
         </div>
+
+        {/* Helpful note when the session is locked but could be unlocked with a password */}
+        {!wallet?.privateKey && currentWalletName && (
+          <div className="mt-2 text-[11px] text-emerald-400/80">
+            Wallet is currently locked (no private key in this session). Use the <span className="font-semibold">🔓 Unlock</span> button in the top bar and enter the password for "{currentWalletName}" to enable signing for gated content.
+          </div>
+        )}
+        {!wallet?.privateKey && !currentWalletName && wallet?.address && (
+          <div className="mt-2 text-[11px] text-amber-400/80">
+            This session has no private key. Log out and reload your wallet (from file or saved name + password) to sign for server-gated verification.
+          </div>
+        )}
 
         <div className="mt-2 text-[11px] text-emerald-400/80">
           Requires a valid signature from your wallet’s private key. The secret never exists in the client bundle.

@@ -26,6 +26,9 @@ const WalletContent = () => {
     currentWalletName,
     setCurrentWalletName,
     saveNamedWallet,
+    lockWallet,
+    unlockWallet,
+    isSessionLocked,
   } = useWallet();
 
   const toast = useToast();
@@ -41,6 +44,11 @@ const WalletContent = () => {
   const [promptConfirmPassword, setPromptConfirmPassword] = useState('');
   const [promptError, setPromptError] = useState(null);
   const [namePromptDismissed, setNamePromptDismissed] = useState(false);
+
+  // Unlock prompt for a locked (key-stripped) named wallet session
+  const [showUnlockPrompt, setShowUnlockPrompt] = useState(false);
+  const [unlockPassword, setUnlockPassword] = useState('');
+  const [unlockPromptError, setUnlockPromptError] = useState(null);
 
   // PWA logic (unchanged)
   useEffect(() => {
@@ -109,7 +117,33 @@ const WalletContent = () => {
     toast.info('Wallet session active. You can name & save it later for easy login.');
   };
 
+  const handleUnlockWallet = () => {
+    setUnlockPromptError(null);
+    if (!unlockPassword) {
+      setUnlockPromptError('Password is required to unlock');
+      return;
+    }
+    const ok = unlockWallet?.(unlockPassword);
+    if (ok) {
+      toast.success(currentWalletName ? `Unlocked "${currentWalletName}"` : 'Wallet unlocked');
+      setShowUnlockPrompt(false);
+      setUnlockPassword('');
+      setUnlockPromptError(null);
+    } else {
+      // Context sets its own error; surface a friendly one in the modal too
+      setUnlockPromptError('Unlock failed — check password');
+    }
+  };
+
+  const handleCancelUnlock = () => {
+    setShowUnlockPrompt(false);
+    setUnlockPassword('');
+    setUnlockPromptError(null);
+  };
+
   const handleLogout = () => {
+    // Clear the (now safe, key-stripped) session wallet record.
+    // Any in-memory private key material is also dropped when the wallet state is cleared.
     sessionStorage.removeItem('warthogWalletDecrypted');
     sessionStorage.removeItem('warthogCurrentWalletName');
     setWallet(null);
@@ -124,6 +158,10 @@ const WalletContent = () => {
     setPromptPassword('');
     setPromptConfirmPassword('');
     setPromptError(null);
+    // reset unlock prompt
+    setShowUnlockPrompt(false);
+    setUnlockPassword('');
+    setUnlockPromptError(null);
   };
 
   // Close mobile menu when tab changes
@@ -174,22 +212,53 @@ const WalletContent = () => {
           <div className="text-[22px] font-semibold tracking-[-0.4px] text-[#FDB913]">Warthog</div>
           <div className="text-[10px] text-zinc-500 -mt-0.5 font-mono">NETWORK DEFI</div>
         </div>
-        {/* Hamburger / Close Button */}
-        <button
-          onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-          className={`mobile-hamburger w-[48px] h-[48px] bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 rounded-2xl flex items-center justify-center text-white transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50 active:scale-[0.96] ${isMobileMenuOpen ? 'z-[60] bg-zinc-800' : ''}`}
-          aria-label={isMobileMenuOpen ? "Close menu" : "Open menu"}
-        >
-          {isMobileMenuOpen ? (
-            <svg xmlns="http://www.w3.org/2000/svg" className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          ) : (
-            <svg xmlns="http://www.w3.org/2000/svg" className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.25">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
-            </svg>
+
+        <div className="flex items-center gap-2">
+          {/* Lock / Unlock wallet — balance between convenience and security.
+              Lock clears the private key from this browser session (sessionStorage + memory).
+              If the wallet was loaded from a named saved entry, an Unlock button appears
+              allowing you to re-enter the password and restore signing ability without full logout. */}
+          {isLoggedIn && wallet?.privateKey && (
+            <button
+              onClick={() => {
+                lockWallet?.();
+                toast?.success?.('Wallet locked — private key cleared from this session');
+              }}
+              className="text-xs px-3 py-1.5 rounded-xl border border-zinc-700 hover:bg-zinc-900 active:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors"
+              title="Lock wallet: remove private key from this browser session. You can re-unlock saved wallets with your password."
+            >
+              🔒 Lock
+            </button>
           )}
-        </button>
+
+          {/* Show Unlock when we have a named session but no private key in memory */}
+          {isLoggedIn && isSessionLocked && currentWalletName && (
+            <button
+              onClick={() => setShowUnlockPrompt(true)}
+              className="text-xs px-3 py-1.5 rounded-xl border border-emerald-700/60 hover:bg-emerald-900/30 active:bg-emerald-900/40 text-emerald-400 hover:text-emerald-300 transition-colors"
+              title={`Unlock wallet "${currentWalletName}" by entering its password (restores private key for signing)`}
+            >
+              🔓 Unlock
+            </button>
+          )}
+
+          {/* Hamburger / Close Button */}
+          <button
+            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+            className={`mobile-hamburger w-[48px] h-[48px] bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 rounded-2xl flex items-center justify-center text-white transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50 active:scale-[0.96] ${isMobileMenuOpen ? 'z-[60] bg-zinc-800' : ''}`}
+            aria-label={isMobileMenuOpen ? "Close menu" : "Open menu"}
+          >
+            {isMobileMenuOpen ? (
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            ) : (
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.25">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* PWA Install / Update (subtle row) */}
@@ -208,19 +277,19 @@ const WalletContent = () => {
         </div>
       )}
 
-      {/* Desktop Tabs (≥ 768px) — smoother active indicator */}
-      <div className="desktop-tabs relative overflow-x-auto pb-1 mb-6 border-b border-zinc-800 scrollbar-hide">
-        <div className="flex gap-1 px-1">
+      {/* Desktop Tabs (≥ 768px) — compact orange-accent navbar */}
+      <div className="desktop-tabs relative pb-2 mb-6 border-b border-zinc-800">
+        <div className="flex flex-wrap gap-x-1 gap-y-1 px-1">
           {tabs.map(tab => {
             const isActive = currentTab === tab.key;
             return (
               <button
                 key={tab.key}
                 onClick={() => setCurrentTab(tab.key)}
-                className={`flex-shrink-0 px-5 py-2.5 text-sm font-semibold whitespace-nowrap rounded-xl transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50 ${
+                className={`flex-shrink-0 px-3 py-[2px] text-xs font-semibold whitespace-nowrap rounded-lg transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50 ${
                   isActive
-                    ? 'bg-zinc-900 text-white shadow-sm'
-                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-950'
+                    ? 'bg-[#FDB913] text-zinc-950 shadow-sm'
+                    : 'bg-zinc-900 text-zinc-400 hover:text-white hover:bg-zinc-800'
                 }`}
               >
                 {tab.label}
@@ -228,8 +297,6 @@ const WalletContent = () => {
             );
           })}
         </div>
-        {/* Active underline indicator (subtle) */}
-        <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-orange-500/60 to-transparent" />
       </div>
 
       {/* Mobile Menu Overlay + Backdrop */}
@@ -249,7 +316,7 @@ const WalletContent = () => {
               <button
                 key={tab.key}
                 onClick={() => handleTabChange(tab.key)}
-                className={`w-full py-5 px-5 text-left text-xl font-semibold rounded-xl transition-all duration-300 min-h-[56px] shadow-sm ${
+                className={`wallet-nav-btn w-full py-3 px-4 text-left text-lg font-semibold rounded-xl transition-all duration-300 min-h-[42px] shadow-sm ${
                   currentTab === tab.key
                     ? 'bg-orange-500 text-white shadow-orange-500/25'
                     : 'text-gray-200 hover:bg-zinc-700 hover:text-white active:bg-zinc-600'
@@ -261,8 +328,19 @@ const WalletContent = () => {
           </nav>
         </div>
 
-        {/* Logout Button at Bottom */}
-        <div className="p-8 border-t border-gray-600">
+        {/* Unlock (if locked named session) + Logout at Bottom */}
+        <div className="p-8 border-t border-gray-600 space-y-3">
+          {isLoggedIn && isSessionLocked && currentWalletName && (
+            <button
+              onClick={() => {
+                setIsMobileMenuOpen(false);
+                setShowUnlockPrompt(true);
+              }}
+              className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-xl font-semibold transition-all duration-200 min-h-[48px] shadow"
+            >
+              🔓 Unlock "{currentWalletName}"
+            </button>
+          )}
           <button
             onClick={handleLogout}
             className="w-full py-5 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white rounded-xl font-semibold transition-all duration-200 min-h-[56px] shadow-lg shadow-red-600/25"
@@ -326,6 +404,46 @@ const WalletContent = () => {
             </div>
             <p className="text-[10px] text-zinc-500 mt-3">
               This stores an encrypted copy (private key only) in localStorage under your chosen name. Mnemonic is never saved. Skip if you prefer loading from file each time.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Unlock prompt modal (for locked named wallet sessions) */}
+      {showUnlockPrompt && currentWalletName && (
+        <div className="modal-overlay" style={{ zIndex: 1100 }}>
+          <div className="modal-content">
+            <h2>Unlock Wallet</h2>
+            <p className="text-sm mb-3 text-zinc-300">
+              Enter the password for <span className="font-mono text-emerald-400">"{currentWalletName}"</span> to restore the private key into this session.
+            </p>
+
+            {unlockPromptError && <div className="error"><p>{unlockPromptError}</p></div>}
+
+            <div className="form-group">
+              <label>Password for "{currentWalletName}":</label>
+              <input
+                type="password"
+                value={unlockPassword}
+                onChange={(e) => setUnlockPassword(e.target.value)}
+                placeholder="Enter password"
+                className="input"
+                onKeyDown={(e) => { if (e.key === 'Enter') handleUnlockWallet(); }}
+                autoFocus
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
+              <button onClick={handleUnlockWallet} style={{ flex: 1 }}>
+                Unlock
+              </button>
+              <button onClick={handleCancelUnlock} style={{ flex: 1, background: '#3f3f46' }}>
+                Cancel
+              </button>
+            </div>
+
+            <p className="text-[10px] text-zinc-500 mt-3">
+              This re-decrypts your saved wallet and puts the private key back into this browser session only. Your encrypted data in localStorage is not changed.
             </p>
           </div>
         </div>

@@ -398,7 +398,7 @@
     box-sizing: border-box;
   }
 
-  .container button:not(.mobile-hamburger):not(.remove-token-btn):not(.dex-tab-btn) {
+  .container button:not(.mobile-hamburger):not(.remove-token-btn):not(.dex-tab-btn):not(.wallet-nav-btn) {
     font-size: 1rem;
     width: 100%;
     margin-right: 0;

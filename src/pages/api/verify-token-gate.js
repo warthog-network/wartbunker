@@ -23,7 +23,8 @@
  *   });
  */
 
-import { ethers } from 'ethers';
+import { ethers, SigningKey } from 'ethers';
+import { deriveWarthogAddress } from '../../utils/warthogWalletUtils.js';
 
 const DEFAULT_NODE = 'https://warthognode.duckdns.org';
 
@@ -58,8 +59,11 @@ export async function POST({ request }) {
     const node = nodeBase || DEFAULT_NODE;
 
     // === REQUIRED: Verify the user actually controls this address ===
-    // Without this, an attacker can send any address (e.g. a whale that holds the token)
-    // and the server would happily return the secret.
+    // A valid signature over the message is required. Critically, we recover the
+    // public key from the signature and *re-derive the Warthog address* from it.
+    // The derived address MUST match the claimed `address` in the payload.
+    // This prevents an attacker from supplying a rich address + a signature
+    // produced by a completely unrelated key they do control.
     if (!message || !signature) {
       return new Response(JSON.stringify({
         success: false,
@@ -67,27 +71,31 @@ export async function POST({ request }) {
       }), { status: 401, headers: { 'Content-Type': 'application/json' } });
     }
 
-    let recovered;
+    let derivedAddr;
     try {
-      recovered = ethers.verifyMessage(message, signature);
-      if (!recovered) {
-        return new Response(JSON.stringify({
-          success: false,
-          error: 'Invalid signature'
-        }), { status: 401, headers: { 'Content-Type': 'application/json' } });
-      }
+      // Verify the signature is well-formed for the message (throws on bad sig)
+      // We don't use the EVM-style recovered address directly (format differs).
+      ethers.verifyMessage(message, signature);
+
+      // Recover the *public key* and derive the canonical Warthog address from it.
+      // deriveWarthogAddress accepts the uncompressed form returned by recover and
+      // will internally compress before running the ripemd+checksum steps.
+      const digest = ethers.hashMessage(message);
+      const recoveredPub = SigningKey.recoverPublicKey(digest, signature);
+      derivedAddr = deriveWarthogAddress(recoveredPub);
     } catch (e) {
       return new Response(JSON.stringify({
         success: false,
-        error: 'Signature verification failed'
+        error: 'Signature verification or address derivation failed'
       }), { status: 401, headers: { 'Content-Type': 'application/json' } });
     }
 
-    // Note: recovered is an Ethereum-style address derived from the secp256k1 pubkey.
-    // Warthog uses a different address encoding. For a stricter check you would re-derive
-    // the Warthog address from the same key and compare it to `cleanAddress`.
-    // For this implementation, a valid signature from the wallet's private key is accepted
-    // as proof that the caller controls the keypair associated with the claimed address.
+    if (!derivedAddr || derivedAddr.toLowerCase() !== cleanAddress) {
+      return new Response(JSON.stringify({
+        success: false,
+        error: 'Signature does not prove ownership of the claimed address'
+      }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+    }
 
     // === Server-side balance check (authoritative) ===
     // We call the Warthog node directly from the serverless function.
