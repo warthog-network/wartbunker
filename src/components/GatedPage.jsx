@@ -2,43 +2,28 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { ethers } from 'ethers';
 import { useWallet } from './WalletContext';
-import TokenGate, { useTokenGate } from './TokenGate';
-
-const API_URL = '/api/proxy';
 
 /**
- * GatedPage — Concrete example of token-gated content + self-serve tester.
+ * GatedPage — Server-enforced token-gated content demo.
  *
- * This demonstrates how to use <TokenGate> for "a certain page".
+ * Protected content is only revealed after:
+ *   1. A cryptographic signature proves the user controls the wallet.
+ *   2. The server performs an authoritative on-chain balance check for the asset.
  *
- * To gate a real feature:
- *   1. Deploy / create an asset on Warthog (use the Assets tab on testnet).
- *   2. Copy its 64-char asset hash.
- *   3. Use <TokenGate assetHash="..." minBalance="1"> around the protected UI.
- *
- * For a truly separate route/page (outside the tab UI):
- *   - Create a new .astro page
- *   - Render <Wallet client:load> or just the providers + a component that uses TokenGate
- *   - The wallet session is restored automatically from sessionStorage.
+ * The actual secret / premium content lives on the server and is never present
+ * in the client bundle until the gate passes.
  */
 const GatedPage = () => {
-  const { wallet, isLoggedIn, selectedNode } = useWallet();
+  const { wallet, selectedNode } = useWallet();
 
-  // Self-serve tester state
-  const [testAssetHash, setTestAssetHash] = useState('');
-  const [testMinBalance, setTestMinBalance] = useState('1');
-  const [activeTestHash, setActiveTestHash] = useState(null);
-  const [activeTestMin, setActiveTestMin] = useState('1');
+  const API_URL = '/api/proxy';
 
-  // Asset metadata for the live tester (name lookup)
-  const [activeTestMeta, setActiveTestMeta] = useState(null);
-
-  // Example hardcoded token (users should replace this with a real one they control)
-  // This is just a placeholder so the UI has something to show.
+  // Example hardcoded token used for the server-verified gate demo.
+  // Only content delivered after a successful signature + server balance check is shown.
   const EXAMPLE_ASSET_HASH = 'b92b88491b478c22fbc5b3f03f8b5539555ff2680944a8c847a1eb90ef69894e';
   const EXAMPLE_MIN = '1';
 
-  // Fetched metadata for the example asset (if the current node knows about it)
+  // Fetched metadata for the example asset (for friendly name display)
   const [exampleAssetMeta, setExampleAssetMeta] = useState(null);
 
   // Lookup asset metadata by hash (re-uses the same endpoint the Assets tab uses)
@@ -57,7 +42,7 @@ const GatedPage = () => {
     }
   };
 
-  // Fetch metadata for the hardcoded example whenever the node changes
+  // Fetch metadata for the example asset whenever the node changes
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -66,20 +51,6 @@ const GatedPage = () => {
     })();
     return () => { cancelled = true; };
   }, [selectedNode]);
-
-  // Fetch metadata when the live tester activates a new hash
-  useEffect(() => {
-    let cancelled = false;
-    if (activeTestHash) {
-      (async () => {
-        const meta = await lookupAsset(activeTestHash, selectedNode);
-        if (!cancelled) setActiveTestMeta(meta);
-      })();
-    } else {
-      setActiveTestMeta(null);
-    }
-    return () => { cancelled = true; };
-  }, [activeTestHash, selectedNode]);
 
   // ==================== SERVER-SIDE TOKEN GATE (Netlify Function) ====================
   const [serverSecret, setServerSecret] = useState(null);
@@ -139,270 +110,34 @@ const GatedPage = () => {
     setServerError(null);
   };
 
-  const startTest = () => {
-    const h = testAssetHash.trim().replace(/^0x/, '');
-    if (!h || h.length !== 64) {
-      alert('Please enter a valid 64-character asset hash');
-      return;
-    }
-    setActiveTestHash(h);
-    setActiveTestMin(testMinBalance || '0');
-  };
-
-  const clearTest = () => {
-    setActiveTestHash(null);
-    setActiveTestMin('1');
-    setActiveTestMeta(null);
-  };
-
-  // Small live indicator using the hook for the example asset
-  const exampleGate = useTokenGate(EXAMPLE_ASSET_HASH, EXAMPLE_MIN);
-
   return (
     <div className="space-y-8">
       <div>
         <h2 className="text-3xl font-bold tracking-tight">Members Area</h2>
         <p className="mt-2 text-zinc-400">
-          This tab demonstrates <span className="font-semibold text-orange-400">token-gated content</span> on Warthog Network.
-          Only wallets holding the required asset can see the protected sections.
+          This demonstrates <span className="font-semibold text-orange-400">server-enforced token-gated content</span> on Warthog Network.
+          Protected sections are only shown after a cryptographic signature proves wallet control and the server confirms on-chain balance.
         </p>
       </div>
 
-      {/* Live Gate Status (from useTokenGate hook) — this is independent proof of the check */}
-      <div className="rounded-2xl border border-zinc-700 bg-zinc-950 p-4">
-        <div className="flex items-center justify-between mb-2">
-          <div className="font-semibold text-sm">Live Gate Status (useTokenGate hook)</div>
-          <button
-            onClick={() => exampleGate.check?.()}
-            className="text-xs px-3 py-1 rounded-lg border border-zinc-700 hover:bg-zinc-900 active:bg-zinc-800"
-          >
-            Re-check
-          </button>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-          <div className="bg-zinc-900 rounded-xl p-3">
-            <div className="text-[10px] text-zinc-500">Asset being checked</div>
-            <div className="font-mono text-orange-400 break-all text-xs mt-0.5">{EXAMPLE_ASSET_HASH}</div>
-            {exampleAssetMeta?.name && <div className="text-emerald-400 text-xs mt-0.5">Name on node: {exampleAssetMeta.name}</div>}
-          </div>
-
-          <div className="bg-zinc-900 rounded-xl p-3">
-            <div className="text-[10px] text-zinc-500">Your balance (for this asset)</div>
-            <div className="text-xl font-semibold tabular-nums mt-0.5 text-white">
-              {exampleGate.loading ? '...' : exampleGate.balance}
-            </div>
-            <div className="text-[10px] text-zinc-500">Minimum required: {EXAMPLE_MIN}</div>
-          </div>
-
-          <div className="bg-zinc-900 rounded-xl p-3 flex items-center">
-            <div>
-              <div className="text-[10px] text-zinc-500 mb-1">Gate decision</div>
-              {exampleGate.loading ? (
-                <span className="text-zinc-400">Checking...</span>
-              ) : exampleGate.hasAccess ? (
-                <span className="inline-block rounded-full bg-emerald-500/20 px-3 py-0.5 text-emerald-400 font-medium">✓ GRANTED — you hold enough</span>
-              ) : (
-                <span className="inline-block rounded-full bg-red-500/20 px-3 py-0.5 text-red-400 font-medium">✕ DENIED — balance too low</span>
-              )}
-              <div className="text-[10px] text-zinc-500 mt-1">This controls whether the Secret Club perks below can render.</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* 1. Hardcoded example protected content */}
-      <section>
-        <div className="mb-3 flex items-center gap-2">
-          <div className="text-sm font-semibold uppercase tracking-widest text-orange-400">Example Protected Content</div>
-          <div className="h-px flex-1 bg-zinc-800" />
-        </div>
-
-        {/* The actual gate. Everything inside here is only rendered by React if the balance check passes. */}
-        <TokenGate
-          assetHash={EXAMPLE_ASSET_HASH}
-          minBalance={EXAMPLE_MIN}
-          showBalance
-          onAccessChange={(granted) => {
-            // Optional: you could log or trigger side effects here
-            if (granted) console.log('[TokenGate] Access granted for example asset');
-          }}
-        >
-          <div className="rounded-3xl border border-emerald-700/50 bg-emerald-950/30 p-8">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-lg">🔓</span>
-              <span className="text-xs uppercase tracking-[1px] text-emerald-400 font-semibold">Token Gate Passed — Content Unlocked</span>
-            </div>
-
-            <div className="mb-4 text-2xl">🎉 Welcome, token holder!</div>
-            <p className="text-emerald-200/90">
-              This entire section (including Secret Club Perk #1 and #2 below) is only visible because your wallet holds at least {EXAMPLE_MIN} unit of{' '}
-              <span className="font-semibold text-white">
-                {exampleAssetMeta?.name ? exampleAssetMeta.name : 'this asset'}
-              </span>.
-            </p>
-            <div className="mt-1 text-[11px] text-emerald-400/70 font-mono break-all">
-              Asset hash: {EXAMPLE_ASSET_HASH}
-              <button
-                onClick={() => {
-                  navigator.clipboard.writeText(EXAMPLE_ASSET_HASH);
-                }}
-                className="ml-2 text-emerald-300 hover:text-white underline"
-              >
-                copy
-              </button>
-            </div>
-
-            {/* The two "secret" perk cards — they literally do not exist in the DOM unless the gate above grants access */}
-            <div className="mt-6 grid gap-4 md:grid-cols-2">
-              <div className="rounded-2xl bg-zinc-950 border border-zinc-800 p-5">
-                <div className="text-xs uppercase tracking-widest text-zinc-500 mb-2">Secret Club Perk #1</div>
-                <div className="text-lg font-semibold">Early access to new features</div>
-                <p className="mt-2 text-sm text-zinc-400">You get to try experimental tabs before they roll out to everyone.</p>
-              </div>
-              <div className="rounded-2xl bg-zinc-950 border border-zinc-800 p-5">
-                <div className="text-xs uppercase tracking-widest text-zinc-500 mb-2">Secret Club Perk #2</div>
-                <div className="text-lg font-semibold">Private Discord / group chat</div>
-                <p className="mt-2 text-sm text-zinc-400">A place for serious holders and builders on Warthog.</p>
-              </div>
-            </div>
-
-            <div className="mt-6 text-[11px] text-emerald-400/70">
-              These perk cards are children of &lt;TokenGate&gt;. They only render when the on-chain balance check returns ≥ {EXAMPLE_MIN}.
-            </div>
-          </div>
-        </TokenGate>
-
-        {/* This note is OUTSIDE the gate on purpose, so it's always visible */}
-        <div className="mt-2 text-[10px] text-zinc-500 px-1">
-          ↑ The box above (and the two Secret Club perks) will only appear if the Live Gate Status at the top of this section says GRANTED.
-          If you see "DENIED" above, the perks are completely absent from the page.
-        </div>
-      </section>
-
-      {/* How to test "without holding the asset" */}
-      <div className="text-xs bg-zinc-950 border border-zinc-800 rounded-2xl p-4">
-        <div className="font-semibold mb-1 text-zinc-300">How to confirm the gate is working for you right now</div>
-        <ol className="list-decimal list-inside text-zinc-400 space-y-0.5">
-          <li>Look at the big "Live Gate Status" box above. It shows your actual balance for this asset + the GRANTED / DENIED decision.</li>
-          <li>If it says DENIED, scroll down — the entire green "Welcome, token holder" box + both Secret Club Perks should be missing.</li>
-          <li>Use the <strong>Live Token Gate Tester</strong> further down this page: paste the same asset hash (<span className="font-mono text-orange-400">{EXAMPLE_ASSET_HASH.slice(0,16)}…</span>) and min balance "1". It should show the red "Access restricted" screen.</li>
-          <li>Only when your balance for this specific asset is ≥ 1 will the perk cards become visible.</li>
-        </ol>
-        <div className="mt-2 text-[10px] text-amber-400/80">
-          Note: This is a client-side gate (good for hiding UI sections). The actual perk text lives in the JavaScript bundle, so a very determined person could find the strings by inspecting the page source. For real secrets you would fetch the sensitive content from a server only after the gate passes.
-        </div>
-      </div>
-
-      {/* 2. Self-serve live tester — "gate any token" */}
-      <section className="border border-zinc-800 rounded-3xl p-6 bg-zinc-950">
-        <div className="mb-4">
-          <div className="font-semibold">Live Token Gate Tester</div>
-          <p className="text-sm text-zinc-400 mt-1">
-            Paste any asset hash (from the Assets tab or asset creation) and set a minimum balance. The gate below will update live.
-          </p>
-        </div>
-
-        <div className="grid gap-3 md:grid-cols-[1fr,120px,auto] mb-4">
-          <div>
-            <label className="block text-xs text-zinc-400 mb-1">Asset Hash (64 hex chars)</label>
-            <input
-              className="input w-full font-mono text-sm"
-              placeholder="e.g. b92b88491b478c22fbc5b3f03f8b5539555ff2680944a8c847a1eb90ef69894e"
-              value={testAssetHash}
-              onChange={(e) => setTestAssetHash(e.target.value.trim())}
-              onKeyDown={(e) => e.key === 'Enter' && startTest()}
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-zinc-400 mb-1">Min Balance</label>
-            <input
-              className="input w-full"
-              type="text"
-              value={testMinBalance}
-              onChange={(e) => setTestMinBalance(e.target.value)}
-            />
-          </div>
-          <div className="flex items-end gap-2">
-            <button
-              onClick={startTest}
-              className="flex-1 md:flex-none px-6 py-2.5 rounded-2xl bg-orange-600 hover:bg-orange-700 text-white font-semibold"
-            >
-              Gate This Token
-            </button>
-            {activeTestHash && (
-              <button
-                onClick={clearTest}
-                className="px-4 py-2.5 rounded-2xl border border-zinc-700 hover:bg-zinc-900 text-sm"
-              >
-                Clear
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* The actual live gate */}
-        {activeTestHash ? (
-          <div className="mt-2">
-            <div className="mb-2 text-xs text-zinc-400 flex items-center gap-2">
-              Currently gating on:
-              <span className="font-mono text-orange-400 break-all">{activeTestHash}</span>
-              {activeTestMeta?.name && (
-                <span className="text-emerald-400 font-semibold">({activeTestMeta.name})</span>
-              )}
-              <button
-                onClick={() => navigator.clipboard.writeText(activeTestHash)}
-                className="text-orange-300 hover:text-white underline ml-1"
-              >
-                copy
-              </button>
-            </div>
-
-            <TokenGate
-              assetHash={activeTestHash}
-              minBalance={activeTestMin}
-              key={`${activeTestHash}-${activeTestMin}`} // force remount on change
-            >
-              <div className="rounded-2xl border border-emerald-700/60 bg-emerald-950/20 p-6">
-                <div className="text-emerald-400 font-semibold mb-1">✓ Access Granted</div>
-                <p className="text-sm text-zinc-300">
-                  Your wallet holds the required balance of this token. Any content you place inside the <code className="text-orange-400">&lt;TokenGate&gt;</code> wrapper would be visible here.
-                </p>
-                <div className="mt-4 text-xs text-emerald-400/70">
-                  You can now safely render premium UI, download links, private data, etc.
-                </div>
-              </div>
-            </TokenGate>
-          </div>
-        ) : (
-          <div className="text-xs text-zinc-500 border border-dashed border-zinc-800 rounded-2xl p-4">
-            Enter an asset hash above and click “Gate This Token” to see a live token gate in action.
-          </div>
+      {/* Asset under gate */}
+      <div className="rounded-2xl border border-zinc-700 bg-zinc-950 p-4 text-sm">
+        <div className="text-[10px] text-zinc-500">Gated asset</div>
+        <div className="font-mono text-orange-400 break-all mt-0.5">{EXAMPLE_ASSET_HASH}</div>
+        {exampleAssetMeta?.name && (
+          <div className="text-emerald-400 text-xs mt-0.5">Name on node: {exampleAssetMeta.name}</div>
         )}
-      </section>
+        <div className="text-zinc-400 mt-1">Minimum balance required: {EXAMPLE_MIN}</div>
+      </div>
 
-      {/* ==================== SERVER-SIDE GATED SECRET (Netlify Function) ==================== */}
+      {/* Signature-gated unlock */}
       <section className="border border-emerald-800/60 rounded-3xl p-6 bg-emerald-950/10">
         <div className="mb-4">
-          <div className="flex items-center gap-2">
-            <span className="font-semibold text-lg">Server-Verified Secret (Netlify Function)</span>
-          </div>
+          <div className="font-semibold text-lg">Server-Verified Unlock</div>
           <p className="text-sm text-zinc-400 mt-1">
-            The secret lives <strong>only on the server</strong>. The frontend asks a Netlify Function:
-            “Does this address actually hold the token on-chain right now, and can you prove you control it?”
-            A cryptographic signature is required. Only the server can return the real content.
+            Click below to sign a message with your wallet. The server will verify the signature (proof of key control)
+            and re-query the Warthog node for your current on-chain balance. Only then is the protected content returned.
           </p>
-        </div>
-
-        {/* Live status recap */}
-        <div className="mb-4 rounded-xl bg-zinc-950 border border-zinc-800 p-3 text-xs">
-          <div>Checking the same example asset:</div>
-          <div className="font-mono text-orange-400 break-all mt-1">{EXAMPLE_ASSET_HASH}</div>
-          <div className="mt-1 text-zinc-400">
-            Client-side balance: {exampleGate.loading ? '...' : exampleGate.balance} &nbsp;•&nbsp;
-            {exampleGate.hasAccess ? 'Client thinks you qualify' : 'Client says you do not qualify'}
-            <span className="text-zinc-500"> (server will re-check + require signature)</span>
-          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
@@ -411,33 +146,21 @@ const GatedPage = () => {
             disabled={serverLoading || !wallet?.address}
             className="px-6 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold"
           >
-            {serverLoading ? 'Asking server...' : 'Fetch secret from server'}
+            {serverLoading ? 'Verifying with server...' : 'Unlock Protected Content (sign & verify)'}
           </button>
 
           {(serverSecret || serverError) && (
             <button onClick={clearServerResult} className="text-xs px-3 py-2 text-zinc-400 hover:text-white">
-              Clear result
+              Clear
             </button>
           )}
         </div>
 
         <div className="mt-2 text-[11px] text-emerald-400/80">
-          Request is cryptographically signed with your wallet private key to prove you control the address.
+          Requires a valid signature from your wallet’s private key. The secret never exists in the client bundle.
         </div>
 
-        {/* Results */}
-        {serverSecret && (
-          <div className="mt-5 rounded-2xl border border-emerald-600 bg-emerald-950/40 p-5">
-            <div className="text-emerald-400 font-semibold mb-2">✓ Server approved — secret delivered</div>
-            <pre className="whitespace-pre-wrap text-sm text-emerald-100 bg-black/40 p-4 rounded-xl overflow-auto">
-              {serverSecret.secret}
-            </pre>
-            <div className="mt-3 text-[10px] text-emerald-400/70">
-              Served at {serverSecret.servedAt} • On-chain balance reported by server: {serverSecret.balance}
-            </div>
-          </div>
-        )}
-
+        {/* Server error */}
         {serverError && (
           <div className="mt-5 rounded-2xl border border-red-700/60 bg-red-950/30 p-4 text-sm">
             <div className="text-red-400 font-semibold">Server denied access</div>
@@ -445,24 +168,90 @@ const GatedPage = () => {
           </div>
         )}
 
-        <div className="mt-4 text-[11px] text-zinc-500 leading-relaxed">
-          <strong>Why this is stronger:</strong> The actual secret text above is never present in the JavaScript bundle you downloaded.
-          A valid signature proving private-key control of the address is required; the server will reject unsigned requests.
-          Even if someone tampers with the client code or inspects everything, they still have to get the server (after a fresh on-chain query + signature check) to say “yes”.
-        </div>
+        {/* SUCCESS — only rendered after signature + server balance check passes */}
+        {serverSecret && (
+          <div className="mt-6">
+            <div className="rounded-3xl border border-emerald-700/50 bg-emerald-950/30 p-8">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-lg">🔓</span>
+                <span className="text-xs uppercase tracking-[1px] text-emerald-400 font-semibold">Token Gate Passed — Content Unlocked</span>
+              </div>
+
+              <div className="mb-4 text-2xl">🎉 Welcome, token holder!</div>
+
+              <p className="text-emerald-200/90">
+                This entire section is only visible because the server verified your signature and confirmed your wallet holds at least {EXAMPLE_MIN} unit of{' '}
+                <span className="font-semibold text-white">
+                  {exampleAssetMeta?.name ? exampleAssetMeta.name : 'this asset'}
+                </span>.
+              </p>
+
+              <div className="mt-1 text-[11px] text-emerald-400/70 font-mono break-all">
+                Asset hash: {EXAMPLE_ASSET_HASH}
+                <button
+                  onClick={() => navigator.clipboard.writeText(EXAMPLE_ASSET_HASH)}
+                  className="ml-2 text-emerald-300 hover:text-white underline"
+                >
+                  copy
+                </button>
+              </div>
+
+              {/* Perks (now only shown after real server + signature gate) */}
+              <div className="mt-6 grid gap-4 md:grid-cols-2">
+                <div className="rounded-2xl bg-zinc-950 border border-zinc-800 p-5">
+                  <div className="text-xs uppercase tracking-widest text-zinc-500 mb-2">Secret Club Perk #1</div>
+                  <div className="text-lg font-semibold">Early access to new features</div>
+                  <p className="mt-2 text-sm text-zinc-400">You get to try experimental tabs before they roll out to everyone.</p>
+                </div>
+                <div className="rounded-2xl bg-zinc-950 border border-zinc-800 p-5">
+                  <div className="text-xs uppercase tracking-widest text-zinc-500 mb-2">Secret Club Perk #2</div>
+                  <div className="text-lg font-semibold">Private Discord / group chat</div>
+                  <p className="mt-2 text-sm text-zinc-400">A place for serious holders and builders on Warthog.</p>
+                </div>
+              </div>
+
+              {/* Server-delivered secret payload */}
+              <div className="mt-6 rounded-xl bg-black/40 border border-emerald-800/60 p-4">
+                <div className="text-[10px] uppercase tracking-widest text-emerald-400/80 mb-2">Server-delivered content</div>
+                <pre className="whitespace-pre-wrap text-sm text-emerald-100">{serverSecret.secret}</pre>
+                <div className="mt-3 text-[10px] text-emerald-400/70">
+                  Served at {serverSecret.servedAt} • On-chain balance reported by server: {serverSecret.balance}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-2 text-[10px] text-emerald-400/70 px-1">
+              This UI only appears after the server accepted a valid signature and performed its own on-chain balance check.
+            </div>
+          </div>
+        )}
       </section>
 
-      {/* How to use for your own "certain page" */}
+      {/* Why this matters */}
+      <div className="text-xs bg-zinc-950 border border-zinc-800 rounded-2xl p-4 text-zinc-400">
+        <div className="font-semibold text-zinc-300 mb-1">Why a signature + server check is required</div>
+        <p>
+          A client-only balance check can be bypassed by inspecting the bundle or editing local state.
+          Here the protected text and perks are never sent to the browser until the server has:
+        </p>
+        <ul className="list-disc list-inside mt-1 space-y-0.5">
+          <li>Verified a fresh cryptographic signature proving you control the private key for the address</li>
+          <li>Queried the Warthog node itself for the current asset balance of that address</li>
+        </ul>
+        <p className="mt-1">Unsigned or low-balance requests are rejected before any secret data leaves the server.</p>
+      </div>
+
+      {/* How to use for your own gated content */}
       <section className="text-xs text-zinc-400 leading-relaxed border-l-2 border-zinc-800 pl-4">
-        <div className="font-semibold text-zinc-300 mb-1">How to gate your own page or feature</div>
+        <div className="font-semibold text-zinc-300 mb-1">How to gate your own content</div>
         <ol className="list-decimal list-inside space-y-1">
-          <li>Create or obtain an asset (use the <span className="text-orange-400">Assets</span> tab on a testnet node, or search existing ones).</li>
-          <li>Copy the exact 64-character asset hash.</li>
-          <li>Wrap any JSX with <code className="font-mono text-orange-400">&lt;TokenGate assetHash="..." minBalance="1"&gt;...&lt;/TokenGate&gt;</code></li>
-          <li>Import <code>TokenGate</code> from <code>./TokenGate</code>.</li>
+          <li>Create an asset on Warthog and note its 64-character asset hash.</li>
+          <li>On your backend (Netlify Function, API route, etc.), require a signed message from the caller.</li>
+          <li>Have the server verify the signature and query the node for the address balance of the asset (e.g. <code className="text-orange-400">account/{'{'}addr{'}'}/balance/asset:{'{'}hash{'}'}</code>).</li>
+          <li>Only return sensitive data (download links, keys, member content, etc.) when the on-chain balance meets your threshold.</li>
         </ol>
         <p className="mt-2">
-          In this tab, the exact asset hash being checked is always shown clearly above each gated section (with name if the node knows it). The gate uses your logged-in wallet and works on mainnet + testnet.
+          The example above (and the <code className="text-orange-400">/api/verify-token-gate</code> route) shows the full pattern: sign on the client, verify + re-check on the server.
         </p>
       </section>
     </div>

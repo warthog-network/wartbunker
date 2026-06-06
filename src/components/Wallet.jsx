@@ -11,7 +11,6 @@ import DeFiTestnetPage from './DeFiTestnetPage';
 import AssetPage from './AssetPage';
 import DexPage from './DexPage';
 import GatedPage from './GatedPage';
-import TokenGate from './TokenGate';
 
 const WalletContent = () => {
   const {
