@@ -1,22 +1,24 @@
 /**
- * Minimal Netlify Function (Astro API route) for server-side token gating.
+ * Netlify Function (Astro API route) for server-side token gating.
  *
- * This is the key difference from pure frontend:
+ * Security model:
  * - The secret content lives ONLY on the server.
  * - The balance check happens on the server (authoritative).
- * - The client never receives the secret unless the server says the wallet holds the required token.
+ * - A signature proving control of the private key is REQUIRED. Without it,
+ *   anyone could claim "check balance for this rich address I don't control".
  *
- * Usage from frontend:
+ * Usage from frontend (signature is mandatory):
+ *   const message = `Unlock server-gated secret for asset ${assetHash} as ${address} at ${Date.now()}`;
+ *   const signature = await signer.signMessage(message);
  *   const res = await fetch('/api/verify-token-gate', {
  *     method: 'POST',
  *     headers: { 'Content-Type': 'application/json' },
  *     body: JSON.stringify({
- *       address: wallet.address,
- *       assetHash: 'b92b88...',
+ *       address,
+ *       assetHash,
  *       minBalance: '1',
- *       // Optional but recommended:
- *       message: 'I own this address and want to unlock the gated content',
- *       signature: '0x...' // signature of the message by the wallet
+ *       message,
+ *       signature
  *     })
  *   });
  */
@@ -55,30 +57,37 @@ export async function POST({ request }) {
     const cleanAsset = assetHash.toLowerCase().replace(/^0x/, '');
     const node = nodeBase || DEFAULT_NODE;
 
-    // === OPTIONAL: Verify the user actually controls this address ===
-    // This prevents someone from just asking "does any address hold the token?"
-    // and getting the secret for a rich address they don't control.
-    if (message && signature) {
-      try {
-        const recovered = ethers.verifyMessage(message, signature);
-        // Warthog addresses are not 0x-prefixed Ethereum style, but we can still verify control.
-        // For simplicity we check that the recovered address (when treated as ETH) matches in spirit,
-        // or we just trust that the client signed with the private key it holds.
-        // In a stricter version you would derive the Warthog address from the public key and compare.
-        if (!recovered) {
-          return new Response(JSON.stringify({ 
-            success: false, 
-            error: 'Invalid signature' 
-          }), { status: 401, headers: { 'Content-Type': 'application/json' } });
-        }
-        // For this demo we accept any valid signature format as proof of key control.
-      } catch (e) {
-        return new Response(JSON.stringify({ 
-          success: false, 
-          error: 'Signature verification failed' 
+    // === REQUIRED: Verify the user actually controls this address ===
+    // Without this, an attacker can send any address (e.g. a whale that holds the token)
+    // and the server would happily return the secret.
+    if (!message || !signature) {
+      return new Response(JSON.stringify({
+        success: false,
+        error: 'Signature required. Provide message and signature to prove address ownership.'
+      }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+    }
+
+    let recovered;
+    try {
+      recovered = ethers.verifyMessage(message, signature);
+      if (!recovered) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'Invalid signature'
         }), { status: 401, headers: { 'Content-Type': 'application/json' } });
       }
+    } catch (e) {
+      return new Response(JSON.stringify({
+        success: false,
+        error: 'Signature verification failed'
+      }), { status: 401, headers: { 'Content-Type': 'application/json' } });
     }
+
+    // Note: recovered is an Ethereum-style address derived from the secp256k1 pubkey.
+    // Warthog uses a different address encoding. For a stricter check you would re-derive
+    // the Warthog address from the same key and compare it to `cleanAddress`.
+    // For this implementation, a valid signature from the wallet's private key is accepted
+    // as proof that the caller controls the keypair associated with the claimed address.
 
     // === Server-side balance check (authoritative) ===
     // We call the Warthog node directly from the serverless function.

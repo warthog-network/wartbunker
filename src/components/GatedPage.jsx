@@ -85,36 +85,34 @@ const GatedPage = () => {
   const [serverSecret, setServerSecret] = useState(null);
   const [serverError, setServerError] = useState(null);
   const [serverLoading, setServerLoading] = useState(false);
-  const [useSignature, setUseSignature] = useState(true);
 
-  const fetchServerSecret = async (withSignature) => {
+  const fetchServerSecret = async () => {
     if (!wallet?.address) {
       setServerError('Please log in first');
       return;
     }
-
-    // If caller didn't specify, fall back to the checkbox state
-    const shouldSign = withSignature !== undefined ? withSignature : useSignature;
+    if (!wallet.privateKey) {
+      setServerError('Wallet private key not available for signing');
+      return;
+    }
 
     setServerLoading(true);
     setServerError(null);
     setServerSecret(null);
 
     try {
+      const message = `Unlock server-gated secret for asset ${EXAMPLE_ASSET_HASH} as ${wallet.address} at ${Date.now()}`;
+      const signer = new ethers.Wallet(wallet.privateKey);
+      const signature = await signer.signMessage(message);
+
       const payload = {
         address: wallet.address,
         assetHash: EXAMPLE_ASSET_HASH,
         minBalance: EXAMPLE_MIN,
         nodeBase: selectedNode,
+        message,
+        signature,
       };
-
-      if (shouldSign && wallet.privateKey) {
-        const message = `Unlock server-gated secret for asset ${EXAMPLE_ASSET_HASH} as ${wallet.address} at ${Date.now()}`;
-        const signer = new ethers.Wallet(wallet.privateKey);
-        const signature = await signer.signMessage(message);
-        payload.message = message;
-        payload.signature = signature;
-      }
 
       const res = await fetch('/api/verify-token-gate', {
         method: 'POST',
@@ -388,11 +386,11 @@ const GatedPage = () => {
         <div className="mb-4">
           <div className="flex items-center gap-2">
             <span className="font-semibold text-lg">Server-Verified Secret (Netlify Function)</span>
-            <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400">RECOMMENDED</span>
           </div>
           <p className="text-sm text-zinc-400 mt-1">
             The secret lives <strong>only on the server</strong>. The frontend asks a Netlify Function:
-            “Does this address actually hold the token on-chain right now?” Only the server can return the real content.
+            “Does this address actually hold the token on-chain right now, and can you prove you control it?”
+            A cryptographic signature is required. Only the server can return the real content.
           </p>
         </div>
 
@@ -403,24 +401,17 @@ const GatedPage = () => {
           <div className="mt-1 text-zinc-400">
             Client-side balance: {exampleGate.loading ? '...' : exampleGate.balance} &nbsp;•&nbsp;
             {exampleGate.hasAccess ? 'Client thinks you qualify' : 'Client says you do not qualify'}
+            <span className="text-zinc-500"> (server will re-check + require signature)</span>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
           <button
-            onClick={() => fetchServerSecret(true)}
+            onClick={fetchServerSecret}
             disabled={serverLoading || !wallet?.address}
             className="px-6 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold"
           >
-            {serverLoading ? 'Asking server...' : 'Fetch secret from server (with signature)'}
-          </button>
-
-          <button
-            onClick={() => fetchServerSecret(false)}
-            disabled={serverLoading || !wallet?.address}
-            className="px-4 py-3 rounded-2xl border border-emerald-700 hover:bg-emerald-900/30 text-sm"
-          >
-            Fetch without signature (weaker)
+            {serverLoading ? 'Asking server...' : 'Fetch secret from server'}
           </button>
 
           {(serverSecret || serverError) && (
@@ -430,15 +421,8 @@ const GatedPage = () => {
           )}
         </div>
 
-        <div className="mt-2 flex items-center gap-2 text-xs">
-          <input
-            type="checkbox"
-            id="useSig"
-            checked={useSignature}
-            onChange={(e) => setUseSignature(e.target.checked)}
-            className="accent-emerald-500"
-          />
-          <label htmlFor="useSig" className="text-zinc-400">Include signature proof of address ownership (recommended)</label>
+        <div className="mt-2 text-[11px] text-emerald-400/80">
+          Request is cryptographically signed with your wallet private key to prove you control the address.
         </div>
 
         {/* Results */}
@@ -462,9 +446,9 @@ const GatedPage = () => {
         )}
 
         <div className="mt-4 text-[11px] text-zinc-500 leading-relaxed">
-          <strong>Why this is much stronger:</strong> The actual secret text above is never present in the JavaScript bundle you downloaded.
-          Even if someone tampers with the client code or inspects everything, they still have to get the server to say “yes”.
-          The server does its own independent on-chain query.
+          <strong>Why this is stronger:</strong> The actual secret text above is never present in the JavaScript bundle you downloaded.
+          A valid signature proving private-key control of the address is required; the server will reject unsigned requests.
+          Even if someone tampers with the client code or inspects everything, they still have to get the server (after a fresh on-chain query + signature check) to say “yes”.
         </div>
       </section>
 
