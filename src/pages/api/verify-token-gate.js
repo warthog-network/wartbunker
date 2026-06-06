@@ -36,8 +36,7 @@ const SECRET_CONTENT = process.env.GATED_SECRET ||
   "- A private download link\n" +
   "- A member-only API key\n" +
   "- Encrypted data that the server also returns the key for\n" +
-  "- Access to a real-time feature\n\n" +
-  "The important part: this string was never present in the frontend JavaScript bundle.";
+  "- Access to a real-time feature";
 
 export async function POST({ request }) {
   try {
