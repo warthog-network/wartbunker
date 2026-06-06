@@ -321,6 +321,60 @@ export const WalletProvider = ({ children }) => {
     setAssetBalances([]);
   };
 
+  // ==================== PURE TOKEN / ASSET BALANCE CHECK (for gating) ====================
+  // Does NOT mutate watchedAssets or assetBalances. Safe for token gating checks.
+  const checkAssetBalance = async (assetHash) => {
+    if (!wallet?.address || !selectedNode || !assetHash) {
+      return { balance: '0', decimals: 8, hasBalance: false };
+    }
+
+    const normalized = assetHash.toLowerCase().replace(/^0x/, '');
+
+    try {
+      const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
+      const url = `${API_URL}?nodePath=account/${wallet.address}/balance/asset:${normalized}&${nodeBaseParam}`;
+
+      const response = await axios.get(url);
+      const data = response.data?.data || response.data;
+
+      const tokenInfo = data?.token || {};
+      const balanceInfo = data?.balance?.total || data?.balance || {};
+
+      const decimals = tokenInfo.decimals ?? balanceInfo.decimals ?? 8;
+
+      let balanceStr = '0';
+      if (balanceInfo.str) {
+        balanceStr = balanceInfo.str;
+      } else if (balanceInfo.u64 !== undefined) {
+        balanceStr = (Number(balanceInfo.u64) / Math.pow(10, decimals)).toFixed(decimals);
+      } else if (balanceInfo.E8 !== undefined) {
+        balanceStr = (Number(balanceInfo.E8) / Math.pow(10, decimals)).toFixed(decimals);
+      }
+
+      return {
+        balance: balanceStr,
+        decimals,
+        hasBalance: parseFloat(balanceStr) > 0,
+        raw: data,
+      };
+    } catch (err) {
+      // If the endpoint 404s or asset doesn't exist for the account, treat as zero balance
+      if (err.response?.status === 404) {
+        return { balance: '0', decimals: 8, hasBalance: false };
+      }
+      console.error('checkAssetBalance error:', err);
+      return { balance: '0', decimals: 8, hasBalance: false, error: err.message };
+    }
+  };
+
+  // Helper for gating: returns true if the user holds at least minBalance of the asset
+  const hasAssetBalance = async (assetHash, minBalance = '0') => {
+    const { balance } = await checkAssetBalance(assetHash);
+    const balNum = parseFloat(balance || '0');
+    const minNum = parseFloat(minBalance || '0');
+    return balNum >= minNum;
+  };
+
   // ==================== NAMED WALLET SAVE (for tagging unsaved logins) ====================
   const saveNamedWallet = (name, password) => {
     if (!wallet || !name || !password) {
@@ -542,6 +596,9 @@ export const WalletProvider = ({ children }) => {
     autoMineCount,
     toggleAutoMining,
     isTestnetNode,
+    // Token gating helpers (pure, non-mutating)
+    checkAssetBalance,
+    hasAssetBalance,
   };
 
   return (

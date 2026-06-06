@@ -10,6 +10,8 @@ import NodeSelectionPage from './NodeSelectionPage';
 import DeFiTestnetPage from './DeFiTestnetPage';
 import AssetPage from './AssetPage';
 import DexPage from './DexPage';
+import GatedPage from './GatedPage';
+import TokenGate from './TokenGate';
 
 const WalletContent = () => {
   const {
@@ -140,6 +142,7 @@ const WalletContent = () => {
     { key: 'send', label: 'Send' },
     { key: 'history', label: 'History' },
     { key: 'tools', label: 'Tools' },
+    { key: 'gated', label: 'Gated' },
     { key: 'node', label: 'Node' },
   ];
 
@@ -155,6 +158,7 @@ const WalletContent = () => {
       case 'send': return <SendTransactionPage wallet={wallet} selectedNode={selectedNode} />;
       case 'history': return <TransactionHistoryPage wallet={wallet} selectedNode={selectedNode} />;
       case 'tools': return <ToolsPage selectedNode={selectedNode} />;
+      case 'gated': return <GatedPage />;
       case 'node': return <NodeSelectionPage onNodeChange={setSelectedNode} />;
       case 'assets': return <AssetPage selectedNode={selectedNode} />;
       case 'dex': return <DexPage selectedNode={selectedNode} wallet={wallet} />;
