@@ -18,13 +18,19 @@ export const generateWallet = (wordCount, pathType) => {
   const checksum = ethers.sha256('0x' + ripemd).slice(2, 10);
   const address = ripemd + checksum;
 
+  // Return a clean 'wallet' object (no mnemonic) for use in the app + session.
+  // The mnemonic is provided separately ONLY for the one-time backup display in the modal.
+  const wallet = {
+    privateKey: hdWallet.privateKey.slice(2),
+    publicKey,
+    address,
+  };
+
   return {
+    wallet,
     mnemonic,
     wordCount: Number(wordCount),
     pathType,
-    privateKey: hdWallet.privateKey.slice(2),
-    publicKey,
-    address
   };
 };
 
@@ -40,13 +46,19 @@ export const deriveWallet = (mnemonicPhrase, wordCount, pathType) => {
   const checksum = ethers.sha256('0x' + ripemd).slice(2, 10);
   const address = ripemd + checksum;
 
+  // Return a clean 'wallet' object (no mnemonic) for use in the app + session.
+  // The mnemonic is provided separately ONLY for the one-time backup display in the modal.
+  const wallet = {
+    privateKey: hdWallet.privateKey.slice(2),
+    publicKey,
+    address,
+  };
+
   return {
+    wallet,
     mnemonic: mnemonicPhrase,
     wordCount: Number(wordCount),
     pathType,
-    privateKey: hdWallet.privateKey.slice(2),
-    publicKey,
-    address
   };
 };
 
@@ -61,11 +73,17 @@ export const importFromPrivateKey = (privKey) => {
   const checksum = ethers.sha256('0x' + ripemd).slice(2, 10);
   const address = ripemd + checksum;
 
-  return { privateKey: privKey, publicKey, address };
+  // Consistent shape with generate/derive: clean wallet + no mnemonic.
+  return {
+    wallet: { privateKey: privKey, publicKey, address },
+    mnemonic: null,
+  };
 };
 
 export const encryptWallet = (walletData, password) => {
-  const { privateKey, publicKey, address } = walletData;
+  // Support both the new structured result { wallet: {...}, mnemonic? } and legacy clean objects.
+  const w = walletData?.wallet || walletData || {};
+  const { privateKey, publicKey, address } = w;
   return CryptoJS.AES.encrypt(JSON.stringify({ privateKey, publicKey, address }), password).toString();
 };
 
@@ -99,6 +117,7 @@ export const deriveWarthogAddress = (publicKeyHex) => {
 };
 
 export const downloadWallet = (walletData, password) => {
+  // Support both the new structured result and legacy clean objects (encryptWallet already normalizes).
   const encrypted = encryptWallet(walletData, password);
   const blob = new Blob([encrypted], { type: 'text/plain' });
   const url = URL.createObjectURL(blob);
@@ -107,4 +126,21 @@ export const downloadWallet = (walletData, password) => {
   a.download = 'warthog_wallet.txt';
   a.click();
   URL.revokeObjectURL(url);
+};
+
+/**
+ * Returns a guaranteed clean wallet object containing only privateKey, publicKey, address.
+ * Accepts either the new structured creation result { wallet, mnemonic?, ... }
+ * or a plain wallet object. Strips any mnemonic that might exist (defense in depth).
+ * This is the canonical way to obtain a "signing-safe" wallet shape.
+ */
+export const getCleanWallet = (input) => {
+  if (!input) return null;
+  const base = input.wallet || input;
+  if (!base || typeof base.privateKey !== 'string') return null;
+  return {
+    privateKey: base.privateKey,
+    publicKey: base.publicKey,
+    address: base.address,
+  };
 };

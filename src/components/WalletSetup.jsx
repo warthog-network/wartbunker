@@ -1,10 +1,16 @@
 import React, { useState } from 'react';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
-import { generateWallet, deriveWallet, importFromPrivateKey, encryptWallet, decryptWallet } from '../utils/warthogWalletUtils';
+import { generateWallet, deriveWallet, importFromPrivateKey, encryptWallet, decryptWallet, getCleanWallet } from '../utils/warthogWalletUtils';
 
 const WalletSetup = () => {
-  const { setWallet, setIsLoggedIn, setCurrentTab, setCurrentWalletName } = useWallet();
+  const {
+    setWallet,
+    setIsLoggedIn,
+    setCurrentTab,
+    setCurrentWalletName,
+    loadSigningKey,
+  } = useWallet();
   const toast = useToast();
 
   const [walletAction, setWalletAction] = useState('create');
@@ -38,12 +44,22 @@ const WalletSetup = () => {
         }
         try {
           const decrypted = decryptWallet(encrypted, password);
-          setWallet(decrypted);
-          sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(decrypted));
+          const clean = getCleanWallet(decrypted); // has pk for handoff only
+          if (!clean || !clean.privateKey) {
+            throw new Error('Decrypted wallet missing key material');
+          }
+
+          // Store ONLY the safe view (no privateKey) in state and sessionStorage.
+          const view = { address: clean.address, publicKey: clean.publicKey };
+          setWallet(view);
+          sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(view));
           sessionStorage.setItem('warthogCurrentWalletName', selectedSavedWallet);
           setCurrentWalletName?.(selectedSavedWallet);
           setIsLoggedIn(true);
           setCurrentTab('overview');
+
+          // Hand the key to the isolated worker. Main thread forgets it.
+          await loadSigningKey(clean.privateKey);
         } catch (err) {
           setError('Failed to decrypt wallet: ' + err.message);
         }
@@ -56,17 +72,27 @@ const WalletSetup = () => {
           return;
         }
         const reader = new FileReader();
-        reader.onload = (e) => {
+        reader.onload = async (e) => {
           try {
             const decrypted = decryptWallet(e.target.result, password);
-            setWallet(decrypted);
-            sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(decrypted));
+            const clean = getCleanWallet(decrypted);
+            if (!clean || !clean.privateKey) {
+              throw new Error('Loaded wallet missing key material');
+            }
+
+            // Store ONLY the safe view (no privateKey).
+            const view = { address: clean.address, publicKey: clean.publicKey };
+            setWallet(view);
+            sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(view));
             // loaded from file: no name yet — the post-login prompt will offer to name/tag it
             sessionStorage.removeItem('warthogCurrentWalletName');
             setCurrentWalletName?.(null);
             setIsLoggedIn(true);
             setCurrentTab('overview');
             setShowModal(false);
+
+            // Handoff to worker for signing. This is now a disposable session until named.
+            await loadSigningKey(clean.privateKey);
           } catch (err) {
             setError('Failed to load wallet: ' + err.message);
           }
@@ -75,25 +101,27 @@ const WalletSetup = () => {
         return;
       }
 
-      let wallet;
+      let result;
       if (walletAction === 'create') {
-        wallet = generateWallet(wordCount, pathType);
+        result = generateWallet(wordCount, pathType);
       } else if (walletAction === 'derive') {
         if (!mnemonic) {
           setError('Please enter a mnemonic phrase');
           return;
         }
-        wallet = deriveWallet(mnemonic, wordCount, pathType);
+        result = deriveWallet(mnemonic, wordCount, pathType);
       } else if (walletAction === 'import') {
         if (!privateKeyInput) {
           setError('Please enter a private key');
           return;
         }
-        wallet = importFromPrivateKey(privateKeyInput);
+        result = importFromPrivateKey(privateKeyInput);
       }
 
-      if (wallet) {
-        setWalletData(wallet);
+      if (result) {
+        // result is now { wallet: {privateKey, publicKey, address}, mnemonic?, wordCount?, pathType? }
+        // We store the full result only temporarily for the backup modal display.
+        setWalletData(result);
         setShowModal(true);
       }
     } catch (err) {
@@ -101,45 +129,67 @@ const WalletSetup = () => {
     }
   };
 
-  const handleSaveWallet = () => {
+  const handleSaveWallet = async () => {
     if (!saveWalletConsent || !walletName || !password || password !== confirmPassword) {
       setError('Please provide a wallet name, matching passwords and consent to save');
       return;
     }
     try {
-      const encrypted = encryptWallet(walletData, password);
+      // We still have the full key material here (from the just-created walletData).
+      const source = walletData?.wallet || walletData;
+      const pk = source?.privateKey;
+      if (!pk) throw new Error('No private key in wallet data');
+
+      const encrypted = encryptWallet(source, password);
       const name = walletName.trim();
       localStorage.setItem(`warthogWallet_${name}`, encrypted);
-      setWallet(walletData);
-      sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(walletData));
+
+      // Persist ONLY the safe view (no privateKey ever in sessionStorage).
+      const view = { address: source.address, publicKey: source.publicKey };
+      setWallet(view);
+      sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(view));
       sessionStorage.setItem('warthogCurrentWalletName', name);
       setCurrentWalletName?.(name);
       setIsLoggedIn(true);
       setCurrentTab('overview');
       setShowModal(false);
       setError(null);
+
+      // Hand the key off to the worker. Main thread no longer holds it.
+      await loadSigningKey(pk);
     } catch (err) {
       setError('Failed to save wallet: ' + err.message);
     }
   };
 
-  const handleUseNow = () => {
-    // Use the fresh wallet in this session without tagging/saving a named copy.
-    // After login the UI will prompt to name & save it (unless dismissed).
+  const handleUseNow = async () => {
+    // Disposable / ephemeral session.
+    // The signing key will live only in this tab's isolated worker.
+    // Refresh, close, or lock will permanently drop the ability to sign until the user
+    // explicitly re-imports the private key or seed. This is intentional.
     if (!consentToClose) {
       setError('Please confirm you have saved the seed/private key securely');
       return;
     }
     try {
-      setWallet(walletData);
-      sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(walletData));
-      // ensure no stale name
+      const source = walletData?.wallet || walletData;
+      const pk = source?.privateKey;
+      if (!pk) throw new Error('No private key in wallet data');
+
+      // Store ONLY the safe view — never the private key in sessionStorage or main state.
+      const view = { address: source.address, publicKey: source.publicKey };
+      setWallet(view);
+      sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(view));
+      // ensure no stale name — this marks it as a disposable session
       sessionStorage.removeItem('warthogCurrentWalletName');
       setCurrentWalletName?.(null);
       setIsLoggedIn(true);
       setCurrentTab('overview');
       setShowModal(false);
       setError(null);
+
+      // Handoff to the worker. After this the main app cannot see the key.
+      await loadSigningKey(pk);
     } catch (err) {
       setError('Failed to use wallet: ' + err.message);
     }
@@ -323,36 +373,50 @@ const WalletSetup = () => {
             <div className="rounded-xl bg-amber-950/60 border border-amber-900/70 px-4 py-3 text-sm text-amber-300">
               <strong>Critical:</strong> Write your seed phrase and private key on paper and store them offline. Never share them. Anyone with this information can steal your funds.
             </div>
-            {walletData.mnemonic && (
-              <div className="result">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-medium text-amber-400">MNEMONIC (SAVE THIS SECURELY)</span>
-                  <button onClick={() => copyToClipboard(walletData.mnemonic, 'Mnemonic copied')} className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 hover:text-white">COPY</button>
-                </div>
-                <pre onClick={() => copyToClipboard(walletData.mnemonic, 'Mnemonic copied')} className="cursor-pointer select-all">{walletData.mnemonic}</pre>
-              </div>
-            )}
-            <div className="result">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs font-medium text-red-400">PRIVATE KEY — NEVER SHARE</span>
-                <button onClick={() => copyToClipboard(walletData.privateKey, 'Private key copied')} className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 hover:text-white">COPY</button>
-              </div>
-              <pre onClick={() => copyToClipboard(walletData.privateKey, 'Private key copied')} className="cursor-pointer select-all">{walletData.privateKey}</pre>
-            </div>
-            <div className="result">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs font-medium text-zinc-400">Public Key</span>
-                <button onClick={() => copyToClipboard(walletData.publicKey, 'Public key copied')} className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 hover:text-white">COPY</button>
-              </div>
-              <pre onClick={() => copyToClipboard(walletData.publicKey)} className="cursor-pointer select-all text-xs">{walletData.publicKey}</pre>
-            </div>
-            <div className="result">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs font-medium text-emerald-400">Address</span>
-                <button onClick={() => copyToClipboard(walletData.address, 'Address copied')} className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 hover:text-white">COPY</button>
-              </div>
-              <pre onClick={() => copyToClipboard(walletData.address, 'Address copied')} className="cursor-pointer select-all font-mono text-sm">{walletData.address}</pre>
-            </div>
+            {/* walletData may be { wallet: {privateKey...}, mnemonic, ... } for new creation flows,
+                or a legacy clean object for other cases. Derive display values safely. */}
+            {(() => {
+              const w = walletData?.wallet || walletData || {};
+              const mnemonicToShow = walletData?.mnemonic || null;
+              const priv = w.privateKey;
+              const pub = w.publicKey;
+              const addr = w.address;
+
+              return (
+                <>
+                  {mnemonicToShow && (
+                    <div className="result">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-medium text-amber-400">MNEMONIC (SAVE THIS SECURELY)</span>
+                        <button onClick={() => copyToClipboard(mnemonicToShow, 'Mnemonic copied')} className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 hover:text-white">COPY</button>
+                      </div>
+                      <pre onClick={() => copyToClipboard(mnemonicToShow, 'Mnemonic copied')} className="cursor-pointer select-all">{mnemonicToShow}</pre>
+                    </div>
+                  )}
+                  <div className="result">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-medium text-red-400">PRIVATE KEY — NEVER SHARE</span>
+                      <button onClick={() => copyToClipboard(priv, 'Private key copied')} className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 hover:text-white">COPY</button>
+                    </div>
+                    <pre onClick={() => copyToClipboard(priv, 'Private key copied')} className="cursor-pointer select-all">{priv}</pre>
+                  </div>
+                  <div className="result">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-medium text-zinc-400">Public Key</span>
+                      <button onClick={() => copyToClipboard(pub, 'Public key copied')} className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 hover:text-white">COPY</button>
+                    </div>
+                    <pre onClick={() => copyToClipboard(pub)} className="cursor-pointer select-all text-xs">{pub}</pre>
+                  </div>
+                  <div className="result">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-medium text-emerald-400">Address</span>
+                      <button onClick={() => copyToClipboard(addr, 'Address copied')} className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 hover:text-white">COPY</button>
+                    </div>
+                    <pre onClick={() => copyToClipboard(addr, 'Address copied')} className="cursor-pointer select-all font-mono text-sm">{addr}</pre>
+                  </div>
+                </>
+              );
+            })()}
             <div className="form-group">
               <label>
                 <input
@@ -408,13 +472,28 @@ const WalletSetup = () => {
               </label>
             </div>
 
+            {/* Prominent warning for disposable "Use Now" sessions as requested */}
+            <div style={{
+              background: '#3f2a1f',
+              border: '1px solid #c2410f',
+              borderRadius: 8,
+              padding: '8px 10px',
+              fontSize: '12px',
+              color: '#f4a261',
+              marginBottom: '6px'
+            }}>
+              <strong>Disposable session:</strong> “Use Wallet Now” creates an ephemeral session.
+              The signing key lives only in this browser tab’s secure worker. <strong>Refreshing the page, closing the tab, or locking will permanently remove your ability to sign</strong> until you re-import the private key or seed.
+              Use “Save Named Wallet” for anything you want to access again later.
+            </div>
+
             <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
               <button
                 onClick={handleUseNow}
                 disabled={!consentToClose}
                 style={{ flex: 1 }}
               >
-                Use Wallet Now
+                Use Wallet Now (disposable)
               </button>
               <button
                 onClick={handleSaveWallet}

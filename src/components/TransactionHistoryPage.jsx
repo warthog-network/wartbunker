@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import CryptoJS from 'crypto-js';
 import TransactionHistory from './TransactionHistory';
+import { getCleanWallet } from '../utils/warthogWalletUtils';
 
 const TransactionHistoryPage = ({ wallet: propWallet, selectedNode: propSelectedNode }) => {
   // Use props or fallback (safe for SSR)
@@ -8,7 +9,9 @@ const TransactionHistoryPage = ({ wallet: propWallet, selectedNode: propSelected
     try {
       if (typeof sessionStorage === 'undefined') return null;
       const saved = sessionStorage.getItem('warthogWalletDecrypted');
-      return saved ? JSON.parse(saved) : null;
+      const parsed = saved ? JSON.parse(saved) : null;
+      // Returns a safe view (address + publicKey only). Signing key never lives in sessionStorage.
+      return getCleanWallet(parsed) || (parsed ? { address: parsed.address, publicKey: parsed.publicKey } : null);
     } catch {
       return null;
     }

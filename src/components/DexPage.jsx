@@ -3,6 +3,7 @@ import axios from 'axios';
 import { ethers } from 'ethers';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
+import { getCleanWallet } from '../utils/warthogWalletUtils';
 
 const API_URL = '/api/proxy';
 
@@ -12,15 +13,20 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     pinHeight,
     pinHash,
     selectedNode: contextSelectedNode,
+    hasSigningKey,
+    signHash,
   } = useWallet();
 
   const selectedNode = propSelectedNode || contextSelectedNode || 'https://warthognode.duckdns.org';
 
+  // Safe view only. Use hasSigningKey + signHash for actual signing.
   const wallet = propWallet || (() => {
     try {
       if (typeof sessionStorage === 'undefined') return null;
       const saved = sessionStorage.getItem('warthogWalletDecrypted');
-      return saved ? JSON.parse(saved) : null;
+      const parsed = saved ? JSON.parse(saved) : null;
+      const c = getCleanWallet(parsed);
+      return c ? { address: c.address, publicKey: c.publicKey } : (parsed ? { address: parsed.address, publicKey: parsed.publicKey } : null);
     } catch {
       return null;
     }
@@ -565,8 +571,8 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       toast.error('Asset Hash, Asset Amount, and WART Amount are required');
       return;
     }
-    if (!wallet?.privateKey) {
-      toast.error('Wallet not loaded. Please log in again.');
+    if (!hasSigningKey) {
+      toast.error('No signing key available (locked/disposable/refresh). Unlock or re-import to use DEX.');
       return;
     }
 
@@ -625,13 +631,8 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       const hashHex = ethers.sha256(binary);
       const hash = hashHex.slice(2);
 
-      const signer = new ethers.Wallet(wallet.privateKey);
-      const signature = await signer.signingKey.sign(ethers.getBytes('0x' + hash));
-
-      const r = signature.r.slice(2).padStart(64, '0');
-      const s = signature.s.slice(2).padStart(64, '0');
-      const v = (signature.v - 27).toString(16).padStart(2, '0');
-      const signature65 = r + s + v;
+      // Delegate signing to isolated worker
+      const { signature65 } = await signHash(hash);
 
       const payload = {
         type: "liquidityDeposit",
@@ -701,8 +702,8 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       toast.error('Asset Hash, Amount, and Encoded Limit Price are required');
       return;
     }
-    if (!wallet?.privateKey) {
-      toast.error('Wallet not loaded. Please log in again.');
+    if (!hasSigningKey) {
+      toast.error('No signing key available (locked/disposable/refresh). Unlock or re-import to use DEX.');
       return;
     }
 
@@ -756,13 +757,8 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       const hashHex = ethers.sha256(binary);
       const hash = hashHex.slice(2);
 
-      const signer = new ethers.Wallet(wallet.privateKey);
-      const signature = await signer.signingKey.sign(ethers.getBytes('0x' + hash));
-
-      const r = signature.r.slice(2).padStart(64, '0');
-      const s = signature.s.slice(2).padStart(64, '0');
-      const v = (signature.v - 27).toString(16).padStart(2, '0');
-      const signature65 = r + s + v;
+      // Delegate signing to isolated worker
+      const { signature65 } = await signHash(hash);
 
       const payload = {
         type: "limitSwap",

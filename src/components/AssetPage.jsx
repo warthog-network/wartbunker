@@ -3,6 +3,7 @@ import axios from 'axios';
 import { ethers } from 'ethers';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
+import { getCleanWallet } from '../utils/warthogWalletUtils';
 
 const API_URL = '/api/proxy';
 
@@ -12,6 +13,8 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     pinHeight,
     pinHash,
     selectedNode: contextSelectedNode,
+    hasSigningKey,
+    signHash,
   } = useWallet();
 
   const selectedNode = propSelectedNode || contextSelectedNode || 'https://warthognode.duckdns.org';
@@ -22,11 +25,14 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const [loading, setLoading] = useState({});
   const [activeTab, setActiveTab] = useState('create');
 
+  // Note: the local fallback now only ever gets a safe view (address + publicKey).
+  // Signing checks use hasSigningKey from context; direct privateKey access is gone.
   const wallet = propWallet || (() => {
     try {
       if (typeof sessionStorage === 'undefined') return null;
       const saved = sessionStorage.getItem('warthogWalletDecrypted');
-      return saved ? JSON.parse(saved) : null;
+      const parsed = saved ? JSON.parse(saved) : null;
+      return getCleanWallet(parsed) || (parsed ? { address: parsed.address, publicKey: parsed.publicKey } : null);
     } catch {
       return null;
     }
@@ -246,8 +252,8 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       toast.error('Please enter a valid total supply greater than 0');
       return;
     }
-    if (!wallet?.privateKey) {
-      toast.error('Wallet not loaded. Please log in again.');
+    if (!hasSigningKey) {
+      toast.error('No signing key available (locked, refreshed, or disposable session). Unlock or re-import to create assets.');
       return;
     }
 
@@ -304,13 +310,8 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       const hashHex = ethers.sha256(binary);
       const hash = hashHex.slice(2);
 
-      const signer = new ethers.Wallet(wallet.privateKey);
-      const signature = await signer.signingKey.sign(ethers.getBytes('0x' + hash));
-
-      const r = signature.r.slice(2).padStart(64, '0');
-      const s = signature.s.slice(2).padStart(64, '0');
-      const v = (signature.v - 27).toString(16).padStart(2, '0');
-      const signature65 = r + s + v;
+      // Delegate to isolated signer worker (private key never visible here)
+      const { signature65 } = await signHash(hash);
 
       const payload = {
         type: "assetCreation",
@@ -366,8 +367,8 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       toast.error('All transfer fields are required');
       return;
     }
-    if (!wallet?.privateKey) {
-      toast.error('Wallet not loaded. Please log in again.');
+    if (!hasSigningKey) {
+      toast.error('No signing key available (locked, refreshed, or disposable session). Unlock or re-import to transfer assets.');
       return;
     }
 
@@ -424,13 +425,8 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       const hashHex = ethers.sha256(binary);
       const hash = hashHex.slice(2);
 
-      const signer = new ethers.Wallet(wallet.privateKey);
-      const signature = await signer.signingKey.sign(ethers.getBytes('0x' + hash));
-
-      const r = signature.r.slice(2).padStart(64, '0');
-      const s = signature.s.slice(2).padStart(64, '0');
-      const v = (signature.v - 27).toString(16).padStart(2, '0');
-      const signature65 = r + s + v;
+      // Delegate to isolated signer worker (private key never visible here)
+      const { signature65 } = await signHash(hash);
 
       const payload = {
         type: "tokenTransfer",

@@ -29,6 +29,7 @@ const WalletContent = () => {
     lockWallet,
     unlockWallet,
     isSessionLocked,
+    hasSigningKey,
   } = useWallet();
 
   const toast = useToast();
@@ -86,14 +87,14 @@ const WalletContent = () => {
 
   const handleUpdate = () => window.location.reload();
 
-  const handlePromptSaveWallet = () => {
+  const handlePromptSaveWallet = async () => {
     setPromptError(null);
     const name = promptWalletName.trim();
     if (!name || !promptPassword || promptPassword !== promptConfirmPassword) {
       setPromptError('Please provide a wallet name and matching passwords to save');
       return;
     }
-    const ok = saveNamedWallet(name, promptPassword);
+    const ok = await saveNamedWallet(name, promptPassword);
     if (ok) {
       toast.success(`Wallet saved as "${name}"`);
       setShowNamePrompt(false);
@@ -114,23 +115,27 @@ const WalletContent = () => {
     setPromptPassword('');
     setPromptConfirmPassword('');
     setPromptError(null);
-    toast.info('Wallet session active. You can name & save it later for easy login.');
+    toast.info('Disposable session active. Signing key will not survive refresh or lock. You can name & save it later for persistent access.');
   };
 
-  const handleUnlockWallet = () => {
+  const handleUnlockWallet = async () => {
     setUnlockPromptError(null);
     if (!unlockPassword) {
       setUnlockPromptError('Password is required to unlock');
       return;
     }
-    const ok = unlockWallet?.(unlockPassword);
-    if (ok) {
-      toast.success(currentWalletName ? `Unlocked "${currentWalletName}"` : 'Wallet unlocked');
-      setShowUnlockPrompt(false);
-      setUnlockPassword('');
-      setUnlockPromptError(null);
-    } else {
-      // Context sets its own error; surface a friendly one in the modal too
+    try {
+      const ok = await unlockWallet?.(unlockPassword);
+      if (ok) {
+        toast.success(currentWalletName ? `Unlocked "${currentWalletName}"` : 'Wallet unlocked');
+        setShowUnlockPrompt(false);
+        setUnlockPassword('');
+        setUnlockPromptError(null);
+      } else {
+        // Context sets its own error; surface a friendly one in the modal too
+        setUnlockPromptError('Unlock failed — check password');
+      }
+    } catch (e) {
       setUnlockPromptError('Unlock failed — check password');
     }
   };
@@ -142,8 +147,9 @@ const WalletContent = () => {
   };
 
   const handleLogout = () => {
-    // Clear the (now safe, key-stripped) session wallet record.
-    // Any in-memory private key material is also dropped when the wallet state is cleared.
+    // Explicitly lock the signer worker (drops the private key from the isolated context)
+    // before clearing the safe view session data.
+    try { lockWallet?.(); } catch {}
     sessionStorage.removeItem('warthogWalletDecrypted');
     sessionStorage.removeItem('warthogCurrentWalletName');
     setWallet(null);
@@ -215,19 +221,20 @@ const WalletContent = () => {
 
         <div className="flex items-center gap-2">
           {/* Lock / Unlock wallet — balance between convenience and security.
-              Lock clears the private key from this browser session (sessionStorage + memory).
-              If the wallet was loaded from a named saved entry, an Unlock button appears
-              allowing you to re-enter the password and restore signing ability without full logout. */}
-          {isLoggedIn && wallet?.privateKey && (
+              Lock tells the isolated signing worker to drop the private key.
+              The sessionStorage and main state only ever hold a safe view (address + publicKey).
+              "Use Now" (disposable) sessions lose signing ability permanently on lock/refresh until re-import.
+              Named wallets can be re-unlocked with their password. */}
+          {isLoggedIn && hasSigningKey && (
             <button
               onClick={() => {
                 lockWallet?.();
-                toast?.success?.('Wallet locked — private key cleared from this session');
+                toast?.success?.('Wallet locked — signing key cleared from this session');
               }}
               className="text-xs px-3 py-1.5 rounded-xl border border-zinc-700 hover:bg-zinc-900 active:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors"
-              title="Lock wallet: remove private key from this browser session. You can re-unlock saved wallets with your password."
+              title="Lock wallet: remove signing key from the secure worker. You can re-unlock saved wallets with your password."
             >
-              🔒 Lock
+              Lock
             </button>
           )}
 
@@ -238,7 +245,7 @@ const WalletContent = () => {
               className="text-xs px-3 py-1.5 rounded-xl border border-emerald-700/60 hover:bg-emerald-900/30 active:bg-emerald-900/40 text-emerald-400 hover:text-emerald-300 transition-colors"
               title={`Unlock wallet "${currentWalletName}" by entering its password (restores private key for signing)`}
             >
-              🔓 Unlock
+              Unlock
             </button>
           )}
 
@@ -277,16 +284,18 @@ const WalletContent = () => {
         </div>
       )}
 
-      {/* Desktop Tabs (≥ 768px) — compact orange-accent navbar */}
-      <div className="desktop-tabs relative pb-2 mb-6 border-b border-zinc-800">
-        <div className="flex flex-wrap gap-x-1 gap-y-1 px-1">
+      {/* Desktop Tabs (≥ 768px) — compact orange-accent navbar.
+          Made tighter + horizontally scrollable so all tabs (incl. DEX on testnet) fit visibly
+          even on full-width views inside the container. */}
+      <div className="desktop-tabs relative pb-1 mb-5 border-b border-zinc-800">
+        <div className="flex gap-0.5 overflow-x-auto scrollbar-hide px-0.5">
           {tabs.map(tab => {
             const isActive = currentTab === tab.key;
             return (
               <button
                 key={tab.key}
                 onClick={() => setCurrentTab(tab.key)}
-                className={`flex-shrink-0 px-3 py-[2px] text-xs font-semibold whitespace-nowrap rounded-lg transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50 ${
+                className={`flex-shrink-0 px-2 py-[1px] text-[10px] font-medium whitespace-nowrap rounded-md transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50 ${
                   isActive
                     ? 'bg-[#FDB913] text-zinc-950 shadow-sm'
                     : 'bg-zinc-900 text-zinc-400 hover:text-white hover:bg-zinc-800'
@@ -338,7 +347,7 @@ const WalletContent = () => {
               }}
               className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-xl font-semibold transition-all duration-200 min-h-[48px] shadow"
             >
-              🔓 Unlock "{currentWalletName}"
+              Unlock "{currentWalletName}"
             </button>
           )}
           <button

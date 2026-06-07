@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useLayoutEffect } from 'react';
 import axios from 'axios';
-import { encryptWallet, decryptWallet } from '../utils/warthogWalletUtils';
+import { encryptWallet, decryptWallet, getCleanWallet } from '../utils/warthogWalletUtils';
 
 const API_URL = '/api/proxy';
 
@@ -18,6 +18,8 @@ export const WalletProvider = ({ children }) => {
   // Always start with safe defaults. This ensures the first render (server HTML + client hydrate)
   // produces identical output. Storage restore happens in useLayoutEffect after hydration.
   const [wallet, setWallet] = useState(null);
+  // getCleanWallet (imported from utils) guarantees that the live 'wallet' object
+  // never contains a mnemonic. Mnemonic is confined to the one-time creation backup modal (Option 2).
   const [balance, setBalance] = useState(null);
   const [usdBalance, setUsdBalance] = useState(null);
   const [nextNonce, setNextNonce] = useState(null);
@@ -39,6 +41,43 @@ export const WalletProvider = ({ children }) => {
   const [watchedAssets, setWatchedAssets] = useState([]); // [{ hash: string, customName?: string }]
 
   const getWatchedAssetsKey = (address) => address ? `warthogWatchedAssets_${address.toLowerCase()}` : null;
+
+  // ==================== SECURE SIGNER (isolated Web Worker) ====================
+  // The raw private key lives ONLY inside the worker after handoff.
+  // Main thread (this context + all components) only ever sees address + publicKey.
+  // sessionStorage only ever stores the safe "view" wallet (no privateKey).
+  const signerWorkerRef = React.useRef(null);
+  const pendingRequestsRef = React.useRef(new Map()); // requestId -> {resolve, reject}
+  const nextRequestIdRef = React.useRef(0);
+
+  const [hasSigningKey, setHasSigningKey] = useState(false);
+
+  // Auto-lock for hygiene + to emphasize that "Use Now" sessions are disposable.
+  const AUTO_LOCK_MS = 10 * 60 * 1000; // 10 minutes of inactivity
+  const autoLockTimerRef = React.useRef(null);
+  const lastActivityRef = React.useRef(Date.now());
+
+  const resetAutoLockTimer = () => {
+    lastActivityRef.current = Date.now();
+    if (autoLockTimerRef.current) clearTimeout(autoLockTimerRef.current);
+    if (!hasSigningKey) return;
+    autoLockTimerRef.current = setTimeout(() => {
+      console.info('[Wallet] Auto-locking due to inactivity (10 min)');
+      performLock();
+    }, AUTO_LOCK_MS);
+  };
+
+  const clearAutoLockTimer = () => {
+    if (autoLockTimerRef.current) {
+      clearTimeout(autoLockTimerRef.current);
+      autoLockTimerRef.current = null;
+    }
+  };
+
+  // Call this on any explicit user signing action or unlock to keep the session alive.
+  const bumpActivity = () => {
+    if (hasSigningKey) resetAutoLockTimer();
+  };
 
   // ==================== AUTO FAKE MINING (Testnet only) ====================
   const [isAutoMining, setIsAutoMining] = useState(false);
@@ -77,6 +116,120 @@ export const WalletProvider = ({ children }) => {
     node === 'https://warthognode.duckdns.org' || 
     node === 'http://217.182.64.43:3001';
 
+  // ------------------ SIGNER WORKER SETUP & COMMUNICATION ------------------
+  // We create the worker once. All private key material is handed off via INIT
+  // and then stays inside the worker. We only ever send hashes or messages to sign.
+
+  // Stable ref for the current message handler so we can attach at creation time
+  // and properly clean up. This avoids the previous race where the effect could
+  // run before the worker was created (or miss a defensively-created worker).
+  const messageHandlerRef = React.useRef(null);
+
+  const attachMessageListener = (worker) => {
+    if (!worker) return;
+    // Detach any prior handler from a previous worker instance (defensive)
+    if (messageHandlerRef.current && signerWorkerRef.current) {
+      try { signerWorkerRef.current.removeEventListener('message', messageHandlerRef.current); } catch {}
+    }
+    const handleMessage = (e) => {
+      const data = e.data || {};
+      if (data.id != null && pendingRequestsRef.current.has(data.id)) {
+        const pending = pendingRequestsRef.current.get(data.id);
+        if (data.type === 'ERROR') {
+          pending.reject(new Error(data.error || 'Signer error'));
+        } else {
+          pending.resolve(data);
+        }
+      }
+    };
+    messageHandlerRef.current = handleMessage;
+    worker.addEventListener('message', handleMessage);
+  };
+
+  const callSigner = (type, payload = {}) => {
+    return new Promise((resolve, reject) => {
+      const worker = signerWorkerRef.current;
+      if (!worker) {
+        reject(new Error('Signing worker is not available'));
+        return;
+      }
+      const id = ++nextRequestIdRef.current;
+      const timeout = setTimeout(() => {
+        pendingRequestsRef.current.delete(id);
+        reject(new Error('Signing operation timed out'));
+      }, 15000);
+
+      pendingRequestsRef.current.set(id, {
+        resolve: (data) => {
+          clearTimeout(timeout);
+          pendingRequestsRef.current.delete(id);
+          resolve(data);
+        },
+        reject: (err) => {
+          clearTimeout(timeout);
+          pendingRequestsRef.current.delete(id);
+          reject(err);
+        },
+      });
+
+      worker.postMessage({ type, id, ...payload });
+    });
+  };
+
+  const initializeSigningKey = async (privateKeyHex) => {
+    if (!privateKeyHex || typeof privateKeyHex !== 'string' || privateKeyHex.length !== 64) {
+      throw new Error('initializeSigningKey requires a 64-char hex private key');
+    }
+    const worker = signerWorkerRef.current;
+    if (!worker) {
+      // Create on demand if not present (defensive)
+      createSignerWorker();
+    }
+    await callSigner('INIT', { privateKey: privateKeyHex });
+    setHasSigningKey(true);
+    resetAutoLockTimer();
+  };
+
+  const createSignerWorker = () => {
+    if (typeof window === 'undefined') return;
+    if (signerWorkerRef.current) return;
+
+    const worker = new Worker(
+      new URL('../workers/warthogSigner.worker.js', import.meta.url),
+      { type: 'module' }
+    );
+    signerWorkerRef.current = worker;
+
+    // Attach the response router immediately so INIT/SIGN/etc. promises can settle.
+    // Previously this was in a separate mount effect that could run before the worker
+    // existed (or never re-attach on defensive creation), causing unlock + initial
+    // key handoff to time out and leave hasSigningKey=false.
+    attachMessageListener(worker);
+
+    // Optional: surface unexpected worker errors to console
+    worker.addEventListener('error', (e) => {
+      console.error('[SignerWorker] error:', e);
+    });
+  };
+
+  // Create the worker early (after hydration is fine)
+  useEffect(() => {
+    createSignerWorker();
+    return () => {
+      const w = signerWorkerRef.current;
+      const h = messageHandlerRef.current;
+      if (w) {
+        if (h) {
+          try { w.removeEventListener('message', h); } catch {}
+        }
+        try { w.terminate(); } catch {}
+        signerWorkerRef.current = null;
+      }
+      messageHandlerRef.current = null;
+      clearAutoLockTimer();
+    };
+  }, []);
+
   // Client-only restore from storage. Using useLayoutEffect so state updates happen
   // synchronously before the browser paints. This guarantees the *first* render
   // (server + hydrate) always matches, avoiding hydration mismatch, while still
@@ -86,21 +239,30 @@ export const WalletProvider = ({ children }) => {
     const savedNode = localStorage.getItem('selectedNode') || 'https://warthognode.duckdns.org';
     setSelectedNode(savedNode);
 
-    // Restore active wallet session (decrypted data lives in sessionStorage)
+    // Restore active wallet session — ONLY the safe view (address + publicKey).
+    // The signing key, if any, does NOT survive a refresh. User must unlock (named wallets)
+    // or re-import (disposable "Use Now" sessions).
     try {
-      const decryptedWallet = sessionStorage.getItem('warthogWalletDecrypted');
-      if (decryptedWallet) {
-        const parsed = JSON.parse(decryptedWallet);
-        setWallet(parsed);
-
-        const name = sessionStorage.getItem('warthogCurrentWalletName') || null;
-        setCurrentWalletName(name);
-
-        setIsLoggedIn(true);
-        setCurrentTab('overview');
+      const stored = sessionStorage.getItem('warthogWalletDecrypted');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        // Always produce a view-only shape. getCleanWallet here is defensive;
+        // we explicitly strip any privateKey that might have been written by old code.
+        const view = getCleanWallet(parsed) || parsed;
+        const safeView = view ? { address: view.address, publicKey: view.publicKey } : null;
+        if (safeView && safeView.address) {
+          setWallet(safeView);
+          const name = sessionStorage.getItem('warthogCurrentWalletName') || null;
+          setCurrentWalletName(name);
+          setIsLoggedIn(true);
+          setCurrentTab('overview');
+          // We deliberately start with hasSigningKey=false. Signing power requires
+          // explicit unlock or re-handoff.
+          setHasSigningKey(false);
+        }
       }
     } catch {
-      // corrupt or missing data — stay logged out
+      // corrupt or missing — stay logged out
     }
   }, []);
 
@@ -375,8 +537,35 @@ export const WalletProvider = ({ children }) => {
     return balNum >= minNum;
   };
 
+  // Internal lock implementation (used by lockWallet and auto-lock)
+  const performLock = async () => {
+    try {
+      const worker = signerWorkerRef.current;
+      if (worker) {
+        try { await callSigner('LOCK'); } catch {}
+      }
+    } finally {
+      setHasSigningKey(false);
+      clearAutoLockTimer();
+
+      if (!wallet) return;
+
+      const viewOnly = {
+        address: wallet.address,
+        publicKey: wallet.publicKey,
+      };
+      setWallet(viewOnly);
+      try {
+        sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(viewOnly));
+      } catch {}
+    }
+  };
+
   // ==================== NAMED WALLET SAVE (for tagging unsaved logins) ====================
-  const saveNamedWallet = (name, password) => {
+  // When the user explicitly chooses to save a currently-unlocked disposable session,
+  // we temporarily retrieve the private key from the worker (user-initiated action only),
+  // encrypt it for localStorage, then continue. The key is not kept in main-thread state.
+  const saveNamedWallet = async (name, password) => {
     if (!wallet || !name || !password) {
       setError('Cannot save: no active wallet or missing name/password');
       return false;
@@ -385,50 +574,54 @@ export const WalletProvider = ({ children }) => {
       setError('Wallet name is required');
       return false;
     }
+    if (!hasSigningKey) {
+      setError('Cannot save: no active signing key in this session');
+      return false;
+    }
     try {
-      const encrypted = encryptWallet(wallet, password);
+      // Pull the key from the isolated worker for this explicit user action only.
+      const keyRes = await callSigner('GET_PRIVATE_KEY');
+      const pk = keyRes?.privateKey;
+      if (!pk) {
+        setError('Cannot save: failed to retrieve signing key from secure storage');
+        return false;
+      }
+
+      const cleanForEncrypt = {
+        privateKey: pk,
+        publicKey: wallet.publicKey,
+        address: wallet.address,
+      };
+      const encrypted = encryptWallet(cleanForEncrypt, password);
       localStorage.setItem(`warthogWallet_${name.trim()}`, encrypted);
+
       const trimmed = name.trim();
       setCurrentWalletName(trimmed);
       sessionStorage.setItem('warthogCurrentWalletName', trimmed);
+      setError(null);
       return true;
     } catch (err) {
-      setError('Failed to save named wallet: ' + err.message);
+      setError('Failed to save named wallet: ' + (err?.message || err));
       return false;
     }
   };
 
-  // ==================== LOCK WALLET (strip private key from session) ====================
-  // Removes the private key (and mnemonic) from memory and sessionStorage while
-  // keeping the address/publicKey so read-only features (balances, history, watched assets)
-  // and the overall "logged in" UI continue to work. Signing-dependent features
-  // (send, asset ops, server-gated content proof) will see no privateKey and refuse.
-  // For named/saved wallets the user can fully re-login via the setup screen (enter password)
-  // to restore a session that has the private key.
+  // ==================== LOCK WALLET ====================
+  // Tells the worker to drop the private key. Persists only the safe view
+  // (address + publicKey) to sessionStorage. Read-only features continue to work.
+  // "Use Now" (disposable) sessions become permanently unable to sign until the
+  // user re-imports the key material. Named wallets can be unlocked again with password.
   const lockWallet = () => {
     if (!wallet) return;
-    if (!wallet.privateKey) return; // already locked / no key present
-
-    const lockedWallet = {
-      address: wallet.address,
-      publicKey: wallet.publicKey,
-      // intentionally no privateKey, no mnemonic
-    };
-
-    setWallet(lockedWallet);
-    try {
-      sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(lockedWallet));
-    } catch {
-      // ignore storage errors; in-memory is already stripped
-    }
+    if (!hasSigningKey) return;
+    performLock();
   };
 
-  // ==================== UNLOCK WALLET (re-decrypt private key into session) ====================
-  // Only works for sessions that have a currentWalletName (i.e. were originally loaded
-  // from a password-protected named wallet saved in localStorage). Prompts for that
-  // same password, decrypts, and restores the full wallet (with privateKey) into
-  // memory + sessionStorage. This is the "lighter" counterpart to Lock.
-  const unlockWallet = (password) => {
+  // ==================== UNLOCK WALLET ====================
+  // For named wallets only. Decrypts from localStorage (main thread, briefly),
+  // sets the safe view wallet, hands the private key to the isolated worker,
+  // then immediately forgets it in the main thread.
+  const unlockWallet = async (password) => {
     if (!currentWalletName) {
       setError('No saved wallet name for this session. Log out and use "Login to Saved Wallet" instead.');
       return false;
@@ -452,9 +645,21 @@ export const WalletProvider = ({ children }) => {
         setError('Decrypted wallet does not match the current locked session address.');
         return false;
       }
-      setWallet(decrypted);
-      sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(decrypted));
+
+      // Always store ONLY the safe view (no privateKey) in state and sessionStorage.
+      const view = {
+        address: decrypted.address,
+        publicKey: decrypted.publicKey,
+      };
+      setWallet(view);
+      sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(view));
       setError(null);
+
+      // Hand the key off to the worker and forget it here.
+      const pk = decrypted.privateKey;
+      if (pk) {
+        await initializeSigningKey(pk);
+      }
       return true;
     } catch (err) {
       const msg = err?.message || 'Invalid password or corrupted data';
@@ -464,7 +669,7 @@ export const WalletProvider = ({ children }) => {
   };
 
   // Derived flag for UI: we have an identity + name but no signing key in this session.
-  const isSessionLocked = !!(isLoggedIn && wallet && !wallet.privateKey && currentWalletName);
+  const isSessionLocked = !!(isLoggedIn && wallet && !hasSigningKey && currentWalletName);
 
   // ==================== AUTO MINING FUNCTIONS ====================
 
@@ -599,11 +804,17 @@ export const WalletProvider = ({ children }) => {
     }
   }, [wallet?.address, isLoggedIn, selectedNode]);
 
-  // Clear assets when logging out or wallet is cleared
+  // Clear assets + signing key when logging out or wallet is cleared
   useEffect(() => {
     if (!isLoggedIn || !wallet) {
       setAssetBalances([]);
       setWatchedAssets([]);
+      setHasSigningKey(false);
+      clearAutoLockTimer();
+      // Tell worker to drop any key (best effort)
+      const w = signerWorkerRef.current;
+      if (w) { try { w.postMessage({ type: 'LOCK' }); } catch {} }
+
       // Note: we do NOT clear currentWalletName here. It is only nulled explicitly
       // on logout paths or "use without naming". Clearing it here was causing the
       // restored name (from useLayoutEffect) to be wiped during the mount/restore
@@ -626,6 +837,47 @@ export const WalletProvider = ({ children }) => {
   useEffect(() => {
     performFakeMineRef.current = performFakeMine;
   }, [performFakeMine]);
+
+  // ==================== SECURE SIGNING API (delegated to worker) ====================
+  // These are the only ways the rest of the app should ever produce signatures.
+  // The private key is never exposed back to the caller.
+
+  const signHash = async (hashHex) => {
+    if (!hasSigningKey) {
+      throw new Error('No signing key available. Lock/refresh cleared the key or wallet is not unlocked.');
+    }
+    bumpActivity();
+    const res = await callSigner('SIGN_HASH', { hashHex });
+    return {
+      r: res.r,
+      s: res.s,
+      v: res.v,
+      signature65: res.signature65,
+    };
+  };
+
+  const signMessage = async (message) => {
+    if (!hasSigningKey) {
+      throw new Error('No signing key available for message signing.');
+    }
+    bumpActivity();
+    const res = await callSigner('SIGN_MESSAGE', { message });
+    return res.signature;
+  };
+
+  // Expose a way for the one-time setup flows to hand a key to the worker
+  // after they have already persisted the safe view. Only used by WalletSetup.
+  const loadSigningKey = async (privateKeyHex) => {
+    await initializeSigningKey(privateKeyHex);
+  };
+
+  // Also expose a way to explicitly get the key for the rare "save this session" flow.
+  // (The worker only returns it on this call.)
+  const _getPrivateKeyForSaveOnly = async () => {
+    if (!hasSigningKey) return null;
+    const res = await callSigner('GET_PRIVATE_KEY');
+    return res?.privateKey || null;
+  };
 
   const value = {
     wallet,
@@ -667,10 +919,17 @@ export const WalletProvider = ({ children }) => {
     // Token gating helpers (pure, non-mutating)
     checkAssetBalance,
     hasAssetBalance,
-    // Session key lock/unlock (removes or restores private key without full logout)
+    // Secure signing (private key never leaves the worker)
+    hasSigningKey,
+    signHash,
+    signMessage,
     lockWallet,
     unlockWallet,
     isSessionLocked,
+    // For setup flows only (handoff after create/import/use-now or initial named login)
+    loadSigningKey,
+    // Internal — used by saveNamedWallet prompt for explicit user save action
+    _getPrivateKeyForSaveOnly,
   };
 
   return (

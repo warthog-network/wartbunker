@@ -15,6 +15,8 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
     nextNonce,
     refreshBalance,
     setError: setContextError,
+    hasSigningKey,
+    signHash,
   } = useWallet();
 
   const wallet = propWallet || contextWallet;
@@ -103,6 +105,12 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
       setContextError?.(msg);
       return;
     }
+    if (!hasSigningKey) {
+      const msg = 'No signing key available. Lock/refresh cleared it or this is a locked/disposable session. Unlock or re-import to send.';
+      setLocalError(msg);
+      setContextError?.(msg);
+      return;
+    }
 
     setIsLoading(true);
     setResult(null);
@@ -151,13 +159,8 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
       const hashHex = ethers.sha256(binary);
       const hash = hashHex.slice(2);
 
-      const signer = new ethers.Wallet(wallet.privateKey);
-      const signature = await signer.signingKey.sign(ethers.getBytes('0x' + hash));
-
-      const r = signature.r.slice(2).padStart(64, '0');
-      const s = signature.s.slice(2).padStart(64, '0');
-      const v = (signature.v - 27).toString(16).padStart(2, '0');
-      const signature65 = r + s + v;
+      // Signing is delegated to the isolated worker. We never see the private key here.
+      const { signature65 } = await signHash(hash);
 
       const payload = {
         type: 'wartTransfer',
