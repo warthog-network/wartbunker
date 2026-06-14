@@ -1,4 +1,7 @@
-// TransactionHistory.jsx - COMPLETE FILE (timestamps now work on BOTH public nodes + DeFi testnet)
+// TransactionHistory.jsx - DeFi-aware full implementation.
+// Supports all Warthog v0.10+ node tx types from /account/:addr/history (Block.body):
+// reward, wartTransfer, tokenTransfer, limitSwap, liquidityDeposit, liquidityWithdrawal,
+// assetCreation, match, cancelation + legacy public node flat transfers/rewards.
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useToast } from './Toast';
@@ -27,37 +30,141 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
 
   const abbreviate = (str) => str ? `${str.slice(0,6)}...${str.slice(-4)}` : 'N/A';
 
-  const normalizeTransaction = (txItem, block) => {
-    // Public node structure (flat)
-    if (txItem.txHash) {
+  // Safe value extractors for {str, E8, ...} or primitives from API
+  const getAmountStr = (v, fallback = '0') => {
+    if (v == null) return fallback;
+    if (typeof v === 'string' || typeof v === 'number') return String(v);
+    if (typeof v === 'object') {
+      if (v.str != null) return String(v.str);
+      if (v.E8 !== undefined) return (Number(v.E8) / 100000000).toFixed(8);
+      if (v.u64 !== undefined) return String(v.u64);
+    }
+    return fallback;
+  };
+
+  const getFeeStr = (v, fallback = '0') => {
+    if (v == null) return fallback;
+    if (typeof v === 'string' || typeof v === 'number') return String(v);
+    if (typeof v === 'object') {
+      if (v.str != null) return String(v.str);
+      if (v.E8 !== undefined) return (Number(v.E8) / 100000000).toFixed(8);
+    }
+    return fallback;
+  };
+
+  // Normalize ANY tx shape coming from perBlock (DeFi body.* or legacy public node)
+  const normalizeTransaction = (txItem, block, categoryHint = null, viewingAddress = null) => {
+    // Legacy public node flat shape (from /history on mainnet nodes)
+    if (txItem && txItem.txHash) {
+      const fromA = txItem.fromAddress || null;
       return {
         txid: txItem.txHash,
-        fromAddress: txItem.fromAddress || null,
+        fromAddress: fromA,
         toAddress: txItem.toAddress || 'N/A',
-        amount: txItem.amount || txItem.amountE8?.toString() || '0',
-        fee: txItem.fee?.str || txItem.fee?.E8?.toString() || '0',
+        amount: txItem.amount || getAmountStr(txItem.amountE8),
+        fee: getFeeStr(txItem.fee),
         confirmations: block?.confirmations,
         height: block?.height,
         timestamp: null,
-        isReward: !txItem.fromAddress,
+        isReward: !fromA,
+        type: !fromA ? 'reward' : 'wart_transfer',
+        asset: 'WART',
+        description: !fromA ? `Block reward ${txItem.amount || '0'} WART` : `Sent ${txItem.amount || '0'} WART`,
+        isIncoming: !!(txItem.toAddress && txItem.toAddress === viewingAddress),
+        category: categoryHint || (!fromA ? 'reward' : 'wartTransfer'),
       };
     }
 
-    // DeFi testnet structure (nested)
-    const tx = txItem.transaction || {};
-    const data = tx.data || {};
-    const signing = tx.signingData || {};
+    // DeFi node shape (v0.10+): entry = { historyId, transaction: { hash, data, signedCommon?, processed? } }
+    // or reward entry directly under body.reward
+    const tx = (txItem && txItem.transaction) ? txItem.transaction : (txItem || {});
+    const data = tx.data || txItem?.data || {};
+    const common = tx.signedCommon || tx.signingData || txItem?.signedCommon || {};
+
+    const hash = tx.hash || txItem?.hash || 'N/A';
+    const fromA = common.originAddress || data.fromAddress || null;
+    const toA = data.toAddress || null;
+
+    let typ = categoryHint || 'unknown';
+    let amt = getAmountStr(data.amount);
+    let assetSym = 'WART';
+    let desc = '';
+    let incoming = false;
+
+    const cat = (categoryHint || '').toLowerCase();
+
+    if (cat.includes('reward') || (!fromA && !data.toAddress && data.amount)) {
+      typ = 'reward';
+      amt = getAmountStr(data.amount);
+      assetSym = 'WART';
+      incoming = toA === viewingAddress;
+      desc = `Block reward ${amt} WART`;
+    } else if (cat.includes('wart')) {
+      typ = 'wart_transfer';
+      assetSym = 'WART';
+      incoming = toA === viewingAddress;
+      desc = incoming ? `Received ${amt} WART` : `Sent ${amt} WART to ${abbreviate(toA)}`;
+    } else if (cat.includes('token')) {
+      typ = 'token_transfer';
+      assetSym = data.asset?.name || data.tokenSpec || 'TOKEN';
+      amt = getAmountStr(data.amount);
+      incoming = toA === viewingAddress;
+      desc = `${incoming ? 'Received' : 'Sent'} ${amt} ${assetSym}`;
+    } else if (cat.includes('limitswap') || cat.includes('limit_swap')) {
+      typ = 'limit_swap';
+      assetSym = data.baseAsset?.name || 'ASSET';
+      amt = getAmountStr(data.amount);
+      const lim = data.limit?.doubleAdjusted != null ? data.limit.doubleAdjusted : (data.limit || '?');
+      const dir = data.buy ? 'BUY' : 'SELL';
+      desc = `${dir} limit ${amt} ${assetSym} @ ${lim}`;
+      incoming = false;
+    } else if (cat.includes('liquiditydeposit') || cat.includes('liquidity_deposit')) {
+      typ = 'liquidity_deposit';
+      assetSym = data.baseAsset?.name || 'POOL';
+      const dep = data.deposited || {};
+      amt = `${getAmountStr(dep.asset || dep.base || dep)} + ${getAmountStr(dep.wart || dep.quote || '0')}`;
+      desc = `Deposited liquidity to ${assetSym} pool`;
+    } else if (cat.includes('liquiditywithdraw') || cat.includes('liquidity_withdrawal')) {
+      typ = 'liquidity_withdrawal';
+      assetSym = data.baseAsset?.name || 'POOL';
+      amt = getAmountStr(data.sharesRedeemed);
+      desc = `Redeemed ${amt} shares from ${assetSym} pool`;
+    } else if (cat.includes('assetcreation') || cat.includes('asset_creation')) {
+      typ = 'asset_creation';
+      assetSym = data.name || 'ASSET';
+      amt = getAmountStr(data.supply);
+      desc = `Created ${assetSym} (supply ${amt})`;
+    } else if (cat.includes('match')) {
+      typ = 'match';
+      assetSym = data.baseAsset?.name || 'ASSET';
+      const swaps = ((data.buySwaps||[]).length + (data.sellSwaps||[]).length) || '';
+      desc = `DEX match${swaps ? ' ('+swaps+' swaps)' : ''} on ${assetSym}`;
+    } else if (cat.includes('cancel')) {
+      typ = 'cancelation';
+      desc = `Canceled tx ${abbreviate(data.cancelTxid || '')}`;
+    } else {
+      // fallback generic
+      amt = getAmountStr(data.amount || data.supply);
+      desc = (cat || 'Transaction');
+    }
+
+    const feeVal = common.fee || txItem?.fee;
 
     return {
-      txid: tx.hash || 'N/A',
-      fromAddress: signing.originAddress || null,
-      toAddress: data.toAddress || 'N/A',
-      amount: data.amount?.str || data.amount?.E8?.toString() || '0',
-      fee: signing.fee?.str || signing.fee?.E8?.toString() || '0',
+      txid: hash,
+      fromAddress: fromA,
+      toAddress: toA,
+      amount: amt,
+      fee: getFeeStr(feeVal),
       confirmations: block?.confirmations,
       height: block?.height,
       timestamp: null,
-      isReward: !signing.originAddress,
+      isReward: typ === 'reward',
+      type: typ,
+      asset: assetSym,
+      description: desc,
+      isIncoming: incoming,
+      category: cat || typ,
     };
   };
 
@@ -124,49 +231,122 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
   const fetchInitialHistory = async () => {
     setLoading(true);
     setError(null);
-    console.log(`🔍 Fetching history from ${isTestnet ? 'TESTNET' : 'PUBLIC NODE'}...`);
+    console.log(`🔍 Fetching history from ${isTestnet ? 'TESTNET/DEFI' : 'PUBLIC NODE'}...`);
 
     try {
       const nodeBaseParam = `nodeBase=${encodeURIComponent(node)}`;
       const response = await axios.get(`${API_URL}?nodePath=account/${address}/history/4294967295&${nodeBaseParam}`);
       const rawData = response.data.data || response.data;
 
-      console.log('🔍 RAW RESPONSE:', JSON.stringify(rawData, null, 2));
-
       if (!rawData.perBlock || !Array.isArray(rawData.perBlock)) {
-        throw new Error('Unexpected response format');
+        // Some responses may return {code, error} with empty history
+        if (rawData.code && rawData.code !== 0) {
+          setAllHistory([]);
+          setHasMore(false);
+          setNextCursor(null);
+          setCurrentPage(1);
+          setLoading(false);
+          return;
+        }
+        throw new Error('Unexpected response format from history endpoint');
       }
 
-      // ALWAYS fetch timestamps from /chain/block/{height} for BOTH node types
+      // Fetch full block (for timestamps + authoritative data) when header/time not embedded
       const blockPromises = rawData.perBlock.map(block =>
         axios.get(`${API_URL}?nodePath=chain/block/${block.height}&${nodeBaseParam}`)
       );
       const blockResponses = await Promise.allSettled(blockPromises);
 
       const timestampMap = {};
+      const fullBlockMap = {};
       blockResponses.forEach((res, idx) => {
         if (res.status === 'fulfilled') {
-          const blockData = res.value.data.data || res.value.data;
-          timestampMap[rawData.perBlock[idx].height] = blockData.timestamp;
+          const b = res.value.data.data || res.value.data;
+          const h = rawData.perBlock[idx].height;
+          timestampMap[h] = b?.header?.time?.timestamp || b?.timestamp || b?.header?.time;
+          fullBlockMap[h] = b;
         }
       });
 
-      const newItems = rawData.perBlock.flatMap(block => {
-        const txs = [
-          ...(block.transactions?.rewards || []),
-          ...(block.transactions?.transfers || []),
-          ...(block.transactions?.wartTransfers || []),
+      const newItems = [];
+      rawData.perBlock.forEach((block) => {
+        const h = block.height;
+        // Prefer embedded header (DeFi node) but have fullBlock as fallback
+        const srcBlock = fullBlockMap[h] || block;
+
+        // DeFi v0.10+ shape: perBlock[i].body.{reward, wartTransfer: [], tokenTransfer: [], limitSwap, liquidityDeposit, ...}
+        const body = block.body || srcBlock?.body || block.transactions || srcBlock?.transactions || {};
+
+        // Reward (can be object or array in responses)
+        const rewardEntry = body.reward;
+        if (rewardEntry) {
+          const list = Array.isArray(rewardEntry) ? rewardEntry : [rewardEntry];
+          list.forEach((entry) => {
+            if (entry) {
+              const n = normalizeTransaction(entry, srcBlock || block, 'reward', address);
+              n.timestamp = block.header?.time?.timestamp || timestampMap[h] || n.timestamp;
+              newItems.push(n);
+            }
+          });
+        }
+
+        // All other DeFi action arrays under body
+        const defiKeys = [
+          'wartTransfer', 'tokenTransfer', 'limitSwap', 'liquidityDeposit', 'liquidityWithdrawal',
+          'assetCreation', 'match', 'cancelation',
+          // legacy alt names sometimes seen
+          'wartTransfers', 'tokenTransfers', 'transfers', 'rewards'
         ];
-        return txs.map(txItem => {
-          const normalized = normalizeTransaction(txItem, block);
-          normalized.timestamp = timestampMap[block.height];
-          return normalized;
+        defiKeys.forEach((key) => {
+          const arr = body[key];
+          if (Array.isArray(arr)) {
+            const hint = key.toLowerCase().includes('reward') ? 'reward' :
+                         key.toLowerCase().includes('wart') ? 'wartTransfer' :
+                         key.toLowerCase().includes('token') ? 'tokenTransfer' :
+                         key.toLowerCase().includes('limit') ? 'limitSwap' :
+                         key.toLowerCase().includes('liquiditydeposit') ? 'liquidityDeposit' :
+                         key.toLowerCase().includes('liquiditywithdraw') ? 'liquidityWithdrawal' :
+                         key.toLowerCase().includes('asset') ? 'assetCreation' :
+                         key.toLowerCase().includes('match') ? 'match' :
+                         key.toLowerCase().includes('cancel') ? 'cancelation' : key;
+            arr.forEach((entry) => {
+              if (entry) {
+                const n = normalizeTransaction(entry, srcBlock || block, hint, address);
+                n.timestamp = block.header?.time?.timestamp || timestampMap[h] || n.timestamp;
+                newItems.push(n);
+              }
+            });
+          }
         });
+
+        // Legacy public node fallback (already handled inside normalize too via txItem.txHash)
+        if (body.transfers && Array.isArray(body.transfers)) {
+          body.transfers.forEach((t) => {
+            const n = normalizeTransaction(t, srcBlock || block, 'wartTransfer', address);
+            n.timestamp = block.header?.time?.timestamp || timestampMap[h] || n.timestamp;
+            if (!newItems.find((x) => x.txid === n.txid)) newItems.push(n);
+          });
+        }
+        if (body.rewards && Array.isArray(body.rewards)) {
+          body.rewards.forEach((r) => {
+            const n = normalizeTransaction(r, srcBlock || block, 'reward', address);
+            n.timestamp = block.header?.time?.timestamp || timestampMap[h] || n.timestamp;
+            newItems.push(n);
+          });
+        }
       });
 
-      setAllHistory(newItems);
+      // De-dupe by txid (in case of overlap in legacy paths)
+      const seen = new Set();
+      const deduped = newItems.filter((it) => {
+        if (seen.has(it.txid)) return false;
+        seen.add(it.txid);
+        return true;
+      });
+
+      setAllHistory(deduped);
       setNextCursor(rawData.fromId > 0 ? rawData.fromId : null);
-      setHasMore(newItems.length > 0 && rawData.fromId > 0);
+      setHasMore(deduped.length > 0 && rawData.fromId > 0);
       setCurrentPage(1);
     } catch (err) {
       console.error(err);
@@ -184,37 +364,70 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
       const response = await axios.get(`${API_URL}?nodePath=account/${address}/history/${nextCursor}&${nodeBaseParam}`);
       const rawData = response.data.data || response.data;
 
+      if (!rawData.perBlock || !Array.isArray(rawData.perBlock)) {
+        setHasMore(false);
+        setLoading(false);
+        return;
+      }
+
       const blockPromises = rawData.perBlock.map(block =>
         axios.get(`${API_URL}?nodePath=chain/block/${block.height}&${nodeBaseParam}`)
       );
       const blockResponses = await Promise.allSettled(blockPromises);
 
       const timestampMap = {};
+      const fullBlockMap = {};
       blockResponses.forEach((res, idx) => {
         if (res.status === 'fulfilled') {
-          const blockData = res.value.data.data || res.value.data;
-          timestampMap[rawData.perBlock[idx].height] = blockData.timestamp;
+          const b = res.value.data.data || res.value.data;
+          const h = rawData.perBlock[idx].height;
+          timestampMap[h] = b?.header?.time?.timestamp || b?.timestamp;
+          fullBlockMap[h] = b;
         }
       });
 
-      const newItems = rawData.perBlock.flatMap(block => {
-        const txs = [
-          ...(block.transactions?.rewards || []),
-          ...(block.transactions?.transfers || []),
-          ...(block.transactions?.wartTransfers || []),
-        ];
-        return txs.map(txItem => {
-          const normalized = normalizeTransaction(txItem, block);
-          normalized.timestamp = timestampMap[block.height];
-          return normalized;
+      const newItems = [];
+      rawData.perBlock.forEach((block) => {
+        const h = block.height;
+        const srcBlock = fullBlockMap[h] || block;
+        const body = block.body || srcBlock?.body || block.transactions || srcBlock?.transactions || {};
+
+        if (body.reward) {
+          const list = Array.isArray(body.reward) ? body.reward : [body.reward];
+          list.forEach((entry) => {
+            if (entry) {
+              const n = normalizeTransaction(entry, srcBlock || block, 'reward', address);
+              n.timestamp = block.header?.time?.timestamp || timestampMap[h] || n.timestamp;
+              newItems.push(n);
+            }
+          });
+        }
+
+        const defiKeys = ['wartTransfer','tokenTransfer','limitSwap','liquidityDeposit','liquidityWithdrawal','assetCreation','match','cancelation','wartTransfers','tokenTransfers','transfers','rewards'];
+        defiKeys.forEach((key) => {
+          const arr = body[key];
+          if (Array.isArray(arr)) {
+            const hint = key;
+            arr.forEach((entry) => {
+              if (entry) {
+                const n = normalizeTransaction(entry, srcBlock || block, hint, address);
+                n.timestamp = block.header?.time?.timestamp || timestampMap[h] || n.timestamp;
+                newItems.push(n);
+              }
+            });
+          }
         });
       });
 
-      setAllHistory(prev => [...prev, ...newItems]);
-      setHasMore(newItems.length > 0 && rawData.fromId > 0);
+      // de-dupe against existing
+      const seen = new Set(allHistory.map((x) => x.txid));
+      const fresh = newItems.filter((it) => !seen.has(it.txid));
+
+      setAllHistory(prev => [...prev, ...fresh]);
+      setHasMore(fresh.length > 0 && rawData.fromId > 0);
       setNextCursor(rawData.fromId > 0 ? rawData.fromId : null);
     } catch (err) {
-      setError(err.message);
+      setError(err.message || 'Failed to load more history');
     } finally {
       setLoading(false);
     }
@@ -310,67 +523,122 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
         {allHistory.length === 0 && !loading && <p>No transactions found.</p>}
 
         {currentHistory.length > 0 && (
-          <div style={{ maxHeight: '400px', overflowY: 'auto', paddingRight: '10px' }}>
-            {currentHistory.map((tx, index) => (
-              <div
-                key={index}
-                style={{
-                  backgroundColor: txBackground,
-                  border: `1px solid ${txBorder}`,
-                  borderRadius: '8px',
-                  padding: '16px',
-                  marginBottom: '16px',
-                  color: txColor
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <strong style={{ color: labelColor }}>TxID:</strong>
-                  <span title={tx.txid || 'N/A'} style={{ cursor: 'pointer' }} onClick={() => copyToClipboard(tx.txid || '')}>
-                    {tx.txid ? `${tx.txid.slice(0, 6)}...${tx.txid.slice(-6)}` : 'N/A'}
-                  </span>
+          <div style={{ maxHeight: '420px', overflowY: 'auto', paddingRight: '10px' }}>
+            {currentHistory.map((tx, index) => {
+              // Type badge styling
+              const typeLabel = (tx.type || tx.category || 'tx').toUpperCase().replace(/_/g, ' ');
+              let badgeBg = '#444';
+              let badgeColor = '#fff';
+              if (tx.isReward || tx.type === 'reward') { badgeBg = '#166534'; badgeColor = '#86efac'; }
+              else if (tx.type === 'wart_transfer') { badgeBg = '#1e3a8a'; badgeColor = '#93c5fd'; }
+              else if (tx.type === 'token_transfer') { badgeBg = '#312e81'; badgeColor = '#a5b4fc'; }
+              else if (tx.type === 'limit_swap') { badgeBg = '#581c87'; badgeColor = '#d8b4fe'; }
+              else if (tx.type && tx.type.includes('liquidity')) { badgeBg = '#134e4b'; badgeColor = '#5eead4'; }
+              else if (tx.type === 'asset_creation') { badgeBg = '#854d0e'; badgeColor = '#fde047'; }
+              else if (tx.type === 'match') { badgeBg = '#701a75'; badgeColor = '#f0abfc'; }
+              else if (tx.type === 'cancelation') { badgeBg = '#7f1d1d'; badgeColor = '#fca5a5'; }
+
+              return (
+                <div
+                  key={index}
+                  style={{
+                    backgroundColor: txBackground,
+                    border: `1px solid ${txBorder}`,
+                    borderRadius: '8px',
+                    padding: '14px 16px',
+                    marginBottom: '14px',
+                    color: txColor
+                  }}
+                >
+                  {/* Header row: type badge + txid */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                    <span
+                      style={{
+                        fontSize: '10px',
+                        fontWeight: 600,
+                        letterSpacing: '0.5px',
+                        padding: '2px 9px',
+                        borderRadius: '999px',
+                        background: badgeBg,
+                        color: badgeColor,
+                        textTransform: 'uppercase'
+                      }}
+                    >
+                      {typeLabel}
+                    </span>
+                    <span
+                      title={tx.txid || 'N/A'}
+                      style={{ cursor: 'pointer', fontFamily: 'monospace', fontSize: '12px' }}
+                      onClick={() => copyToClipboard(tx.txid || '')}
+                    >
+                      {tx.txid && tx.txid !== 'N/A' ? `${tx.txid.slice(0, 6)}…${tx.txid.slice(-6)}` : 'N/A'}
+                    </span>
+                  </div>
+
+                  {/* One-line description of the action */}
+                  {tx.description && (
+                    <div style={{ marginBottom: '8px', fontSize: '13px', opacity: 0.95 }}>
+                      {tx.description}
+                    </div>
+                  )}
+
+                  {/* From / origin (for signed user txs and rewards) */}
+                  {(tx.fromAddress || tx.isReward) && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '12px' }}>
+                      <strong style={{ color: labelColor, minWidth: 42 }}>From:</strong>
+                      <span
+                        title={tx.isReward || !tx.fromAddress ? 'Block Reward / System' : tx.fromAddress}
+                        style={{ cursor: tx.fromAddress ? 'pointer' : 'default', fontFamily: 'monospace' }}
+                        onClick={() => tx.fromAddress && copyToClipboard(tx.fromAddress)}
+                      >
+                        {tx.isReward || !tx.fromAddress ? 'System / Reward' : abbreviate(tx.fromAddress)}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* To (when applicable) */}
+                  {tx.toAddress && tx.type !== 'limit_swap' && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '12px' }}>
+                      <strong style={{ color: labelColor, minWidth: 42 }}>To:</strong>
+                      <span
+                        title={tx.toAddress}
+                        style={{ cursor: 'pointer', fontFamily: 'monospace' }}
+                        onClick={() => copyToClipboard(tx.toAddress)}
+                      >
+                        {abbreviate(tx.toAddress)}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Amount + Asset (core for all) */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '12px' }}>
+                    <strong style={{ color: labelColor, minWidth: 42 }}>Amount:</strong>
+                    <span style={{ fontFamily: 'monospace' }}>
+                      {tx.amount} <span style={{ opacity: 0.7 }}>{tx.asset}</span>
+                    </span>
+                  </div>
+
+                  {/* Fee (only for user signed actions) */}
+                  {tx.fee && tx.fee !== '0' && tx.type !== 'reward' && tx.type !== 'match' && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '12px' }}>
+                      <strong style={{ color: labelColor, minWidth: 42 }}>Fee:</strong>
+                      <span style={{ fontFamily: 'monospace' }}>{tx.fee} WART</span>
+                    </div>
+                  )}
+
+                  {/* Confirmations / Height / Date row */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', opacity: 0.85, marginTop: '6px', borderTop: `1px solid ${txBorder}`, paddingTop: '6px' }}>
+                    <span>Conf: {tx.confirmations ?? '—'}</span>
+                    <span>H: {tx.height ?? '—'}</span>
+                    <span style={{ fontFamily: 'monospace' }}>
+                      {tx.timestamp
+                        ? new Date(Number(tx.timestamp) * 1000).toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC')
+                        : '—'}
+                    </span>
+                  </div>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <strong style={{ color: labelColor }}>From:</strong>
-                  <span
-                    title={!tx.fromAddress ? 'Block Reward' : tx.fromAddress}
-                    style={{ cursor: tx.fromAddress ? 'pointer' : 'default' }}
-                    onClick={() => tx.fromAddress && copyToClipboard(tx.fromAddress)}
-                  >
-                    {!tx.fromAddress ? 'Block Reward' : `${tx.fromAddress.slice(0, 6)}...${tx.fromAddress.slice(-6)}`}
-                  </span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <strong style={{ color: labelColor }}>To:</strong>
-                  <span title={tx.toAddress || 'N/A'} style={{ cursor: 'pointer' }} onClick={() => copyToClipboard(tx.toAddress || '')}>
-                    {tx.toAddress ? `${tx.toAddress.slice(0, 6)}...${tx.toAddress.slice(-6)}` : 'N/A'}
-                  </span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <strong style={{ color: labelColor }}>Amount (WART):</strong>
-                  <span>{tx.amount}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <strong style={{ color: labelColor }}>Fee (WART):</strong>
-                  <span>{tx.fee}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <strong style={{ color: labelColor }}>Confirmations:</strong>
-                  <span>{tx.confirmations ?? 'N/A'}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <strong style={{ color: labelColor }}>Height:</strong>
-                  <span>{tx.height ?? 'N/A'}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <strong style={{ color: labelColor }}>Date:</strong>
-                  <span>
-                    {tx.timestamp
-                      ? new Date(tx.timestamp * 1000).toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC')
-                      : 'N/A (no timestamp)'}
-                  </span>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
