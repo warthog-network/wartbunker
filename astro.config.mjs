@@ -1,8 +1,12 @@
 import { defineConfig } from 'astro/config';
 import react from '@astrojs/react';
 import netlify from '@astrojs/netlify';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 import tailwindcss from '@tailwindcss/vite';
+
+const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 
 /** Relaxed CSP for local dev — @astrojs/netlify applies netlify.toml headers via Netlify Dev emulation. */
 function devCspOverride() {
@@ -53,6 +57,7 @@ export default defineConfig({
         stream: 'stream-browserify',
         buffer: 'buffer',
         process: 'process/browser.js',
+        vm: path.resolve(projectRoot, 'src/shims/emptyVm.js'),
         '@': '/src',
       },
     },
