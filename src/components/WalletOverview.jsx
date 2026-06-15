@@ -1,7 +1,7 @@
-import React, { useState, Fragment } from 'react';
+import React, { useState, useEffect, Fragment } from 'react';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
-// Removed old ConfirmDialog import (auto-mining no longer needs one-shot confirmation)
+import { isValidAssetHash } from '../utils/warthogFormat';
 import axios from 'axios';
 
 const API_URL = '/api/proxy';
@@ -36,6 +36,7 @@ const WalletOverview = ({ onLogout }) => {
   // NEW: Open Limit Orders state
   const [openOrders, setOpenOrders] = useState(null);
   const [loadingOpenOrders, setLoadingOpenOrders] = useState(false);
+  const [addressValid, setAddressValid] = useState(null);
 
   const copyToClipboard = (text) => {
     if (!text) return;
@@ -46,8 +47,41 @@ const WalletOverview = ({ onLogout }) => {
     });
   };
 
+  useEffect(() => {
+    if (!wallet?.address) {
+      setAddressValid(null);
+      return;
+    }
+    import('../utils/warthogFormat.js').then(({ isValidWarthogAddress }) => {
+      isValidWarthogAddress(wallet.address).then(setAddressValid);
+    });
+  }, [wallet?.address]);
+
+  const enrichOpenOrders = async (ordersData) => {
+    const { formatLimitPrice } = await import('../utils/warthogFormat.js');
+    if (ordersData?.code !== 0 || !Array.isArray(ordersData.data)) return ordersData;
+
+    const data = await Promise.all(ordersData.data.map(async (assetOrder) => {
+      const decimals = assetOrder.baseAsset?.decimals ?? 8;
+      const enrichOrderList = async (orders) => Promise.all(
+        (orders || []).map(async (order) => ({
+          ...order,
+          formattedLimitPrice: await formatLimitPrice(order.limit, decimals),
+        })),
+      );
+
+      return {
+        ...assetOrder,
+        wartToAssetSwaps: await enrichOrderList(assetOrder.wartToAssetSwaps),
+        assetToWartSwaps: await enrichOrderList(assetOrder.assetToWartSwaps),
+      };
+    }));
+
+    return { ...ordersData, data };
+  };
+
   const handleFetchManualAsset = async () => {
-    if (!manualAssetHash || manualAssetHash.length < 60) {
+    if (!isValidAssetHash(manualAssetHash)) {
       toast.error('Please enter a valid asset hash (64 hex characters)');
       return;
     }
@@ -78,7 +112,7 @@ const WalletOverview = ({ onLogout }) => {
       const res = await axios.get(
         `${API_URL}?nodePath=account/${wallet.address}/open_orders&${nodeBaseParam}`
       );
-      setOpenOrders(res.data);
+      setOpenOrders(await enrichOpenOrders(res.data));
     } catch (err) {
       console.error(err);
       toast.error('Failed to fetch open orders: ' + (err.response?.data?.message || err.message));
@@ -94,8 +128,10 @@ const WalletOverview = ({ onLogout }) => {
     const isBuy = direction === 'buy';
     const amountStr = order.amount?.str || '0';
     const filledStr = order.filled?.str || '0';
-    const price = order.limit?.doubleAdjusted ?? 0;
-    const formattedPrice = price.toFixed(8);
+    const formattedPrice = order.formattedLimitPrice
+      ?? (order.limit?.doubleAdjusted != null
+        ? Number(order.limit.doubleAdjusted).toFixed(8)
+        : '0.00000000');
     const amountNum = parseFloat(amountStr);
     const filledNum = parseFloat(filledStr);
     const fillPct = amountNum > 0 ? Math.min(100, Math.floor((filledNum / amountNum) * 100)) : 0;
@@ -189,6 +225,11 @@ const WalletOverview = ({ onLogout }) => {
       <div className="result" style={{ textAlign: 'left' }}>
         <p>
           <strong>Address:</strong>
+          {addressValid != null && (
+            <span className={`ml-2 text-[10px] font-medium ${addressValid ? 'text-emerald-400' : 'text-amber-400'}`}>
+              {addressValid ? 'checksum ok' : 'checksum invalid'}
+            </span>
+          )}
           <span
             className="wallet-address"
             style={{

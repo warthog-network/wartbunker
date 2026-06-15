@@ -1,19 +1,21 @@
 import React, { useState } from 'react';
 import axios from 'axios';
-import { ethers } from 'ethers';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
+import { isValidAssetHash } from '../utils/warthogFormat';
 
 const API_URL = '/api/proxy';
 
 const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const {
+    wallet: contextWallet,
     nextNonce: contextNextNonce,
     pinHeight,
     pinHash,
     selectedNode: contextSelectedNode,
   } = useWallet();
 
+  const wallet = propWallet || contextWallet;
   const selectedNode = propSelectedNode || contextSelectedNode || 'https://warthognode.duckdns.org';
 
   const toast = useToast();
@@ -21,16 +23,6 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const [results, setResults] = useState({});
   const [loading, setLoading] = useState({});
   const [activeTab, setActiveTab] = useState('create');
-
-  const wallet = propWallet || (() => {
-    try {
-      if (typeof sessionStorage === 'undefined') return null;
-      const saved = sessionStorage.getItem('warthogWalletDecrypted');
-      return saved ? JSON.parse(saved) : null;
-    } catch {
-      return null;
-    }
-  })();
 
   // ==================== SMART NONCE HANDLING ====================
   const getSmartNonce = () => {
@@ -48,6 +40,15 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     const newNonce = Math.max(getSmartNonce(), usedNonce + 1);
     localStorage.setItem(`warthogNextNonce_${wallet.address}`, newNonce);
   };
+
+  const isNodeSuccess = (result) => {
+    if (!result || result.error) return false;
+    if (result.code !== undefined && result.code !== 0) return false;
+    return true;
+  };
+
+  const getNodeError = (result) =>
+    result?.error || result?.message || (result?.code != null ? `Node error (code ${result.code})` : null);
 
   const query = async (key, path, method = 'GET', data = null) => {
     setLoading(prev => ({ ...prev, [key]: true }));
@@ -73,38 +74,14 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     }
   };
 
-  // ==================== BINARY HELPERS ====================
-  const hexToBytes = (hex) => {
-    const clean = hex.startsWith('0x') ? hex.slice(2) : hex;
-    const bytes = new Uint8Array(clean.length / 2);
-    for (let i = 0; i < bytes.length; i++) {
-      bytes[i] = parseInt(clean.substr(i * 2, 2), 16);
+  const fetchMinFeeE8 = async () => {
+    const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
+    const minFeeRes = await axios.get(`${API_URL}?nodePath=transaction/minfee&${nodeBaseParam}`);
+    const minFeeE8 = minFeeRes.data?.data?.minFee?.E8 || minFeeRes.data?.minFee?.E8;
+    if (!minFeeE8) {
+      throw new Error('Could not fetch minimum fee');
     }
-    return bytes;
-  };
-
-  const uint32BE = (value) => {
-    const buf = new Uint8Array(4);
-    buf[0] = (value >>> 24) & 0xff;
-    buf[1] = (value >>> 16) & 0xff;
-    buf[2] = (value >>> 8) & 0xff;
-    buf[3] = value & 0xff;
-    return buf;
-  };
-
-  const uint64BE = (value) => {
-    const buf = new Uint8Array(8);
-    let v = BigInt(value);
-    for (let i = 7; i >= 0; i--) {
-      buf[i] = Number(v & 0xffn);
-      v >>= 8n;
-    }
-    return buf;
-  };
-
-  const addressToBytes = (addr) => {
-    const clean = addr.startsWith('0x') ? addr.slice(2) : addr;
-    return hexToBytes(clean.slice(0, 40));
+    return minFeeE8;
   };
 
   // ==================== STYLIZED ASSET CARD ====================
@@ -186,7 +163,7 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const renderTransactionResult = (result, type) => {
     if (!result) return null;
 
-    const isSuccess = result.code === 0 || !result.error;
+    const isSuccess = isNodeSuccess(result);
     const txHash = result.data?.txHash || result.txHash || result.data?.hash || null;
 
     return (
@@ -199,7 +176,11 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
             <div className={`font-semibold text-lg ${isSuccess ? 'text-emerald-400' : 'text-red-400'}`}>
               {isSuccess ? `${type} Submitted Successfully` : `${type} Failed`}
             </div>
-            <div className="text-xs text-zinc-400">Transaction sent to node • Check History tab for confirmation</div>
+            <div className="text-xs text-zinc-400">
+              {isSuccess
+                ? 'Transaction sent to node • Check History tab for confirmation'
+                : (getNodeError(result) || 'The node rejected this transaction')}
+            </div>
           </div>
         </div>
 
@@ -254,78 +235,33 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     setLoading(prev => ({ ...prev, createAsset: true }));
 
     try {
-      const name = nameInput;
-      const decimals = Math.min(Math.max(decimalsInput, 0), 18);
-      const supplyFloat = parseFloat(supplyStr);
-      const supplyU64 = BigInt(Math.floor(supplyFloat * Math.pow(10, decimals)));
-
       let nonceId = getSmartNonce();
       const nonceOverrideRaw = document.getElementById('createNonceOverride')?.value.trim();
       if (nonceOverrideRaw !== '') {
-        const parsed = parseInt(nonceOverrideRaw);
-        if (!isNaN(parsed)) {
+        const parsed = parseInt(nonceOverrideRaw, 10);
+        if (!Number.isNaN(parsed)) {
           nonceId = parsed;
         }
       }
 
-      const currentPinHeight = pinHeight || 0;
-      const currentPinHash = pinHash || '0000000000000000000000000000000000000000000000000000000000000000';
+      const { buildAssetCreation } = await import('../utils/buildAssetTx.js');
+      const { payload, nonce } = await buildAssetCreation({
+        privateKey: wallet.privateKey,
+        name: nameInput,
+        supply: supplyStr,
+        decimals: decimalsInput,
+        nonce: nonceId,
+        pinHash,
+        pinHeight,
+        minFeeE8: await fetchMinFeeE8(),
+      });
 
-      const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
-
-      const minFeeRes = await axios.get(
-        `${API_URL}?nodePath=transaction/minfee&${nodeBaseParam}`
-      );
-      const minFeeE8 = minFeeRes.data?.data?.minFee?.E8 || minFeeRes.data?.minFee?.E8 || 10000;
-
-      const pinHashBytes = hexToBytes(currentPinHash.replace(/^0x/, ''));
-      const nameBytes = new Uint8Array(5);
-      nameBytes.set(new TextEncoder().encode(name));
-
-      const binaryParts = [
-        pinHashBytes,
-        uint32BE(currentPinHeight),
-        uint32BE(nonceId),
-        new Uint8Array(3),
-        uint64BE(BigInt(minFeeE8)),
-        uint64BE(supplyU64),
-        new Uint8Array([decimals]),
-        nameBytes
-      ];
-
-      const totalLength = binaryParts.reduce((sum, part) => sum + part.length, 0);
-      const binary = new Uint8Array(totalLength);
-      let offset = 0;
-      for (const part of binaryParts) {
-        binary.set(part, offset);
-        offset += part.length;
+      const result = await query('createAsset', 'transaction/add', 'POST', payload);
+      if (!isNodeSuccess(result)) {
+        throw new Error(getNodeError(result) || 'Node rejected asset creation');
       }
 
-      const hashHex = ethers.sha256(binary);
-      const hash = hashHex.slice(2);
-
-      const signer = new ethers.Wallet(wallet.privateKey);
-      const signature = await signer.signingKey.sign(ethers.getBytes('0x' + hash));
-
-      const r = signature.r.slice(2).padStart(64, '0');
-      const s = signature.s.slice(2).padStart(64, '0');
-      const v = (signature.v - 27).toString(16).padStart(2, '0');
-      const signature65 = r + s + v;
-
-      const payload = {
-        type: "assetCreation",
-        name: name,
-        decimals: decimals,
-        supplyU64: Number(supplyU64),
-        feeE8: Number(minFeeE8),
-        nonceId: nonceId,
-        pinHeight: currentPinHeight,
-        signature65: signature65,
-      };
-
-      await query('createAsset', 'transaction/add', 'POST', payload);
-
-      updateNonceAfterSuccess(nonceId);
+      updateNonceAfterSuccess(nonce);
 
       if (document.getElementById('createNonceOverride')) {
         document.getElementById('createNonceOverride').value = '';
@@ -371,82 +307,34 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       return;
     }
 
-    let assetHash = assetIdRaw;
-    if (assetHash.toLowerCase().startsWith('0x')) assetHash = assetHash.slice(2);
-    let toAddr = recipientRaw;
-    if (toAddr.toLowerCase().startsWith('0x')) toAddr = toAddr.slice(2);
-
-    if (assetHash.length !== 64) {
-      toast.error('Asset Hash must be exactly 64 hex characters (without 0x)');
-      return;
-    }
-
-    const amountFloat = parseFloat(amountStr.replace(',', '.'));
-    if (!Number.isFinite(amountFloat) || amountFloat <= 0) {
-      toast.error('Please enter a valid amount greater than 0');
+    if (!isValidAssetHash(assetIdRaw)) {
+      toast.error('Asset hash must be exactly 64 hex characters');
       return;
     }
 
     setLoading(prev => ({ ...prev, transferAsset: true }));
 
     try {
-      const currentPinHeight = pinHeight || 0;
-      const currentPinHash = pinHash || '0000000000000000000000000000000000000000000000000000000000000000';
+      const { buildAssetTransfer } = await import('../utils/buildAssetTx.js');
+      const { payload, nonce } = await buildAssetTransfer({
+        privateKey: wallet.privateKey,
+        assetHash: assetIdRaw,
+        toAddress: recipientRaw,
+        amount: amountStr,
+        decimals,
+        isLiquidity,
+        nonce: nonceId,
+        pinHash,
+        pinHeight,
+        minFeeE8: await fetchMinFeeE8(),
+      });
 
-      const effectiveDecimals = isLiquidity ? 8 : decimals;
-      const amountU64 = Math.floor(amountFloat * Math.pow(10, effectiveDecimals));
-
-      const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
-
-      const minFeeRes = await axios.get(`${API_URL}?nodePath=transaction/minfee&${nodeBaseParam}`);
-      const minFeeE8 = minFeeRes.data?.data?.minFee?.E8 || minFeeRes.data?.minFee?.E8 || 10000;
-
-      const binaryParts = [
-        hexToBytes(currentPinHash),
-        uint32BE(currentPinHeight),
-        uint32BE(nonceId),
-        new Uint8Array(3),
-        uint64BE(BigInt(minFeeE8)),
-        hexToBytes(assetHash),
-        new Uint8Array([isLiquidity ? 1 : 0]),
-        addressToBytes(toAddr),
-        uint64BE(BigInt(amountU64)),
-      ];
-
-      const totalLength = binaryParts.reduce((sum, part) => sum + part.length, 0);
-      const binary = new Uint8Array(totalLength);
-      let offset = 0;
-      for (const part of binaryParts) {
-        binary.set(part, offset);
-        offset += part.length;
+      const result = await query('transferAsset', 'transaction/add', 'POST', payload);
+      if (!isNodeSuccess(result)) {
+        throw new Error(getNodeError(result) || 'Node rejected asset transfer');
       }
 
-      const hashHex = ethers.sha256(binary);
-      const hash = hashHex.slice(2);
-
-      const signer = new ethers.Wallet(wallet.privateKey);
-      const signature = await signer.signingKey.sign(ethers.getBytes('0x' + hash));
-
-      const r = signature.r.slice(2).padStart(64, '0');
-      const s = signature.s.slice(2).padStart(64, '0');
-      const v = (signature.v - 27).toString(16).padStart(2, '0');
-      const signature65 = r + s + v;
-
-      const payload = {
-        type: "tokenTransfer",
-        assetHash: assetHash,
-        isLiquidity: isLiquidity,
-        toAddr: toAddr,
-        amountU64: amountU64,
-        feeE8: Number(minFeeE8),
-        pinHeight: currentPinHeight,
-        nonceId: nonceId,
-        signature65: signature65,
-      };
-
-      await query('transferAsset', 'transaction/add', 'POST', payload);
-
-      updateNonceAfterSuccess(nonceId);
+      updateNonceAfterSuccess(nonce);
 
       if (document.getElementById('transferNonceOverride')) {
         document.getElementById('transferNonceOverride').value = '';
@@ -637,7 +525,11 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
               <button
                 onClick={() => {
                   const val = document.getElementById('assetLookup').value.trim();
-                  const clean = val.startsWith('0x') ? val.slice(2) : val;
+                  const clean = val.replace(/^0x/i, '').toLowerCase();
+                  if (!isValidAssetHash(clean)) {
+                    toast.error('Asset hash must be exactly 64 hex characters');
+                    return;
+                  }
                   query('assetLookup', `asset/lookup/${encodeURIComponent(clean)}`);
                 }}
                 disabled={loading.assetLookup}

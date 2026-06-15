@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
 import axios from 'axios';
-import { ethers } from 'ethers';
 
 const API_URL = '/api/proxy';
 
@@ -57,38 +56,6 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
     if (nextNonce !== null) setNonceInput(String(nextNonce));
   }, [nextNonce]);
 
-  const hexToBytes = (hex) => {
-    const clean = hex.startsWith('0x') ? hex.slice(2) : hex;
-    const bytes = new Uint8Array(clean.length / 2);
-    for (let i = 0; i < bytes.length; i++) {
-      bytes[i] = parseInt(clean.substr(i * 2, 2), 16);
-    }
-    return bytes;
-  };
-
-  const uint32BE = (value) => {
-    const buf = new Uint8Array(4);
-    buf[0] = (value >>> 24) & 0xff;
-    buf[1] = (value >>> 16) & 0xff;
-    buf[2] = (value >>> 8) & 0xff;
-    buf[3] = value & 0xff;
-    return buf;
-  };
-
-  const uint64BE = (value) => {
-    const buf = new Uint8Array(8);
-    for (let i = 7; i >= 0; i--) {
-      buf[i] = Number(value & 0xffn);
-      value >>= 8n;
-    }
-    return buf;
-  };
-
-  const addressToBytes = (addr) => {
-    const clean = addr.startsWith('0x') ? addr.slice(2) : addr;
-    return hexToBytes(clean.slice(0, 40));
-  };
-
   const copyToClipboard = (text) => {
     if (!text) return;
     navigator.clipboard.writeText(text).then(() => {
@@ -110,15 +77,6 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
     setShowRawJson(false);
 
     try {
-      const amountNum = parseFloat(amount);
-      const amountE8 = BigInt(Math.floor(amountNum * 100000000));
-      const nonceId = parseInt(nonceInput) || 0;
-
-      setSentNonce(nonceId); // ← Capture the nonce we are actually sending
-
-      const currentPinHeight = pinHeight || 0;
-      const currentPinHash = pinHash || '0000000000000000000000000000000000000000000000000000000000000000';
-
       const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
 
       const minFeeRes = await axios.get(
@@ -130,44 +88,18 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
         throw new Error('Could not fetch minimum fee');
       }
 
-      const binaryParts = [
-        hexToBytes(currentPinHash),
-        uint32BE(currentPinHeight),
-        uint32BE(nonceId),
-        new Uint8Array(3),
-        uint64BE(BigInt(minFeeE8)),
-        addressToBytes(toAddress.trim()),
-        uint64BE(amountE8),
-      ];
+      const { buildWartTransfer } = await import('../utils/buildWartTransfer.js');
+      const { payload, nonce } = await buildWartTransfer({
+        privateKey: wallet.privateKey,
+        toAddress,
+        amount,
+        nonce: nonceInput,
+        pinHash,
+        pinHeight,
+        minFeeE8,
+      });
 
-      const totalLength = binaryParts.reduce((sum, part) => sum + part.length, 0);
-      const binary = new Uint8Array(totalLength);
-      let offset = 0;
-      for (const part of binaryParts) {
-        binary.set(part, offset);
-        offset += part.length;
-      }
-
-      const hashHex = ethers.sha256(binary);
-      const hash = hashHex.slice(2);
-
-      const signer = new ethers.Wallet(wallet.privateKey);
-      const signature = await signer.signingKey.sign(ethers.getBytes('0x' + hash));
-
-      const r = signature.r.slice(2).padStart(64, '0');
-      const s = signature.s.slice(2).padStart(64, '0');
-      const v = (signature.v - 27).toString(16).padStart(2, '0');
-      const signature65 = r + s + v;
-
-      const payload = {
-        type: 'wartTransfer',
-        pinHeight: currentPinHeight,
-        nonceId: nonceId,
-        feeE8: Number(minFeeE8),
-        toAddr: toAddress.trim(),
-        wartE8: Number(amountE8),
-        signature65: signature65,
-      };
+      setSentNonce(nonce);
 
       const response = await axios.post(
         `${API_URL}?nodePath=transaction/add&${nodeBaseParam}`,
@@ -292,7 +224,7 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
   return (
     <section>
       <h2>Send WART</h2>
-      <p className="text-gray-400 text-sm mb-4">Uses WalletContext + node minimum fee</p>
+      <p className="text-gray-400 text-sm mb-4">Signed via warthog-js · fee from node minimum</p>
 
       <div className="mb-4 flex items-center gap-2">
         <span className="text-xs text-gray-400">Detected originId:</span>

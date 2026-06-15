@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useLayoutEffect } from 'react';
 import axios from 'axios';
-import { encryptWallet } from '../utils/warthogWalletUtils';
+import { encryptWallet, decryptWallet } from '../utils/warthogWalletUtils';
 
 const API_URL = '/api/proxy';
 
@@ -110,15 +110,6 @@ export const WalletProvider = ({ children }) => {
     }
   }, [wallet, selectedNode, refreshTrigger]);
 
-  const getBalanceStr = (wartObj) => {
-    if (!wartObj) return null;
-    if (wartObj.str) return wartObj.str;
-    if (wartObj.E8 !== undefined) {
-      return (Number(wartObj.E8) / 100000000).toFixed(8);
-    }
-    return null;
-  };
-
   const unwrapResponse = (responseData) => {
     if (responseData?.data && (responseData.status !== undefined || responseData.data?.wart || responseData.data?.chainHead)) {
       return responseData.data;
@@ -155,22 +146,13 @@ export const WalletProvider = ({ children }) => {
       let balRaw = unwrapResponse(balanceResponse.data);
       const data = balRaw.data || balRaw;
 
-      let balanceInWart = '0.00000000';
+      const { formatWartBalance, getNextNonceFromAccount } = await import('../utils/warthogFormat.js');
 
-      if (isMainnetNode(selectedNode)) {
-        if (data?.balance?.total?.str) {
-          balanceInWart = data.balance.total.str;
-        } else if (data?.balance?.total?.E8 !== undefined) {
-          balanceInWart = (Number(data.balance.total.E8) / 100000000).toFixed(8);
-        }
-      } else {
-        if (data?.wart?.total?.str) {
-          balanceInWart = data.wart.total.str;
-        } else if (data?.wart?.total?.E8 !== undefined) {
-          balanceInWart = (Number(data.wart.total.E8) / 100000000).toFixed(8);
-        }
-      }
+      const wartBalanceObj = isMainnetNode(selectedNode)
+        ? data?.balance?.total
+        : data?.wart?.total;
 
+      const balanceInWart = await formatWartBalance(wartBalanceObj);
       setBalance(balanceInWart);
 
       // USD price (via server proxy to avoid CORS)
@@ -183,8 +165,8 @@ export const WalletProvider = ({ children }) => {
       }
 
       // Nonce
-      if (isMainnetNode(selectedNode) && (data?.nonceId !== undefined || data?.nonce !== undefined)) {
-        setNextNonce(Number(data.nonceId || data.nonce) + 1);
+      if (isMainnetNode(selectedNode)) {
+        setNextNonce(await getNextNonceFromAccount(data));
       } else {
         setNextNonce(0);
       }
@@ -212,15 +194,8 @@ export const WalletProvider = ({ children }) => {
     const balanceInfo = data?.balance?.total || data?.balance || {};
 
     const decimals = tokenInfo.decimals || balanceInfo.decimals || 8;
-
-    let balanceStr = '0';
-    if (balanceInfo.str) {
-      balanceStr = balanceInfo.str;
-    } else if (balanceInfo.u64 !== undefined) {
-      balanceStr = (Number(balanceInfo.u64) / Math.pow(10, decimals)).toFixed(decimals);
-    } else if (balanceInfo.E8 !== undefined) {
-      balanceStr = (Number(balanceInfo.E8) / Math.pow(10, decimals)).toFixed(decimals);
-    }
+    const { formatTokenBalance } = await import('../utils/warthogFormat.js');
+    const balanceStr = await formatTokenBalance(balanceInfo, decimals);
 
     const finalName = assetName || tokenInfo.name || 'Unknown Asset';
 
@@ -491,6 +466,59 @@ export const WalletProvider = ({ children }) => {
 
   // ==================== END WATCHED ASSETS ====================
 
+  const lockWallet = () => {
+    if (!wallet?.privateKey) return;
+
+    const lockedWallet = {
+      address: wallet.address,
+      publicKey: wallet.publicKey,
+    };
+
+    setWallet(lockedWallet);
+    try {
+      sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(lockedWallet));
+    } catch {
+      // in-memory strip is enough
+    }
+  };
+
+  const unlockWallet = (password) => {
+    if (!currentWalletName) {
+      setError('No saved wallet name for this session. Log out and use "Login to Saved Wallet" instead.');
+      return false;
+    }
+    if (!wallet?.address) {
+      setError('No active wallet session to unlock.');
+      return false;
+    }
+
+    const encrypted = localStorage.getItem(`warthogWallet_${currentWalletName}`);
+    if (!encrypted) {
+      setError(`Saved data for "${currentWalletName}" not found in this browser.`);
+      return false;
+    }
+
+    try {
+      const decrypted = decryptWallet(encrypted, password);
+      if (!decrypted?.address) {
+        throw new Error('Invalid decrypted wallet data');
+      }
+      if (decrypted.address.toLowerCase() !== wallet.address.toLowerCase()) {
+        setError('Decrypted wallet does not match the current locked session address.');
+        return false;
+      }
+      setWallet(decrypted);
+      sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(decrypted));
+      setError(null);
+      return true;
+    } catch (err) {
+      setError(`Unlock failed: ${err?.message || 'Invalid password or corrupted data'}`);
+      return false;
+    }
+  };
+
+  const isSessionLocked = !!(isLoggedIn && wallet && !wallet.privateKey && currentWalletName);
+
   const refreshBalance = () => {
     setRefreshTrigger(prev => prev + 1);
   };
@@ -542,6 +570,9 @@ export const WalletProvider = ({ children }) => {
     autoMineCount,
     toggleAutoMining,
     isTestnetNode,
+    lockWallet,
+    unlockWallet,
+    isSessionLocked,
   };
 
   return (

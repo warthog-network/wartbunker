@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
-import { generateWallet, deriveWallet, importFromPrivateKey, encryptWallet, decryptWallet } from '../utils/warthogWalletUtils';
+import { encryptWallet, decryptWallet } from '../utils/warthogWalletUtils';
 
 const WalletSetup = () => {
   const { setWallet, setIsLoggedIn, setCurrentTab, setCurrentWalletName } = useWallet();
@@ -75,21 +75,23 @@ const WalletSetup = () => {
         return;
       }
 
+      const { generateWallet, deriveWallet, importFromPrivateKey } = await import('../utils/warthogWallet.js');
+
       let wallet;
       if (walletAction === 'create') {
-        wallet = generateWallet(wordCount, pathType);
+        wallet = await generateWallet(wordCount, pathType);
       } else if (walletAction === 'derive') {
         if (!mnemonic) {
           setError('Please enter a mnemonic phrase');
           return;
         }
-        wallet = deriveWallet(mnemonic, wordCount, pathType);
+        wallet = await deriveWallet(mnemonic, wordCount, pathType);
       } else if (walletAction === 'import') {
         if (!privateKeyInput) {
           setError('Please enter a private key');
           return;
         }
-        wallet = importFromPrivateKey(privateKeyInput);
+        wallet = await importFromPrivateKey(privateKeyInput);
       }
 
       if (wallet) {
