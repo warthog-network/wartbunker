@@ -13,6 +13,8 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     pinHeight,
     pinHash,
     selectedNode: contextSelectedNode,
+    performFakeMine,
+    isTestnetNode,
   } = useWallet();
 
   const wallet = propWallet || contextWallet;
@@ -263,6 +265,10 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
 
       updateNonceAfterSuccess(nonce);
 
+      if (isTestnetNode(selectedNode)) {
+        await performFakeMine?.();
+      }
+
       if (document.getElementById('createNonceOverride')) {
         document.getElementById('createNonceOverride').value = '';
       }
@@ -335,6 +341,10 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       }
 
       updateNonceAfterSuccess(nonce);
+
+      if (isTestnetNode(selectedNode)) {
+        await performFakeMine?.();
+      }
 
       if (document.getElementById('transferNonceOverride')) {
         document.getElementById('transferNonceOverride').value = '';

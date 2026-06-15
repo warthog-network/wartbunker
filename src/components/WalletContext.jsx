@@ -43,6 +43,7 @@ export const WalletProvider = ({ children }) => {
   // ==================== AUTO FAKE MINING (Testnet only) ====================
   const [isAutoMining, setIsAutoMining] = useState(false);
   const [autoMineCount, setAutoMineCount] = useState(0);
+  const [lastMineStatus, setLastMineStatus] = useState(null);
   const autoMineIntervalRef = React.useRef(null);
 
   // Refs to always use the latest function versions inside setInterval / setTimeout
@@ -56,21 +57,6 @@ export const WalletProvider = ({ children }) => {
            n.includes('127.0.0.1') ||
            n.includes('defitestnet') ||
            n.includes('testnet');
-  };
-
-  const getFakeMineUrl = (address, node) => {
-    if (!address) return null;
-    // For the public DeFi testnet, we hit the known debug endpoint
-    if (node?.includes('defitestnet') || node?.includes('warthog-defitestnet')) {
-      return `https://warthog-defitestnet.duckdns.org/debug/fakemine/${address}`;
-    }
-    // For local nodes, we assume the debug endpoint is available on the same host
-    try {
-      const url = new URL(node);
-      return `${url.origin}/debug/fakemine/${address}`;
-    } catch {
-      return null;
-    }
   };
 
   const isMainnetNode = (node) => 
@@ -322,23 +308,34 @@ export const WalletProvider = ({ children }) => {
   // ==================== AUTO MINING FUNCTIONS ====================
 
   const performFakeMine = async () => {
-    if (!wallet?.address || !selectedNode) return false;
-
-    const mineUrl = getFakeMineUrl(wallet.address, selectedNode);
-    if (!mineUrl) {
-      console.warn('Could not determine fake mine URL for current node');
+    if (!wallet?.address || !selectedNode || !isTestnetNode(selectedNode)) {
       return false;
     }
 
-    // Count the mine attempt (and refresh balance) every time we mine
-    setAutoMineCount(c => c + 1);
-    refreshBalanceRef.current?.();
-
     try {
-      await axios.get(mineUrl);
-      return true;
+      const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
+      const response = await axios.get(
+        `${API_URL}?nodePath=debug/fakemine/${wallet.address}&${nodeBaseParam}`,
+      );
+      const data = response.data;
+      const innerCode = data?.data?.code;
+      const ok = data?.code === 0 && (innerCode === undefined || innerCode === 0);
+
+      if (ok) {
+        setAutoMineCount(c => c + 1);
+        refreshBalanceRef.current?.();
+        setLastMineStatus({ ok: true, at: Date.now() });
+        return true;
+      }
+
+      const errMsg = data?.error || data?.data?.error || 'Fake mine rejected by node';
+      setLastMineStatus({ ok: false, error: errMsg, at: Date.now() });
+      console.warn('Fake mine failed:', errMsg, data);
+      return false;
     } catch (err) {
-      console.log('Auto mine request completed (may have rate limits or still succeeded)');
+      const errMsg = err.response?.data?.error || err.message || 'Fake mine request failed';
+      setLastMineStatus({ ok: false, error: errMsg, at: Date.now() });
+      console.warn('Fake mine error:', errMsg);
       return false;
     }
   };
@@ -568,6 +565,8 @@ export const WalletProvider = ({ children }) => {
     // Auto fake mining (testnet)
     isAutoMining,
     autoMineCount,
+    lastMineStatus,
+    performFakeMine,
     toggleAutoMining,
     isTestnetNode,
     lockWallet,

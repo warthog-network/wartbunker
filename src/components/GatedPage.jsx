@@ -7,7 +7,7 @@ const GatedPage = () => {
   const { wallet, selectedNode, currentWalletName } = useWallet();
 
   const API_URL = '/api/proxy';
-  const EXAMPLE_ASSET_HASH = 'b92b88491b478c22fbc5b3f03f8b5539555ff2680944a8c847a1eb90ef69894e';
+  const EXAMPLE_ASSET_HASH = '6eed7c53c4a7753845aee0d991d5417bba8fa0a20e2a975b4ae790a3288dbe65';
   const EXAMPLE_MIN = '1';
 
   const [exampleAssetMeta, setExampleAssetMeta] = useState(null);

@@ -14,6 +14,8 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
     nextNonce,
     refreshBalance,
     setError: setContextError,
+    performFakeMine,
+    isTestnetNode,
   } = useWallet();
 
   const wallet = propWallet || contextWallet;
@@ -111,6 +113,9 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
       setResult(resData);
 
       if (resData.code === 0 || resData.txHash || resData.data?.txHash) {
+        if (isTestnetNode(selectedNode)) {
+          await performFakeMine?.();
+        }
         refreshBalance?.();
         toast.success('Transaction sent successfully');
       } else {

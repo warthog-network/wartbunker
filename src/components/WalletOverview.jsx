@@ -23,6 +23,8 @@ const WalletOverview = ({ onLogout }) => {
     // Auto mining
     isAutoMining,
     autoMineCount,
+    lastMineStatus,
+    performFakeMine,
     toggleAutoMining,
     isTestnetNode,
     currentWalletName,
@@ -121,7 +123,18 @@ const WalletOverview = ({ onLogout }) => {
   };
   // ============================================================
 
-  // Note: Fake mining is now handled via toggleAutoMining() in context (continuous every 60s)
+  const [isMiningNow, setIsMiningNow] = useState(false);
+
+  const handleMineNow = async () => {
+    setIsMiningNow(true);
+    const ok = await performFakeMine();
+    if (ok) {
+      toast.success('Block mined — mempool transactions should confirm shortly');
+    } else {
+      toast.error('Fake mine failed — see status below or check node connection');
+    }
+    setIsMiningNow(false);
+  };
 
   // ==================== STYLIZED ORDER CARD RENDERER ====================
   const renderOrderCard = (order, direction, assetName, assetDecimals, onCopy) => {
@@ -467,31 +480,47 @@ const WalletOverview = ({ onLogout }) => {
           )}
         </p>
 
-        <button
-          onClick={toggleAutoMining}
-          disabled={!isTestnetNode(selectedNode)}
-          className={`w-full py-3 font-semibold rounded-2xl transition-all flex items-center justify-center gap-2 ${
-            isAutoMining
-              ? 'bg-red-600 hover:bg-red-700 text-white'
-              : 'bg-emerald-600 hover:bg-emerald-700 text-white'
-          } disabled:opacity-50 disabled:cursor-not-allowed`}
-        >
-          {isAutoMining ? (
-            <>⏹ Stop Auto-Mining ({autoMineCount} mined)</>
-          ) : (
-            <>⛏️ Start Auto-Mining (every 20s)</>
-          )}
-        </button>
+        <div className="flex flex-col sm:flex-row gap-2">
+          <button
+            onClick={handleMineNow}
+            disabled={!isTestnetNode(selectedNode) || isMiningNow}
+            className="flex-1 py-3 font-semibold rounded-2xl transition-all bg-orange-500 hover:bg-orange-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isMiningNow ? 'Mining...' : '⛏️ Mine Now'}
+          </button>
+          <button
+            onClick={toggleAutoMining}
+            disabled={!isTestnetNode(selectedNode)}
+            className={`flex-1 py-3 font-semibold rounded-2xl transition-all flex items-center justify-center gap-2 ${
+              isAutoMining
+                ? 'bg-red-600 hover:bg-red-700 text-white'
+                : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+            } disabled:opacity-50 disabled:cursor-not-allowed`}
+          >
+            {isAutoMining ? (
+              <>⏹ Stop Auto ({autoMineCount} blocks)</>
+            ) : (
+              <>Auto-Mine (20s)</>
+            )}
+          </button>
+        </div>
 
         <div className="mt-2 text-xs">
           {isTestnetNode(selectedNode) ? (
-            isAutoMining ? (
-              <span className="text-emerald-400">Mining is running in the background. Balance refreshes automatically.</span>
-            ) : (
-              <span className="text-zinc-500">Turn on to repeatedly call the debug fakemine endpoint every 20 seconds.</span>
-            )
+            <>
+              {isAutoMining ? (
+                <span className="text-emerald-400">Auto-mining every 20s. Balance refreshes after each successful block.</span>
+              ) : (
+                <span className="text-zinc-500">Transactions sit in mempool until a block is mined. Use Mine Now or enable auto-mining.</span>
+              )}
+              {lastMineStatus && (
+                <div className={`mt-1 ${lastMineStatus.ok ? 'text-emerald-400/80' : 'text-red-400/80'}`}>
+                  Last mine: {lastMineStatus.ok ? 'success' : `failed — ${lastMineStatus.error}`}
+                </div>
+              )}
+            </>
           ) : (
-            <span className="text-amber-400">Auto-mining is only available when connected to a testnet or localhost node.</span>
+            <span className="text-amber-400">Mining is only available when connected to a testnet or localhost node.</span>
           )}
         </div>
       </div>

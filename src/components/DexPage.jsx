@@ -1,6 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { ethers } from 'ethers';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
 
@@ -12,6 +11,8 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     pinHeight,
     pinHash,
     selectedNode: contextSelectedNode,
+    performFakeMine,
+    isTestnetNode,
   } = useWallet();
 
   const selectedNode = propSelectedNode || contextSelectedNode || 'https://warthognode.duckdns.org';
@@ -31,6 +32,12 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const [results, setResults] = useState({});
   const [loading, setLoading] = useState({});
   const [activeTab, setActiveTab] = useState('market');
+
+  useEffect(() => {
+    if (activeTab === 'limit') {
+      import('../utils/encodeLimitPrice.js').catch(() => {});
+    }
+  }, [activeTab]);
 
   // ==================== SAFE RENDER HELPERS ====================
   const safeStr = (v, fallback = '0') => {
@@ -75,6 +82,25 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     localStorage.setItem(`warthogNextNonce_${wallet.address}`, newNonce);
   };
 
+  const isNodeSuccess = (result) => {
+    if (!result || result.error) return false;
+    if (result.code !== undefined && result.code !== 0) return false;
+    return true;
+  };
+
+  const getNodeError = (result) =>
+    result?.error || result?.message || (result?.code != null ? `Node error (code ${result.code})` : null);
+
+  const fetchMinFeeE8 = async () => {
+    const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
+    const minFeeRes = await axios.get(`${API_URL}?nodePath=transaction/minfee&${nodeBaseParam}`);
+    const minFeeE8 = minFeeRes.data?.data?.minFee?.E8 || minFeeRes.data?.minFee?.E8;
+    if (!minFeeE8) {
+      throw new Error('Could not fetch minimum fee');
+    }
+    return minFeeE8;
+  };
+
   // ==================== ENHANCED QUERY ====================
   const query = async (key, path, method = 'GET', data = null) => {
     setLoading(prev => ({ ...prev, [key]: true }));
@@ -102,35 +128,6 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
 
   const account = wallet?.address || '';
 
-  // ==================== BINARY HELPERS ====================
-  const hexToBytes = (hex) => {
-    const clean = hex.startsWith('0x') ? hex.slice(2) : hex;
-    const bytes = new Uint8Array(clean.length / 2);
-    for (let i = 0; i < bytes.length; i++) {
-      bytes[i] = parseInt(clean.substr(i * 2, 2), 16);
-    }
-    return bytes;
-  };
-
-  const uint32BE = (value) => {
-    const buf = new Uint8Array(4);
-    buf[0] = (value >>> 24) & 0xff;
-    buf[1] = (value >>> 16) & 0xff;
-    buf[2] = (value >>> 8) & 0xff;
-    buf[3] = value & 0xff;
-    return buf;
-  };
-
-  const uint64BE = (value) => {
-    const buf = new Uint8Array(8);
-    let v = BigInt(value);
-    for (let i = 7; i >= 0; i--) {
-      buf[i] = Number(v & 0xffn);
-      v >>= 8n;
-    }
-    return buf;
-  };
-
   // ==================== COPY TO CLIPBOARD ====================
   const copyToClipboard = (text) => {
     if (!text) return;
@@ -143,7 +140,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const renderTransactionResult = (result, type) => {
     if (!result) return null;
 
-    const isSuccess = result.code === 0 || !result.error;
+    const isSuccess = isNodeSuccess(result);
     const txHash = result.data?.txHash || result.txHash || result.data?.hash || null;
 
     return (
@@ -156,7 +153,11 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
             <div className={`font-semibold text-lg ${isSuccess ? 'text-emerald-400' : 'text-red-400'}`}>
               {isSuccess ? `${type} Submitted Successfully` : `${type} Failed`}
             </div>
-            <div className="text-xs text-zinc-400">Transaction sent to node • Check History tab for confirmation</div>
+            <div className="text-xs text-zinc-400">
+              {isSuccess
+                ? 'Transaction sent to node • Check History tab for confirmation'
+                : (getNodeError(result) || 'The node rejected this transaction')}
+            </div>
           </div>
         </div>
 
@@ -570,83 +571,33 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       return;
     }
 
-    let assetHash = assetHashRaw;
-    if (assetHash.toLowerCase().startsWith('0x')) assetHash = assetHash.slice(2);
-    if (assetHash.length !== 64) {
-      toast.error('Asset Hash must be exactly 64 hex characters (without 0x)');
-      return;
-    }
-
-    const assetAmountFloat = parseFloat(assetAmountStr.replace(',', '.'));
-    const decimals = parseInt(decimalsStr) || 8;
-    if (!Number.isFinite(assetAmountFloat) || assetAmountFloat <= 0) {
-      toast.error('Please enter a valid Asset Amount greater than 0');
-      return;
-    }
-    const amountU64 = Math.floor(assetAmountFloat * Math.pow(10, decimals));
-
-    const wartAmountFloat = parseFloat(wartAmountStr.replace(',', '.'));
-    if (!Number.isFinite(wartAmountFloat) || wartAmountFloat < 0) {
-      toast.error('Please enter a valid WART Amount');
-      return;
-    }
-    const wartE8 = Math.floor(wartAmountFloat * 100000000);
-
     setLoading(prev => ({ ...prev, liquidityDeposit: true }));
 
     try {
-      const currentPinHeight = pinHeight || 0;
-      const currentPinHash = pinHash || '000000000000000000000im0000000000000000000000000000000000000000';
+      const { buildLiquidityDeposit } = await import('../utils/buildDexTx.js');
+      const { payload, nonce } = await buildLiquidityDeposit({
+        privateKey: wallet.privateKey,
+        assetHash: assetHashRaw,
+        assetAmount: assetAmountStr,
+        decimals: decimalsStr,
+        wartAmount: wartAmountStr,
+        nonce: nonceId,
+        pinHash,
+        pinHeight,
+        minFeeE8: await fetchMinFeeE8(),
+      });
 
-      const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
+      const result = await query('liquidityDeposit', 'transaction/add', 'POST', payload);
 
-      const minFeeRes = await axios.get(`${API_URL}?nodePath=transaction/minfee&${nodeBaseParam}`);
-      const minFeeE8 = minFeeRes.data?.data?.minFee?.E8 || minFeeRes.data?.minFee?.E8 || 10000;
-
-      const binaryParts = [
-        hexToBytes(currentPinHash),
-        uint32BE(currentPinHeight),
-        uint32BE(nonceId),
-        new Uint8Array(3),
-        uint64BE(BigInt(minFeeE8)),
-        hexToBytes(assetHash),
-        uint64BE(BigInt(amountU64)),
-        uint64BE(BigInt(wartE8)),
-      ];
-
-      const totalLength = binaryParts.reduce((sum, part) => sum + part.length, 0);
-      const binary = new Uint8Array(totalLength);
-      let offset = 0;
-      for (const part of binaryParts) {
-        binary.set(part, offset);
-        offset += part.length;
+      if (!isNodeSuccess(result)) {
+        throw new Error(getNodeError(result) || 'Node rejected liquidity deposit');
       }
 
-      const hashHex = ethers.sha256(binary);
-      const hash = hashHex.slice(2);
+      updateNonceAfterSuccess(nonce);
 
-      const signer = new ethers.Wallet(wallet.privateKey);
-      const signature = await signer.signingKey.sign(ethers.getBytes('0x' + hash));
-
-      const r = signature.r.slice(2).padStart(64, '0');
-      const s = signature.s.slice(2).padStart(64, '0');
-      const v = (signature.v - 27).toString(16).padStart(2, '0');
-      const signature65 = r + s + v;
-
-      const payload = {
-        type: "liquidityDeposit",
-        assetHash: assetHash,
-        amountU64: amountU64,
-        wartE8: wartE8,
-        feeE8: Number(minFeeE8),
-        pinHeight: currentPinHeight,
-        nonceId: nonceId,
-        signature65: signature65,
-      };
-
-      await query('liquidityDeposit', 'transaction/add', 'POST', payload);
-
-      updateNonceAfterSuccess(nonceId);
+      if (isTestnetNode(selectedNode)) {
+        await performFakeMine?.();
+      }
 
       if (document.getElementById('liquidityNonceOverride')) {
         document.getElementById('liquidityNonceOverride').value = '';
@@ -687,6 +638,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     const isBuy = document.getElementById('limitIsBuy')?.checked ?? true;
     const amountStr = document.getElementById('limitAmount')?.value.trim() || '';
     const limitHex = document.getElementById('limitEncoded')?.value.trim() || '';
+    const assetDecimalsStr = document.getElementById('limitPriceDecimals')?.value || '8';
 
     const nonceOverrideRaw = document.getElementById('limitNonceOverride')?.value.trim() || '';
     let nonceId = getSmartNonce();
@@ -706,85 +658,40 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       return;
     }
 
-    let assetHash = assetHashRaw;
-    if (assetHash.toLowerCase().startsWith('0x')) assetHash = assetHash.slice(2);
-    if (assetHash.length !== 64) {
-      toast.error('Asset Hash must be exactly 64 hex characters (without 0x)');
-      return;
-    }
-    if (limitHex.length !== 6) {
-      toast.error('Limit price must be exactly 6 hex characters (3 bytes)');
-      return;
-    }
-
-    const amountU64 = Math.floor(parseFloat(amountStr) * 100000000);
-
     setLoading(prev => ({ ...prev, limitSwap: true }));
 
     try {
-      const currentPinHeight = pinHeight || 0;
-      const currentPinHash = pinHash || '000000000000000000000000000000000im0000000000000000000000000000000';
+      const { buildLimitSwap } = await import('../utils/buildDexTx.js');
+      const { payload, nonce } = await buildLimitSwap({
+        privateKey: wallet.privateKey,
+        assetHash: assetHashRaw,
+        isBuy,
+        amount: amountStr,
+        assetDecimals: assetDecimalsStr,
+        limitHex,
+        nonce: nonceId,
+        pinHash,
+        pinHeight,
+        minFeeE8: await fetchMinFeeE8(),
+      });
 
-      const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
+      const result = await query('limitSwap', 'transaction/add', 'POST', payload);
 
-      const minFeeRes = await axios.get(`${API_URL}?nodePath=transaction/minfee&${nodeBaseParam}`);
-      const minFeeE8 = minFeeRes.data?.data?.minFee?.E8 || minFeeRes.data?.minFee?.E8 || 10000;
-
-      const isBuyByte = new Uint8Array([isBuy ? 1 : 0]);
-      const limitBytes = hexToBytes(limitHex);
-
-      const binaryParts = [
-        hexToBytes(currentPinHash),
-        uint32BE(currentPinHeight),
-        uint32BE(nonceId),
-        new Uint8Array(3),
-        uint64BE(BigInt(minFeeE8)),
-        hexToBytes(assetHash),
-        isBuyByte,
-        uint64BE(BigInt(amountU64)),
-        limitBytes,
-      ];
-
-      const totalLength = binaryParts.reduce((sum, part) => sum + part.length, 0);
-      const binary = new Uint8Array(totalLength);
-      let offset = 0;
-      for (const part of binaryParts) {
-        binary.set(part, offset);
-        offset += part.length;
+      if (!isNodeSuccess(result)) {
+        throw new Error(getNodeError(result) || 'Node rejected limit order');
       }
 
-      const hashHex = ethers.sha256(binary);
-      const hash = hashHex.slice(2);
+      updateNonceAfterSuccess(nonce);
 
-      const signer = new ethers.Wallet(wallet.privateKey);
-      const signature = await signer.signingKey.sign(ethers.getBytes('0x' + hash));
-
-      const r = signature.r.slice(2).padStart(64, '0');
-      const s = signature.s.slice(2).padStart(64, '0');
-      const v = (signature.v - 27).toString(16).padStart(2, '0');
-      const signature65 = r + s + v;
-
-      const payload = {
-        type: "limitSwap",
-        assetHash: assetHash,
-        isBuy: isBuy,
-        amountU64: amountU64,
-        limit: limitHex,
-        feeE8: Number(minFeeE8),
-        pinHeight: currentPinHeight,
-        nonceId: nonceId,
-        signature65: signature65,
-      };
-
-      await query('limitSwap', 'transaction/add', 'POST', payload);
-
-      updateNonceAfterSuccess(nonceId);
+      if (isTestnetNode(selectedNode)) {
+        await performFakeMine?.();
+      }
 
       if (document.getElementById('limitNonceOverride')) {
         document.getElementById('limitNonceOverride').value = '';
       }
 
-      toast.success('Limit order submitted successfully');
+      toast.success('Limit order submitted — mining block to confirm (balance may stay locked until order fills)');
     } catch (err) {
       console.error(err);
       toast.error('Limit order failed: ' + (err.message || 'Unknown error'));
@@ -803,21 +710,19 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     }
 
     try {
-      const res = await axios.get(
-        `${API_URL}?nodePath=tools/parse_price/${encodeURIComponent(priceStr)}/${decimalsStr}&nodeBase=${encodeURIComponent(selectedNode)}`
-      );
-
-      const encoded = res.data?.data?.floor?.hex || res.data?.data?.ceil?.hex;
-
-      if (encoded && encoded.length === 6) {
-        document.getElementById('limitEncoded').value = encoded;
-        toast.success(`Encoded limit: ${encoded}`);
-      } else {
-        toast.error("Could not extract encoded limit (see console)");
+      const { encodeLimitPriceHex } = await import('../utils/encodeLimitPrice.js');
+      let encoded;
+      try {
+        encoded = await encodeLimitPriceHex(priceStr, decimalsStr, { ceil: false });
+      } catch {
+        encoded = await encodeLimitPriceHex(priceStr, decimalsStr, { ceil: true });
       }
+
+      document.getElementById('limitEncoded').value = encoded;
+      toast.success(`Encoded limit: ${encoded}`);
     } catch (err) {
       console.error(err);
-      toast.error('Failed to encode price: ' + (err.response?.data?.message || err.message));
+      toast.error('Failed to encode price: ' + (err.message || 'Unknown error'));
     }
   };
 

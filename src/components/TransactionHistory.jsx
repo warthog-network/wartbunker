@@ -52,6 +52,39 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
     return fallback;
   };
 
+  const formatRawAmount = (raw, precision = 8) => {
+    const value = BigInt(raw);
+    const divisor = 10n ** BigInt(precision);
+    const whole = value / divisor;
+    const frac = value % divisor;
+    if (precision === 0) return whole.toString();
+    const fracStr = frac.toString().padStart(precision, '0').replace(/0+$/, '');
+    return fracStr ? `${whole}.${fracStr}` : whole.toString();
+  };
+
+  const sumSwappedLeg = (swaps, leg) => {
+    if (!swaps?.length) return null;
+    if (swaps.length === 1) {
+      const v = swaps[0]?.swapped?.[leg];
+      return v ? getAmountStr(v) : null;
+    }
+
+    let total = 0n;
+    let precision = 8;
+    for (const swap of swaps) {
+      const v = swap?.swapped?.[leg];
+      if (!v) continue;
+      if (v.u64 !== undefined) {
+        total += BigInt(v.u64);
+        if (v.decimals !== undefined) precision = v.decimals;
+      } else if (v.E8 !== undefined) {
+        total += BigInt(v.E8);
+        precision = 8;
+      }
+    }
+    return total > 0n ? formatRawAmount(total, precision) : null;
+  };
+
   // Normalize ANY tx shape coming from perBlock (DeFi body.* or legacy public node)
   const normalizeTransaction = (txItem, block, categoryHint = null, viewingAddress = null) => {
     const viewer = viewingAddress ? viewingAddress.toLowerCase() : null;
@@ -139,8 +172,17 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
     } else if (cat.includes('match')) {
       typ = 'match';
       assetSym = data.baseAsset?.name || 'ASSET';
-      const swaps = ((data.buySwaps||[]).length + (data.sellSwaps||[]).length) || '';
-      desc = `DEX match${swaps ? ' ('+swaps+' swaps)' : ''} on ${assetSym}`;
+      const buySwaps = data.buySwaps || [];
+      const sellSwaps = data.sellSwaps || [];
+      const allSwaps = [...buySwaps, ...sellSwaps];
+      const swapCount = allSwaps.length;
+      const baseAmt = sumSwappedLeg(allSwaps, 'base');
+      const quoteAmt = sumSwappedLeg(allSwaps, 'quote');
+      amt = baseAmt || '0';
+      desc = `DEX match${swapCount ? ` (${swapCount} swap${swapCount !== 1 ? 's' : ''})` : ''} on ${assetSym}`;
+      if (baseAmt && quoteAmt) {
+        desc += ` — ${baseAmt} ${assetSym} / ${quoteAmt} WART`;
+      }
     } else if (cat.includes('cancel')) {
       typ = 'cancelation';
       desc = `Canceled tx ${abbreviate(data.cancelTxid || '')}`;
