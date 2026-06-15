@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useLayoutEffect } from 'react';
 import axios from 'axios';
 import { encryptWallet, decryptWallet } from '../utils/warthogWalletUtils';
+import { clearLegacyAutoMinePrefs, isFakeMineAllowed } from '../utils/nodeAccess';
 
 const API_URL = '/api/proxy';
 
@@ -40,16 +41,6 @@ export const WalletProvider = ({ children }) => {
 
   const getWatchedAssetsKey = (address) => address ? `warthogWatchedAssets_${address.toLowerCase()}` : null;
 
-  // ==================== AUTO FAKE MINING (Testnet only) ====================
-  const [isAutoMining, setIsAutoMining] = useState(false);
-  const [autoMineCount, setAutoMineCount] = useState(0);
-  const [lastMineStatus, setLastMineStatus] = useState(null);
-  const autoMineIntervalRef = React.useRef(null);
-
-  // Refs to always use the latest function versions inside setInterval / setTimeout
-  const performFakeMineRef = React.useRef(null);
-  const refreshBalanceRef = React.useRef(null);
-
   const isTestnetNode = (node) => {
     if (!node) return false;
     const n = node.toLowerCase();
@@ -68,6 +59,8 @@ export const WalletProvider = ({ children }) => {
   // (server + hydrate) always matches, avoiding hydration mismatch, while still
   // restoring the logged-in named wallet state immediately after.
   useLayoutEffect(() => {
+    clearLegacyAutoMinePrefs();
+
     // Restore preferred node
     const savedNode = localStorage.getItem('selectedNode') || 'https://warthognode.duckdns.org';
     setSelectedNode(savedNode);
@@ -305,130 +298,6 @@ export const WalletProvider = ({ children }) => {
     }
   };
 
-  // ==================== AUTO MINING FUNCTIONS ====================
-
-  const performFakeMine = async () => {
-    if (!wallet?.address || !selectedNode || !isTestnetNode(selectedNode)) {
-      return false;
-    }
-
-    try {
-      const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
-      const response = await axios.get(
-        `${API_URL}?nodePath=debug/fakemine/${wallet.address}&${nodeBaseParam}`,
-      );
-      const data = response.data;
-      const innerCode = data?.data?.code;
-      const ok = data?.code === 0 && (innerCode === undefined || innerCode === 0);
-
-      if (ok) {
-        setAutoMineCount(c => c + 1);
-        refreshBalanceRef.current?.();
-        setLastMineStatus({ ok: true, at: Date.now() });
-        return true;
-      }
-
-      const errMsg = data?.error || data?.data?.error || 'Fake mine rejected by node';
-      setLastMineStatus({ ok: false, error: errMsg, at: Date.now() });
-      console.warn('Fake mine failed:', errMsg, data);
-      return false;
-    } catch (err) {
-      const errMsg = err.response?.data?.error || err.message || 'Fake mine request failed';
-      setLastMineStatus({ ok: false, error: errMsg, at: Date.now() });
-      console.warn('Fake mine error:', errMsg);
-      return false;
-    }
-  };
-
-  const startAutoMining = () => {
-    if (autoMineIntervalRef.current) return; // already running
-
-    // Do one immediately using latest version
-    performFakeMineRef.current?.();
-
-    autoMineIntervalRef.current = setInterval(() => {
-      performFakeMineRef.current?.();
-    }, 20 * 1000); // every 20 seconds
-  };
-
-  const stopAutoMining = () => {
-    if (autoMineIntervalRef.current) {
-      clearInterval(autoMineIntervalRef.current);
-      autoMineIntervalRef.current = null;
-    }
-  };
-
-  const toggleAutoMining = () => {
-    if (!wallet?.address) {
-      setError('No wallet connected');
-      return;
-    }
-
-    if (!isTestnetNode(selectedNode)) {
-      setError('Auto mining is only available on testnet / localhost nodes');
-      return;
-    }
-
-    const newState = !isAutoMining;
-
-    if (newState) {
-      // Turning ON
-      setIsAutoMining(true);
-      setAutoMineCount(0);
-      startAutoMining();
-      // Persist preference
-      localStorage.setItem(`warthogAutoMine_${wallet.address.toLowerCase()}`, 'true');
-    } else {
-      // Turning OFF
-      setIsAutoMining(false);
-      stopAutoMining();
-      localStorage.removeItem(`warthogAutoMine_${wallet.address.toLowerCase()}`);
-    }
-  };
-
-  // Auto-stop mining if node changes to non-testnet or wallet logs out
-  useEffect(() => {
-    if (isAutoMining && !isTestnetNode(selectedNode)) {
-      setIsAutoMining(false);
-      stopAutoMining();
-      if (wallet?.address) {
-        localStorage.removeItem(`warthogAutoMine_${wallet.address.toLowerCase()}`);
-      }
-    }
-  }, [selectedNode, isAutoMining]);
-
-  // Restore auto-mining preference on login
-  useEffect(() => {
-    if (wallet?.address && isLoggedIn && isTestnetNode(selectedNode)) {
-      const shouldMine = localStorage.getItem(`warthogAutoMine_${wallet.address.toLowerCase()}`) === 'true';
-      if (shouldMine && !isAutoMining) {
-        setIsAutoMining(true);
-        setAutoMineCount(0);
-        // small delay so node is ready
-        setTimeout(() => {
-          startAutoMining();
-        }, 800);
-      }
-    }
-  }, [wallet?.address, isLoggedIn, selectedNode]);
-
-  // Cleanup interval on unmount or logout
-  useEffect(() => {
-    return () => {
-      stopAutoMining();
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!isLoggedIn || !wallet) {
-      stopAutoMining();
-      setIsAutoMining(false);
-      setAutoMineCount(0);
-    }
-  }, [isLoggedIn, wallet]);
-
-  // ==================== END AUTO MINING ====================
-
   // Load watched assets when wallet changes or logs in
   useEffect(() => {
     if (wallet?.address && isLoggedIn) {
@@ -520,15 +389,34 @@ export const WalletProvider = ({ children }) => {
     setRefreshTrigger(prev => prev + 1);
   };
 
-  // Keep refs pointing to the latest function versions (prevents stale closures in setInterval)
-  // These must be placed AFTER refreshBalance and performFakeMine are declared.
-  useEffect(() => {
-    refreshBalanceRef.current = refreshBalance;
-  }, [refreshBalance]);
+  const performFakeMine = async () => {
+    if (!wallet?.address || !selectedNode || !isFakeMineAllowed(selectedNode)) {
+      return false;
+    }
 
-  useEffect(() => {
-    performFakeMineRef.current = performFakeMine;
-  }, [performFakeMine]);
+    try {
+      const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
+      const response = await axios.get(
+        `${API_URL}?nodePath=debug/fakemine/${wallet.address}&${nodeBaseParam}`,
+      );
+      const data = response.data;
+      const innerCode = data?.data?.code;
+      const ok = data?.code === 0 && (innerCode === undefined || innerCode === 0);
+
+      if (ok) {
+        refreshBalance();
+        return true;
+      }
+
+      const errMsg = data?.error || data?.data?.error || 'Fake mine rejected by node';
+      console.warn('Fake mine failed:', errMsg, data);
+      return false;
+    } catch (err) {
+      const errMsg = err.response?.data?.error || err.message || 'Fake mine request failed';
+      console.warn('Fake mine error:', errMsg);
+      return false;
+    }
+  };
 
   const value = {
     wallet,
@@ -562,12 +450,8 @@ export const WalletProvider = ({ children }) => {
     addWatchedAsset,
     removeWatchedAsset,
     clearWatchedAssets,
-    // Auto fake mining (testnet)
-    isAutoMining,
-    autoMineCount,
-    lastMineStatus,
     performFakeMine,
-    toggleAutoMining,
+    isFakeMineAllowed,
     isTestnetNode,
     lockWallet,
     unlockWallet,

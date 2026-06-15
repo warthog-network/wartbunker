@@ -57,7 +57,7 @@ export default defineConfig({
         stream: 'stream-browserify',
         buffer: 'buffer',
         process: 'process/browser.js',
-        vm: path.resolve(projectRoot, 'src/shims/emptyVm.js'),
+        vm: 'vm-browserify',
         '@': '/src',
       },
     },

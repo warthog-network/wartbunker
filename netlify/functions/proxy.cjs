@@ -5,6 +5,20 @@ const agent = new https.Agent({
   rejectUnauthorized: false,
 });
 
+const isFakeMineNodePath = (nodePath) =>
+  /^debug\/fakemine(?:\/|$)/i.test(String(nodePath || '').replace(/^\//, ''));
+
+const isFakeMineAllowed = (node) => {
+  if (!node) return false;
+  try {
+    const host = new URL(node).hostname.toLowerCase();
+    return host === 'localhost' || host === '127.0.0.1';
+  } catch {
+    const n = String(node).toLowerCase();
+    return n.includes('localhost') || n.includes('127.0.0.1');
+  }
+};
+
 exports.handler = async (event, context) => {
   const { httpMethod, queryStringParameters, body } = event;
   const nodePath = queryStringParameters.nodePath;
@@ -12,6 +26,20 @@ exports.handler = async (event, context) => {
 
   if (!nodePath) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Missing nodePath query parameter' }) };
+  }
+
+  if (isFakeMineNodePath(nodePath) && !isFakeMineAllowed(nodeBase)) {
+    return {
+      statusCode: 403,
+      body: JSON.stringify({
+        code: 1,
+        error: 'Fake mining is disabled for remote nodes. Use a local node (localhost) for dev mining.',
+      }),
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      },
+    };
   }
 
   const targetUrl = `${nodeBase}/${nodePath}`;

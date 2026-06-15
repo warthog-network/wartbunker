@@ -1,9 +1,19 @@
+import { rejectFakeMineIfRemote } from '../../utils/proxyGuards.js';
+
 export async function GET({ request }) {
   const url = new URL(request.url);
   const nodePath = url.searchParams.get('nodePath');
   const nodeBase = url.searchParams.get('nodeBase');
   if (!nodePath || !nodeBase) {
     return new Response('Missing params', { status: 400 });
+  }
+
+  const fakeMineRejection = rejectFakeMineIfRemote(nodePath, nodeBase);
+  if (fakeMineRejection) {
+    return new Response(fakeMineRejection.body, {
+      status: fakeMineRejection.status,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
   const targetUrl = nodeBase.replace(/\/$/, '') + '/' + nodePath.replace(/^\//, '');
   const controller = new AbortController();
@@ -33,6 +43,14 @@ export async function POST({ request }) {
   const nodeBase = url.searchParams.get('nodeBase');
   if (!nodePath || !nodeBase) {
     return new Response('Missing params', { status: 400 });
+  }
+
+  const fakeMineRejection = rejectFakeMineIfRemote(nodePath, nodeBase);
+  if (fakeMineRejection) {
+    return new Response(fakeMineRejection.body, {
+      status: fakeMineRejection.status,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
   const targetUrl = nodeBase.replace(/\/$/, '') + '/' + nodePath.replace(/^\//, '');
   const body = await request.text();

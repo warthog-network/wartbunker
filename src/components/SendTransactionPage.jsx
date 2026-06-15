@@ -14,8 +14,6 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
     nextNonce,
     refreshBalance,
     setError: setContextError,
-    performFakeMine,
-    isTestnetNode,
   } = useWallet();
 
   const wallet = propWallet || contextWallet;
@@ -113,9 +111,6 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
       setResult(resData);
 
       if (resData.code === 0 || resData.txHash || resData.data?.txHash) {
-        if (isTestnetNode(selectedNode)) {
-          await performFakeMine?.();
-        }
         refreshBalance?.();
         toast.success('Transaction sent successfully');
       } else {
@@ -285,7 +280,7 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
       <button
         onClick={handleSend}
         disabled={isLoading || !toAddress || !amount}
-        className="mt-4 w-full py-3.5 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-semibold rounded-2xl text-base shadow-lg shadow-orange-500/30 disabled:opacity-60 active:scale-[0.985] transition-all"
+        className="mt-4 w-full py-3.5 wallet-action-btn disabled:opacity-60"
       >
         {isLoading ? 'Signing & Sending...' : 'Sign and Send WART'}
       </button>

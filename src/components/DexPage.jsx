@@ -11,8 +11,6 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     pinHeight,
     pinHash,
     selectedNode: contextSelectedNode,
-    performFakeMine,
-    isTestnetNode,
   } = useWallet();
 
   const selectedNode = propSelectedNode || contextSelectedNode || 'https://warthognode.duckdns.org';
@@ -595,10 +593,6 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
 
       updateNonceAfterSuccess(nonce);
 
-      if (isTestnetNode(selectedNode)) {
-        await performFakeMine?.();
-      }
-
       if (document.getElementById('liquidityNonceOverride')) {
         document.getElementById('liquidityNonceOverride').value = '';
       }
@@ -683,15 +677,11 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
 
       updateNonceAfterSuccess(nonce);
 
-      if (isTestnetNode(selectedNode)) {
-        await performFakeMine?.();
-      }
-
       if (document.getElementById('limitNonceOverride')) {
         document.getElementById('limitNonceOverride').value = '';
       }
 
-      toast.success('Limit order submitted — mining block to confirm (balance may stay locked until order fills)');
+      toast.success('Limit order submitted — balance may stay locked until the order fills');
     } catch (err) {
       console.error(err);
       toast.error('Limit order failed: ' + (err.message || 'Unknown error'));
@@ -764,8 +754,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
           <h3 className="text-xl font-semibold mb-4 text-green-700 dark:text-green-300">
             Market Data
           </h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
+          <div>
               <label className="block text-sm font-medium mb-2">Market Identifier</label>
               <input id="market" placeholder="market identifier or asset hash" className="input mb-4" />
               <button
@@ -777,7 +766,6 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
               </button>
               
               {results.dexMarket && renderPoolMarketCard(results.dexMarket)}
-            </div>
           </div>
         </section>
       )}
@@ -853,8 +841,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
             Deposit asset tokens + WART into the asset&apos;s liquidity pool.
           </p>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
+          <div>
               <label className="block text-sm font-medium mb-2">Asset Hash (64 hex chars, no 0x)</label>
               <input id="liquidityAssetHash" placeholder="e.g. 0e4825efffa294610d2ac376713e3bcc9b53d378e823834b64e5df01f75d3b0c" className="input mb-3 font-mono text-sm" />
 
@@ -881,7 +868,6 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
               </button>
 
               {results.liquidityDeposit && renderTransactionResult(results.liquidityDeposit, 'Liquidity Deposit')}
-            </div>
           </div>
         </section>
       )}
@@ -931,8 +917,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
             Create buy or sell limit orders. Use the price encoder to generate the 6-character limit hex.
           </p>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
+          <div>
               <label className="block text-sm font-medium mb-2">Asset Hash (64 hex chars, no 0x)</label>
               <input id="limitAssetHash" placeholder="e.g. 0e4825efffa294610d2ac376713e3bcc9b53d378e823834b64e5df01f75d3b0c" className="input mb-3 font-mono text-sm" />
 
@@ -1000,7 +985,6 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
               </button>
 
               {results.limitSwap && renderTransactionResult(results.limitSwap, 'Limit Order')}
-            </div>
           </div>
         </section>
       )}

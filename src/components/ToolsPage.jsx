@@ -1,11 +1,17 @@
 import React, { useState } from 'react';
 import axios from 'axios';
+import { useWallet } from './WalletContext';
+import { useToast } from './Toast';
 
 const API_URL = '/api/proxy';
 
 const ToolsPage = ({ selectedNode: propSelectedNode }) => {
+  const { performFakeMine, isFakeMineAllowed } = useWallet();
+  const toast = useToast();
+
   const [address, setAddress] = useState('');
   const [validateResult, setValidateResult] = useState(null);
+  const [isMiningNow, setIsMiningNow] = useState(false);
   const selectedNode = propSelectedNode || (() => {
     try {
       if (typeof localStorage === 'undefined') return 'https://warthognode.duckdns.org';
@@ -29,6 +35,17 @@ const ToolsPage = ({ selectedNode: propSelectedNode }) => {
     } catch (err) {
       setValidateResult({ error: 'Failed to validate address: ' + err.message });
     }
+  };
+
+  const handleMineNow = async () => {
+    setIsMiningNow(true);
+    const ok = await performFakeMine();
+    if (ok) {
+      toast.success('Block mined — mempool transactions should confirm shortly');
+    } else {
+      toast.error('Fake mine failed — see status below or check node connection');
+    }
+    setIsMiningNow(false);
   };
 
   return (
@@ -59,6 +76,31 @@ const ToolsPage = ({ selectedNode: propSelectedNode }) => {
           </pre>
         </div>
       )}
+
+      <details className="result mt-6 group" style={{ textAlign: 'left' }}>
+        <summary className="cursor-pointer font-semibold text-zinc-400 hover:text-zinc-300 flex items-center gap-2 select-none">
+          <span className="group-open:rotate-90 inline-block transition text-xs">▶</span>
+          Dev Tools
+        </summary>
+
+        <div className="mt-4 pt-4 border-t border-zinc-800">
+          <p className="font-semibold mb-3 text-emerald-400">Testnet Mining</p>
+
+          <button
+            onClick={handleMineNow}
+            disabled={!isFakeMineAllowed(selectedNode) || isMiningNow}
+            className="w-full py-3 font-semibold rounded-2xl transition-all bg-orange-500 hover:bg-orange-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isMiningNow ? 'Mining...' : '⛏️ Mine Now'}
+          </button>
+
+          <p className="mt-2 text-xs text-zinc-500">
+            {isFakeMineAllowed(selectedNode)
+              ? 'Local dev only: mines a block on your localhost node to confirm pending mempool transactions.'
+              : 'Fake mining is disabled for remote/synced nodes. Point the app at localhost to use Mine Now.'}
+          </p>
+        </div>
+      </details>
     </section>
   );
 };

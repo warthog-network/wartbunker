@@ -13,8 +13,6 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     pinHeight,
     pinHash,
     selectedNode: contextSelectedNode,
-    performFakeMine,
-    isTestnetNode,
   } = useWallet();
 
   const wallet = propWallet || contextWallet;
@@ -265,10 +263,6 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
 
       updateNonceAfterSuccess(nonce);
 
-      if (isTestnetNode(selectedNode)) {
-        await performFakeMine?.();
-      }
-
       if (document.getElementById('createNonceOverride')) {
         document.getElementById('createNonceOverride').value = '';
       }
@@ -342,10 +336,6 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
 
       updateNonceAfterSuccess(nonce);
 
-      if (isTestnetNode(selectedNode)) {
-        await performFakeMine?.();
-      }
-
       if (document.getElementById('transferNonceOverride')) {
         document.getElementById('transferNonceOverride').value = '';
       }
@@ -393,8 +383,7 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       {activeTab === 'create' && (
         <section className="border-2 border-blue-500 rounded-3xl p-8 bg-blue-50 dark:bg-blue-950 shadow-xl">
           <h3 className="text-2xl font-bold mb-6 text-blue-700 dark:text-blue-300">Create New Asset</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
+          <div>
               <label className="block text-sm font-medium mb-2">Asset Name (1-5 chars)</label>
               <input id="assetName" maxLength="5" placeholder="e.g. LIQ" className="input mb-4" />
 
@@ -423,7 +412,6 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
               </button>
 
               {results.createAsset && renderTransactionResult(results.createAsset, 'Asset Creation')}
-            </div>
           </div>
         </section>
       )}
@@ -435,8 +423,7 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
           <p className="text-sm text-cyan-600 dark:text-cyan-400 mb-4">
             Smart nonce is used by default. Use the Nonce Override field only when you get "Duplicate nonce" errors.
           </p>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
+          <div>
               <label className="block text-sm font-medium mb-2">Asset Hash (64 hex chars, no 0x)</label>
               <input id="transferAssetId" placeholder="e.g. b92b88491b478c22fbc5b3f03f8b5539555ff2680944a8c847a1eb90ef69894e" className="input mb-3" />
 
@@ -473,7 +460,6 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
               </button>
 
               {results.transferAsset && renderTransactionResult(results.transferAsset, 'Asset Transfer')}
-            </div>
           </div>
         </section>
       )}
