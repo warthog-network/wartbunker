@@ -15,7 +15,7 @@
     "@astrojs/netlify": "^7.0.6",
     "@astrojs/react": "^5.0.2",
     "@tailwindcss/vite": "^4.2.2",
-    "astro": "^6.1.3",
+    "astro": "^6.4.7",
     "axios": "^1.7.9",
     "buffer": "^6.0.3",
     "crypto-browserify": "^3.12.1",
