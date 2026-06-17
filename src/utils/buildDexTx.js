@@ -1,67 +1,18 @@
-import '../shims/browserPolyfills.js';
-import { ensureBuffer } from './ensureBuffer.js';
 import { serializeTransaction } from './warthogTx.js';
 import { isValidAssetHash } from './warthogFormat.js';
+import { normalizeAssetHash } from './warthogClient.js';
 
-async function createSigningContext({ pinHash, pinHeight, minFeeE8, nonce }) {
-  await ensureBuffer();
-
-  const {
-    Account,
-    NonceId,
-    RoundedFee,
-    TransactionContext,
-  } = await import('warthog-js');
-
-  const nonceId = NonceId.fromNumber(parseInt(nonce, 10) || 0);
-  if (!nonceId) {
-    throw new Error('Invalid nonce');
-  }
-
-  const fee = RoundedFee.fromE8(BigInt(minFeeE8), true);
-  if (!fee) {
-    throw new Error('Invalid fee from node');
-  }
-
-  const ctx = new TransactionContext(
-    {
-      pinHash: pinHash || '0000000000000000000000000000000000000000000000000000000000000000',
-      pinHeight: pinHeight || 0,
-    },
-    fee,
-    nonceId,
-  );
-
-  return { ctx, nonceId, Account };
-}
-
-function normalizeHash(raw) {
-  return raw.trim().replace(/^0x/i, '').toLowerCase();
-}
-
-/** Build and sign a liquidity deposit transaction. */
-export async function buildLiquidityDeposit({
-  privateKey,
+/** Build and serialize a liquidity deposit transaction. */
+export async function buildLiquidityDepositTx(ctx, account, {
   assetHash,
   assetAmount,
   decimals,
   wartAmount,
-  nonce,
-  pinHash,
-  pinHeight,
-  minFeeE8,
 }) {
-  const hash = normalizeHash(assetHash);
+  const hash = normalizeAssetHash(assetHash);
   if (!isValidAssetHash(hash)) {
     throw new Error('Asset hash must be exactly 64 hex characters');
   }
-
-  const { ctx, nonceId, Account } = await createSigningContext({
-    pinHash,
-    pinHeight,
-    minFeeE8,
-    nonce,
-  });
 
   const { Funds, TokenPrecision, Wart } = await import('warthog-js');
   const precision = new TokenPrecision(Math.min(Math.max(parseInt(decimals, 10) || 8, 0), 18));
@@ -75,44 +26,28 @@ export async function buildLiquidityDeposit({
     throw new Error('Invalid WART amount');
   }
 
-  const account = Account.fromPrivateKeyHex(privateKey);
-  return {
-    payload: serializeTransaction(ctx.depositLiquidity(account, hash, tokenAmount, wart)),
-    nonce: nonceId.value,
-  };
+  return serializeTransaction(ctx.depositLiquidity(account, hash, tokenAmount, wart));
 }
 
-/** Build and sign a limit buy or sell transaction. */
-export async function buildLimitSwap({
-  privateKey,
+/** Build and serialize a limit buy or sell transaction. */
+export async function buildLimitSwapTx(ctx, account, {
   assetHash,
   isBuy,
   amount,
   assetDecimals,
   limitHex,
-  nonce,
-  pinHash,
-  pinHeight,
-  minFeeE8,
 }) {
-  const hash = normalizeHash(assetHash);
+  const hash = normalizeAssetHash(assetHash);
   if (!isValidAssetHash(hash)) {
     throw new Error('Asset hash must be exactly 64 hex characters');
   }
 
-  const { ctx, nonceId, Account } = await createSigningContext({
-    pinHash,
-    pinHeight,
-    minFeeE8,
-    nonce,
-  });
-
   const { Funds, TokenPrecision, Wart, Price } = await import('warthog-js');
-  const limit = Price.fromHex(normalizeHash(limitHex));
+  const limit = Price.fromHex(limitHex.trim().replace(/^0x/i, '').toLowerCase());
   if (!limit) {
     throw new Error('Limit price must be exactly 6 hex characters');
   }
-  const account = Account.fromPrivateKeyHex(privateKey);
+
   const amountStr = String(amount).trim().replace(',', '.');
 
   const tx = isBuy
@@ -128,8 +63,5 @@ export async function buildLimitSwap({
         return ctx.sell(account, hash, tokenAmount, limit);
       })();
 
-  return {
-    payload: serializeTransaction(tx),
-    nonce: nonceId.value,
-  };
+  return serializeTransaction(tx);
 }

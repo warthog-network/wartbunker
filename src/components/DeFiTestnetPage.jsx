@@ -1,7 +1,5 @@
 import React, { useState } from 'react';
-import axios from 'axios';
-
-const API_URL = '/api/proxy';
+import { createWarthogApi, getNodeData } from '../utils/warthogClient.js';
 
 const DeFiTestnetPage = ({ selectedNode, wallet }) => {
   const [results, setResults] = useState({});
@@ -10,9 +8,9 @@ const DeFiTestnetPage = ({ selectedNode, wallet }) => {
   const query = async (key, path) => {
     setLoading(prev => ({ ...prev, [key]: true }));
     try {
-      const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
-      const response = await axios.get(`${API_URL}?nodePath=${path}&${nodeBaseParam}`);
-      setResults(prev => ({ ...prev, [key]: response.data }));
+      const api = await createWarthogApi(selectedNode);
+      const result = await getNodeData(api, path);
+      setResults(prev => ({ ...prev, [key]: result }));
     } catch (err) {
       setResults(prev => ({ ...prev, [key]: { error: err.message } }));
     } finally {

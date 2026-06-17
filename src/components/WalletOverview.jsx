@@ -2,9 +2,7 @@ import React, { useState, useEffect, Fragment } from 'react';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
 import { isValidAssetHash } from '../utils/warthogFormat';
-import axios from 'axios';
-
-const API_URL = '/api/proxy';
+import { createWarthogApi } from '../utils/warthogClient.js';
 
 const WalletOverview = ({ onLogout }) => {
   const {
@@ -103,14 +101,15 @@ const WalletOverview = ({ onLogout }) => {
 
     setLoadingOpenOrders(true);
     try {
-      const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
-      const res = await axios.get(
-        `${API_URL}?nodePath=account/${wallet.address}/open_orders&${nodeBaseParam}`
-      );
-      setOpenOrders(await enrichOpenOrders(res.data));
+      const api = await createWarthogApi(selectedNode);
+      const res = await api.getOpenOrders(wallet.address);
+      const ordersData = res.success
+        ? { code: 0, data: res.data }
+        : { code: res.code, error: res.error };
+      setOpenOrders(await enrichOpenOrders(ordersData));
     } catch (err) {
       console.error(err);
-      toast.error('Failed to fetch open orders: ' + (err.response?.data?.message || err.message));
+      toast.error('Failed to fetch open orders: ' + err.message);
     }
     setLoadingOpenOrders(false);
   };

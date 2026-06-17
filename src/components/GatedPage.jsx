@@ -1,12 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
 import { ethers } from 'ethers';
 import { useWallet } from './WalletContext';
+import { createWarthogApi } from '../utils/warthogClient.js';
 
 const GatedPage = () => {
   const { wallet, selectedNode, currentWalletName } = useWallet();
-
-  const API_URL = '/api/proxy';
   const EXAMPLE_ASSET_HASH = '6eed7c53c4a7753845aee0d991d5417bba8fa0a20e2a975b4ae790a3288dbe65';
   const EXAMPLE_MIN = '1';
 
@@ -19,10 +17,10 @@ const GatedPage = () => {
     if (!hash || !node) return null;
     const clean = hash.toLowerCase().replace(/^0x/, '');
     try {
-      const nodeBaseParam = `nodeBase=${encodeURIComponent(node)}`;
-      const res = await axios.get(`${API_URL}?nodePath=asset/lookup/${encodeURIComponent(clean)}&${nodeBaseParam}`);
-      if (res.data?.code === 0 && res.data?.data) {
-        return res.data.data;
+      const api = await createWarthogApi(node);
+      const res = await api.lookupAsset(clean);
+      if (res.success) {
+        return res.data;
       }
       return null;
     } catch {

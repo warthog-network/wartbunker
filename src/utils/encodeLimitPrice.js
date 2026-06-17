@@ -1,4 +1,3 @@
-import '../shims/browserPolyfills.js';
 import { ensureBuffer } from './ensureBuffer.js';
 
 /** Encode a human limit price to the 6-char hex the node expects (client-side, no API call). */

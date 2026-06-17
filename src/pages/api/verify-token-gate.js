@@ -39,7 +39,7 @@ export async function POST({ request }) {
       ethers.verifyMessage(message, signature);
       const digest = ethers.hashMessage(message);
       const recoveredPub = SigningKey.recoverPublicKey(digest, signature);
-      derivedAddr = deriveWarthogAddress(recoveredPub);
+      derivedAddr = await deriveWarthogAddress(recoveredPub);
     } catch {
       return new Response(JSON.stringify({
         success: false,

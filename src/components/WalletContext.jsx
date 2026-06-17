@@ -2,8 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useLayoutEffect 
 import axios from 'axios';
 import { encryptWallet, decryptWallet } from '../utils/warthogWalletUtils';
 import { clearLegacyAutoMinePrefs, isFakeMineAllowed } from '../utils/nodeAccess';
-
-const API_URL = '/api/proxy';
+import { createWarthogApi, normalizeAssetHash } from '../utils/warthogClient.js';
 
 const WalletContext = createContext();
 
@@ -89,13 +88,6 @@ export const WalletProvider = ({ children }) => {
     }
   }, [wallet, selectedNode, refreshTrigger]);
 
-  const unwrapResponse = (responseData) => {
-    if (responseData?.data && (responseData.status !== undefined || responseData.data?.wart || responseData.data?.chainHead)) {
-      return responseData.data;
-    }
-    return responseData;
-  };
-
   const fetchBalanceAndNonce = async (address) => {
     setError(null);
     setBalance(null);
@@ -104,26 +96,24 @@ export const WalletProvider = ({ children }) => {
     setPinHash(null);
 
     try {
-      const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
+      const api = await createWarthogApi(selectedNode);
+      const { normalizeChainPin } = await import('warthog-js');
 
-      // Chain Head
-      const chainHeadResponse = await axios.get(`${API_URL}?nodePath=chain/head&${nodeBaseParam}`);
-      let headRaw = unwrapResponse(chainHeadResponse.data);
-      const chainHead = headRaw?.chainHead || headRaw;
-
-      setPinHeight(chainHead?.pinHeight ?? chainHead?.height ?? null);
-      setPinHash(chainHead?.pinHash ?? null);
-
-      // Balance
-      let balanceResponse;
-      if (isMainnetNode(selectedNode)) {
-        balanceResponse = await axios.get(`${API_URL}?nodePath=account/${address}/balance&${nodeBaseParam}`);
-      } else {
-        balanceResponse = await axios.get(`${API_URL}?nodePath=account/${address}/wart_balance&${nodeBaseParam}`);
+      const headRes = await api.getChainHead();
+      if (!headRes.success) {
+        throw new Error(headRes.error || 'Failed to fetch chain head');
       }
+      const { pinHash, pinHeight } = normalizeChainPin(headRes.data);
+      setPinHeight(pinHeight);
+      setPinHash(pinHash);
 
-      let balRaw = unwrapResponse(balanceResponse.data);
-      const data = balRaw.data || balRaw;
+      const balRes = isMainnetNode(selectedNode)
+        ? await api.getAccountBalance(address)
+        : await api.getAccountWartBalance(address);
+      if (!balRes.success) {
+        throw new Error(balRes.error || 'Failed to fetch balance');
+      }
+      const data = balRes.data;
 
       const { formatWartBalance, getNextNonceFromAccount } = await import('../utils/warthogFormat.js');
 
@@ -143,7 +133,6 @@ export const WalletProvider = ({ children }) => {
         setUsdBalance('N/A');
       }
 
-      // Nonce
       if (isMainnetNode(selectedNode)) {
         setNextNonce(await getNextNonceFromAccount(data));
       } else {
@@ -151,7 +140,7 @@ export const WalletProvider = ({ children }) => {
       }
     } catch (err) {
       console.error('Balance fetch error:', err);
-      setError(err.response?.data?.message || err.message || 'Failed to fetch balance');
+      setError(err.message || 'Failed to fetch balance');
       setBalance('0.00000000');
       setUsdBalance('N/A');
     }
@@ -162,11 +151,13 @@ export const WalletProvider = ({ children }) => {
   if (!wallet?.address || !selectedNode) return;
 
   try {
-    const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
-    const url = `${API_URL}?nodePath=account/${wallet.address}/balance/asset:${assetHash}&${nodeBaseParam}`;
-
-    const response = await axios.get(url);
-    const data = response.data?.data || response.data;
+    const api = await createWarthogApi(selectedNode);
+    const hash = normalizeAssetHash(assetHash);
+    const res = await api.getAccountAssetBalance(wallet.address, hash);
+    if (!res.success) {
+      throw new Error(res.error || 'Failed to fetch asset balance');
+    }
+    const data = res.data;
 
     // Extract from the correct structure
     const tokenInfo = data?.token || {};
@@ -179,7 +170,7 @@ export const WalletProvider = ({ children }) => {
     const finalName = assetName || tokenInfo.name || 'Unknown Asset';
 
     const newAsset = {
-      hash: assetHash,
+      hash,
       name: finalName,
       balance: balanceStr,
       decimals: decimals,
@@ -395,25 +386,23 @@ export const WalletProvider = ({ children }) => {
     }
 
     try {
-      const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
-      const response = await axios.get(
-        `${API_URL}?nodePath=debug/fakemine/${wallet.address}&${nodeBaseParam}`,
-      );
-      const data = response.data;
-      const innerCode = data?.data?.code;
-      const ok = data?.code === 0 && (innerCode === undefined || innerCode === 0);
+      const api = await createWarthogApi(selectedNode);
+      const res = await api.fakeMine(wallet.address);
 
-      if (ok) {
-        refreshBalance();
-        return true;
+      if (res.success) {
+        const innerCode = res.data?.code;
+        if (innerCode === undefined || innerCode === 0) {
+          refreshBalance();
+          return true;
+        }
+        console.warn('Fake mine failed:', res.data?.error || 'Fake mine rejected by node', res);
+        return false;
       }
 
-      const errMsg = data?.error || data?.data?.error || 'Fake mine rejected by node';
-      console.warn('Fake mine failed:', errMsg, data);
+      console.warn('Fake mine failed:', res.error || 'Fake mine rejected by node', res);
       return false;
     } catch (err) {
-      const errMsg = err.response?.data?.error || err.message || 'Fake mine request failed';
-      console.warn('Fake mine error:', errMsg);
+      console.warn('Fake mine error:', err.message || 'Fake mine request failed');
       return false;
     }
   };

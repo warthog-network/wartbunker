@@ -3,10 +3,9 @@
 // reward, wartTransfer, tokenTransfer, limitSwap, liquidityDeposit, liquidityWithdrawal,
 // assetCreation, match, cancelation + legacy public node flat transfers/rewards.
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
 import { useToast } from './Toast';
+import { createWarthogApi, fetchBlockDetails } from '../utils/warthogClient.js';
 
-const API_URL = '/api/proxy';
 const PAGE_SIZE = 15;
 
 const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refreshTrigger }) => {
@@ -214,6 +213,70 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
 
   console.log(`[HISTORY] Node type: ${isTestnet ? 'DEFI TESTNET' : 'REGULAR PUBLIC NODE'}`);
 
+  const parseHistoryBlocks = (rawData, timestampMap, fullBlockMap) => {
+    const newItems = [];
+    rawData.perBlock.forEach((block) => {
+      const h = block.height;
+      const srcBlock = fullBlockMap[h] || block;
+      const body = block.body || srcBlock?.body || block.transactions || srcBlock?.transactions || {};
+
+      const rewardEntry = body.reward;
+      if (rewardEntry) {
+        const list = Array.isArray(rewardEntry) ? rewardEntry : [rewardEntry];
+        list.forEach((entry) => {
+          if (entry) {
+            const n = normalizeTransaction(entry, srcBlock || block, 'reward', address);
+            n.timestamp = block.header?.time?.timestamp || timestampMap[h] || n.timestamp;
+            newItems.push(n);
+          }
+        });
+      }
+
+      const defiKeys = [
+        'wartTransfer', 'tokenTransfer', 'limitSwap', 'liquidityDeposit', 'liquidityWithdrawal',
+        'assetCreation', 'match', 'cancelation',
+        'wartTransfers', 'tokenTransfers', 'transfers', 'rewards',
+      ];
+      defiKeys.forEach((key) => {
+        const arr = body[key];
+        if (Array.isArray(arr)) {
+          const hint = key.toLowerCase().includes('reward') ? 'reward' :
+                       key.toLowerCase().includes('wart') ? 'wartTransfer' :
+                       key.toLowerCase().includes('token') ? 'tokenTransfer' :
+                       key.toLowerCase().includes('limit') ? 'limitSwap' :
+                       key.toLowerCase().includes('liquiditydeposit') ? 'liquidityDeposit' :
+                       key.toLowerCase().includes('liquiditywithdraw') ? 'liquidityWithdrawal' :
+                       key.toLowerCase().includes('asset') ? 'assetCreation' :
+                       key.toLowerCase().includes('match') ? 'match' :
+                       key.toLowerCase().includes('cancel') ? 'cancelation' : key;
+          arr.forEach((entry) => {
+            if (entry) {
+              const n = normalizeTransaction(entry, srcBlock || block, hint, address);
+              n.timestamp = block.header?.time?.timestamp || timestampMap[h] || n.timestamp;
+              newItems.push(n);
+            }
+          });
+        }
+      });
+
+      if (body.transfers && Array.isArray(body.transfers)) {
+        body.transfers.forEach((t) => {
+          const n = normalizeTransaction(t, srcBlock || block, 'wartTransfer', address);
+          n.timestamp = block.header?.time?.timestamp || timestampMap[h] || n.timestamp;
+          if (!newItems.find((x) => x.txid === n.txid)) newItems.push(n);
+        });
+      }
+      if (body.rewards && Array.isArray(body.rewards)) {
+        body.rewards.forEach((r) => {
+          const n = normalizeTransaction(r, srcBlock || block, 'reward', address);
+          n.timestamp = block.header?.time?.timestamp || timestampMap[h] || n.timestamp;
+          newItems.push(n);
+        });
+      }
+    });
+    return newItems;
+  };
+
   useEffect(() => {
     setAllHistory([]);
     setCurrentPage(1);
@@ -282,9 +345,9 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
     console.log(`🔍 Fetching history from ${isTestnet ? 'TESTNET/DEFI' : 'PUBLIC NODE'}...`);
 
     try {
-      const nodeBaseParam = `nodeBase=${encodeURIComponent(node)}`;
-      const response = await axios.get(`${API_URL}?nodePath=account/${address}/history/4294967295&${nodeBaseParam}`);
-      if (response.data?.code !== undefined && response.data.code !== 0) {
+      const api = await createWarthogApi(node);
+      const histRes = await api.getAccountHistory(address, 4294967295);
+      if (!histRes.success) {
         setAllHistory([]);
         setHasMore(false);
         setNextCursor(null);
@@ -292,107 +355,15 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
         setLoading(false);
         return;
       }
-      const rawData = response.data.data || response.data;
+      const rawData = histRes.data;
 
       if (!rawData.perBlock || !Array.isArray(rawData.perBlock)) {
-        // Some responses may return {code, error} with empty history
-        if (rawData.code && rawData.code !== 0) {
-          setAllHistory([]);
-          setHasMore(false);
-          setNextCursor(null);
-          setCurrentPage(1);
-          setLoading(false);
-          return;
-        }
         throw new Error('Unexpected response format from history endpoint');
       }
 
-      // Fetch full block (for timestamps + authoritative data) when header/time not embedded
-      const blockPromises = rawData.perBlock.map(block =>
-        axios.get(`${API_URL}?nodePath=chain/block/${block.height}&${nodeBaseParam}`)
-      );
-      const blockResponses = await Promise.allSettled(blockPromises);
+      const { timestampMap, fullBlockMap } = await fetchBlockDetails(api, rawData.perBlock);
+      const newItems = parseHistoryBlocks(rawData, timestampMap, fullBlockMap);
 
-      const timestampMap = {};
-      const fullBlockMap = {};
-      blockResponses.forEach((res, idx) => {
-        if (res.status === 'fulfilled') {
-          const b = res.value.data.data || res.value.data;
-          const h = rawData.perBlock[idx].height;
-          timestampMap[h] = b?.header?.time?.timestamp || b?.timestamp || b?.header?.time;
-          fullBlockMap[h] = b;
-        }
-      });
-
-      const newItems = [];
-      rawData.perBlock.forEach((block) => {
-        const h = block.height;
-        // Prefer embedded header (DeFi node) but have fullBlock as fallback
-        const srcBlock = fullBlockMap[h] || block;
-
-        // DeFi v0.10+ shape: perBlock[i].body.{reward, wartTransfer: [], tokenTransfer: [], limitSwap, liquidityDeposit, ...}
-        const body = block.body || srcBlock?.body || block.transactions || srcBlock?.transactions || {};
-
-        // Reward (can be object or array in responses)
-        const rewardEntry = body.reward;
-        if (rewardEntry) {
-          const list = Array.isArray(rewardEntry) ? rewardEntry : [rewardEntry];
-          list.forEach((entry) => {
-            if (entry) {
-              const n = normalizeTransaction(entry, srcBlock || block, 'reward', address);
-              n.timestamp = block.header?.time?.timestamp || timestampMap[h] || n.timestamp;
-              newItems.push(n);
-            }
-          });
-        }
-
-        // All other DeFi action arrays under body
-        const defiKeys = [
-          'wartTransfer', 'tokenTransfer', 'limitSwap', 'liquidityDeposit', 'liquidityWithdrawal',
-          'assetCreation', 'match', 'cancelation',
-          // legacy alt names sometimes seen
-          'wartTransfers', 'tokenTransfers', 'transfers', 'rewards'
-        ];
-        defiKeys.forEach((key) => {
-          const arr = body[key];
-          if (Array.isArray(arr)) {
-            const hint = key.toLowerCase().includes('reward') ? 'reward' :
-                         key.toLowerCase().includes('wart') ? 'wartTransfer' :
-                         key.toLowerCase().includes('token') ? 'tokenTransfer' :
-                         key.toLowerCase().includes('limit') ? 'limitSwap' :
-                         key.toLowerCase().includes('liquiditydeposit') ? 'liquidityDeposit' :
-                         key.toLowerCase().includes('liquiditywithdraw') ? 'liquidityWithdrawal' :
-                         key.toLowerCase().includes('asset') ? 'assetCreation' :
-                         key.toLowerCase().includes('match') ? 'match' :
-                         key.toLowerCase().includes('cancel') ? 'cancelation' : key;
-            arr.forEach((entry) => {
-              if (entry) {
-                const n = normalizeTransaction(entry, srcBlock || block, hint, address);
-                n.timestamp = block.header?.time?.timestamp || timestampMap[h] || n.timestamp;
-                newItems.push(n);
-              }
-            });
-          }
-        });
-
-        // Legacy public node fallback (already handled inside normalize too via txItem.txHash)
-        if (body.transfers && Array.isArray(body.transfers)) {
-          body.transfers.forEach((t) => {
-            const n = normalizeTransaction(t, srcBlock || block, 'wartTransfer', address);
-            n.timestamp = block.header?.time?.timestamp || timestampMap[h] || n.timestamp;
-            if (!newItems.find((x) => x.txid === n.txid)) newItems.push(n);
-          });
-        }
-        if (body.rewards && Array.isArray(body.rewards)) {
-          body.rewards.forEach((r) => {
-            const n = normalizeTransaction(r, srcBlock || block, 'reward', address);
-            n.timestamp = block.header?.time?.timestamp || timestampMap[h] || n.timestamp;
-            newItems.push(n);
-          });
-        }
-      });
-
-      // De-dupe by txid (in case of overlap in legacy paths)
       const seen = new Set();
       const deduped = newItems.filter((it) => {
         if (seen.has(it.txid)) return false;
@@ -406,7 +377,7 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
       setCurrentPage(1);
     } catch (err) {
       console.error(err);
-      setError(err.response?.data?.message || err.message || 'Failed to fetch history');
+      setError(err.message || 'Failed to fetch history');
     } finally {
       setLoading(false);
     }
@@ -416,14 +387,14 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
     if (!hasMore || loading) return;
     setLoading(true);
     try {
-      const nodeBaseParam = `nodeBase=${encodeURIComponent(node)}`;
-      const response = await axios.get(`${API_URL}?nodePath=account/${address}/history/${nextCursor}&${nodeBaseParam}`);
-      if (response.data?.code !== undefined && response.data.code !== 0) {
+      const api = await createWarthogApi(node);
+      const histRes = await api.getAccountHistory(address, nextCursor);
+      if (!histRes.success) {
         setHasMore(false);
         setLoading(false);
         return;
       }
-      const rawData = response.data.data || response.data;
+      const rawData = histRes.data;
 
       if (!rawData.perBlock || !Array.isArray(rawData.perBlock)) {
         setHasMore(false);
@@ -431,56 +402,9 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
         return;
       }
 
-      const blockPromises = rawData.perBlock.map(block =>
-        axios.get(`${API_URL}?nodePath=chain/block/${block.height}&${nodeBaseParam}`)
-      );
-      const blockResponses = await Promise.allSettled(blockPromises);
+      const { timestampMap, fullBlockMap } = await fetchBlockDetails(api, rawData.perBlock);
+      const newItems = parseHistoryBlocks(rawData, timestampMap, fullBlockMap);
 
-      const timestampMap = {};
-      const fullBlockMap = {};
-      blockResponses.forEach((res, idx) => {
-        if (res.status === 'fulfilled') {
-          const b = res.value.data.data || res.value.data;
-          const h = rawData.perBlock[idx].height;
-          timestampMap[h] = b?.header?.time?.timestamp || b?.timestamp;
-          fullBlockMap[h] = b;
-        }
-      });
-
-      const newItems = [];
-      rawData.perBlock.forEach((block) => {
-        const h = block.height;
-        const srcBlock = fullBlockMap[h] || block;
-        const body = block.body || srcBlock?.body || block.transactions || srcBlock?.transactions || {};
-
-        if (body.reward) {
-          const list = Array.isArray(body.reward) ? body.reward : [body.reward];
-          list.forEach((entry) => {
-            if (entry) {
-              const n = normalizeTransaction(entry, srcBlock || block, 'reward', address);
-              n.timestamp = block.header?.time?.timestamp || timestampMap[h] || n.timestamp;
-              newItems.push(n);
-            }
-          });
-        }
-
-        const defiKeys = ['wartTransfer','tokenTransfer','limitSwap','liquidityDeposit','liquidityWithdrawal','assetCreation','match','cancelation','wartTransfers','tokenTransfers','transfers','rewards'];
-        defiKeys.forEach((key) => {
-          const arr = body[key];
-          if (Array.isArray(arr)) {
-            const hint = key;
-            arr.forEach((entry) => {
-              if (entry) {
-                const n = normalizeTransaction(entry, srcBlock || block, hint, address);
-                n.timestamp = block.header?.time?.timestamp || timestampMap[h] || n.timestamp;
-                newItems.push(n);
-              }
-            });
-          }
-        });
-      });
-
-      // de-dupe against existing
       const seen = new Set(allHistory.map((x) => x.txid));
       const fresh = newItems.filter((it) => !seen.has(it.txid));
 

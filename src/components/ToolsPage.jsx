@@ -1,9 +1,7 @@
 import React, { useState } from 'react';
-import axios from 'axios';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
-
-const API_URL = '/api/proxy';
+import { createWarthogApi, getNodeData } from '../utils/warthogClient.js';
 
 const ToolsPage = ({ selectedNode: propSelectedNode }) => {
   const { performFakeMine, isFakeMineAllowed } = useWallet();
@@ -27,11 +25,8 @@ const ToolsPage = ({ selectedNode: propSelectedNode }) => {
       return;
     }
     try {
-      const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
-      const response = await axios.get(`${API_URL}?nodePath=account/${address}/validate&${nodeBaseParam}`, {
-        headers: { 'Cache-Control': 'no-cache' }
-      });
-      setValidateResult(response.data);
+      const api = await createWarthogApi(selectedNode);
+      setValidateResult(await getNodeData(api, `account/${address}/validate`));
     } catch (err) {
       setValidateResult({ error: 'Failed to validate address: ' + err.message });
     }

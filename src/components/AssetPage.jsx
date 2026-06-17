@@ -1,17 +1,19 @@
 import React, { useState } from 'react';
-import axios from 'axios';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
 import { isValidAssetHash } from '../utils/warthogFormat';
-
-const API_URL = '/api/proxy';
+import {
+  createWarthogApi,
+  formatSubmitError,
+  formatSubmitResult,
+  getNodeData,
+  signAndSubmitTransaction,
+} from '../utils/warthogClient.js';
 
 const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const {
     wallet: contextWallet,
     nextNonce: contextNextNonce,
-    pinHeight,
-    pinHash,
     selectedNode: contextSelectedNode,
   } = useWallet();
 
@@ -53,35 +55,25 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const query = async (key, path, method = 'GET', data = null) => {
     setLoading(prev => ({ ...prev, [key]: true }));
     try {
-      const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
-      const config = {
-        method,
-        url: `${API_URL}?nodePath=${path}&${nodeBaseParam}`,
-      };
-      if (data) {
-        config.data = data;
-        config.headers = { 'Content-Type': 'application/json' };
+      const api = await createWarthogApi(selectedNode);
+      let result;
+      if (method === 'POST') {
+        const submitRes = await api.submitTransaction(data);
+        result = submitRes.success
+          ? { code: 0, data: submitRes.data }
+          : { code: submitRes.code, error: submitRes.error };
+      } else {
+        result = await getNodeData(api, path);
       }
-      const response = await axios(config);
-      setResults(prev => ({ ...prev, [key]: response.data }));
-      return response.data;
+      setResults(prev => ({ ...prev, [key]: result }));
+      return result;
     } catch (err) {
-      const errorMsg = err.response?.data?.message || err.message;
+      const errorMsg = err.message;
       setResults(prev => ({ ...prev, [key]: { error: errorMsg } }));
       throw err;
     } finally {
       setLoading(prev => ({ ...prev, [key]: false }));
     }
-  };
-
-  const fetchMinFeeE8 = async () => {
-    const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
-    const minFeeRes = await axios.get(`${API_URL}?nodePath=transaction/minfee&${nodeBaseParam}`);
-    const minFeeE8 = minFeeRes.data?.data?.minFee?.E8 || minFeeRes.data?.minFee?.E8;
-    if (!minFeeE8) {
-      throw new Error('Could not fetch minimum fee');
-    }
-    return minFeeE8;
   };
 
   // ==================== STYLIZED ASSET CARD ====================
@@ -233,6 +225,7 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     }
 
     setLoading(prev => ({ ...prev, createAsset: true }));
+    setResults(prev => ({ ...prev, createAsset: null }));
 
     try {
       let nonceId = getSmartNonce();
@@ -244,23 +237,19 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
         }
       }
 
-      const { buildAssetCreation } = await import('../utils/buildAssetTx.js');
-      const { payload, nonce } = await buildAssetCreation({
+      const api = await createWarthogApi(selectedNode);
+      const { buildAssetCreationTx } = await import('../utils/buildAssetTx.js');
+      const { nonce, data } = await signAndSubmitTransaction(api, {
         privateKey: wallet.privateKey,
-        name: nameInput,
-        supply: supplyStr,
-        decimals: decimalsInput,
-        nonce: nonceId,
-        pinHash,
-        pinHeight,
-        minFeeE8: await fetchMinFeeE8(),
+        nonceId,
+        buildTx: (ctx, account) => buildAssetCreationTx(ctx, account, {
+          name: nameInput,
+          supply: supplyStr,
+          decimals: decimalsInput,
+        }),
       });
 
-      const result = await query('createAsset', 'transaction/add', 'POST', payload);
-      if (!isNodeSuccess(result)) {
-        throw new Error(getNodeError(result) || 'Node rejected asset creation');
-      }
-
+      setResults(prev => ({ ...prev, createAsset: formatSubmitResult(data) }));
       updateNonceAfterSuccess(nonce);
 
       if (document.getElementById('createNonceOverride')) {
@@ -272,7 +261,8 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       document.getElementById('assetSupply').value = '';
     } catch (err) {
       console.error(err);
-      const errorDetail = err.response?.data?.error || err.response?.data?.message || err.message;
+      const errorDetail = err.message;
+      setResults(prev => ({ ...prev, createAsset: formatSubmitError(errorDetail) }));
       toast.error('Failed to create asset: ' + errorDetail);
     } finally {
       setLoading(prev => ({ ...prev, createAsset: false }));
@@ -313,27 +303,24 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     }
 
     setLoading(prev => ({ ...prev, transferAsset: true }));
+    setResults(prev => ({ ...prev, transferAsset: null }));
 
     try {
-      const { buildAssetTransfer } = await import('../utils/buildAssetTx.js');
-      const { payload, nonce } = await buildAssetTransfer({
+      const api = await createWarthogApi(selectedNode);
+      const { buildAssetTransferTx } = await import('../utils/buildAssetTx.js');
+      const { nonce, data } = await signAndSubmitTransaction(api, {
         privateKey: wallet.privateKey,
-        assetHash: assetIdRaw,
-        toAddress: recipientRaw,
-        amount: amountStr,
-        decimals,
-        isLiquidity,
-        nonce: nonceId,
-        pinHash,
-        pinHeight,
-        minFeeE8: await fetchMinFeeE8(),
+        nonceId,
+        buildTx: (ctx, account) => buildAssetTransferTx(ctx, account, {
+          assetHash: assetIdRaw,
+          toAddress: recipientRaw,
+          amount: amountStr,
+          decimals,
+          isLiquidity,
+        }),
       });
 
-      const result = await query('transferAsset', 'transaction/add', 'POST', payload);
-      if (!isNodeSuccess(result)) {
-        throw new Error(getNodeError(result) || 'Node rejected asset transfer');
-      }
-
+      setResults(prev => ({ ...prev, transferAsset: formatSubmitResult(data) }));
       updateNonceAfterSuccess(nonce);
 
       if (document.getElementById('transferNonceOverride')) {
@@ -343,6 +330,7 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       toast.success('Asset transfer sent — check History tab');
     } catch (err) {
       console.error(err);
+      setResults(prev => ({ ...prev, transferAsset: formatSubmitError(err.message || 'Unknown error') }));
       toast.error('Transfer failed: ' + (err.message || 'Unknown error'));
     } finally {
       setLoading(prev => ({ ...prev, transferAsset: false }));

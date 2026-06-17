@@ -5,12 +5,20 @@ export async function ensureBuffer() {
   }
 
   if (typeof globalThis.process === 'undefined') {
-    const processShim = await import('process');
-    globalThis.process = processShim.default ?? processShim;
+    if (typeof process !== 'undefined') {
+      globalThis.process = process;
+    } else {
+      const processShim = await import('../shims/process.js');
+      globalThis.process = processShim.default ?? processShim;
+    }
   }
 
   if (typeof globalThis.Buffer === 'undefined') {
-    const { Buffer } = await import('buffer');
-    globalThis.Buffer = Buffer;
+    if (typeof Buffer !== 'undefined') {
+      globalThis.Buffer = Buffer;
+    } else {
+      const { Buffer: BufferPolyfill } = await import('buffer');
+      globalThis.Buffer = BufferPolyfill;
+    }
   }
 }

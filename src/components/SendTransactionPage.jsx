@@ -1,16 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
-import axios from 'axios';
-
-const API_URL = '/api/proxy';
+import {
+  createWarthogApi,
+  formatSubmitResult,
+  parseRecipientAddress,
+  signAndSubmitTransaction,
+} from '../utils/warthogClient.js';
 
 const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNode }) => {
   const {
     wallet: contextWallet,
     selectedNode: contextSelectedNode,
-    pinHeight,
-    pinHash,
     nextNonce,
     refreshBalance,
     setError: setContextError,
@@ -36,13 +37,13 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
     const fetchOriginId = async () => {
       if (!wallet?.address || !selectedNode) return;
       try {
-        const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
-        const response = await axios.get(
-          `${API_URL}?nodePath=account/${wallet.address}/wart_balance&${nodeBaseParam}`
-        );
-        const accountData = response.data.data?.account || response.data.account;
-        if (accountData?.accountId) {
-          setOriginId(accountData.accountId);
+        const api = await createWarthogApi(selectedNode);
+        const res = await api.getAccountWartBalance(wallet.address);
+        if (res.success) {
+          const accountData = res.data?.account;
+          if (accountData?.accountId) {
+            setOriginId(accountData.accountId);
+          }
         }
       } catch (err) {
         console.warn('Could not fetch originId');
@@ -77,53 +78,36 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
     setShowRawJson(false);
 
     try {
-      const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
+      const api = await createWarthogApi(selectedNode);
+      const { Address, Wart } = await import('warthog-js');
+      const { serializeTransaction } = await import('../utils/warthogTx.js');
 
-      const minFeeRes = await axios.get(
-        `${API_URL}?nodePath=transaction/minfee&${nodeBaseParam}`
-      );
-      const minFeeE8 = minFeeRes.data?.data?.minFee?.E8 || minFeeRes.data?.minFee?.E8;
-
-      if (!minFeeE8) {
-        throw new Error('Could not fetch minimum fee');
+      const recipient = parseRecipientAddress(Address, toAddress);
+      if (!recipient) {
+        throw new Error('Invalid recipient address (expected 40 or 48 hex chars with valid checksum)');
       }
 
-      const { buildWartTransfer } = await import('../utils/buildWartTransfer.js');
-      const { payload, nonce } = await buildWartTransfer({
+      const wartAmount = Wart.parse(amount);
+      if (!wartAmount) {
+        throw new Error('Invalid amount');
+      }
+
+      const { nonce, data } = await signAndSubmitTransaction(api, {
         privateKey: wallet.privateKey,
-        toAddress,
-        amount,
-        nonce: nonceInput,
-        pinHash,
-        pinHeight,
-        minFeeE8,
+        nonceId: parseInt(nonceInput, 10) || 0,
+        buildTx: (ctx, account) =>
+          serializeTransaction(ctx.transferWart(account, recipient, wartAmount)),
       });
 
       setSentNonce(nonce);
 
-      const response = await axios.post(
-        `${API_URL}?nodePath=transaction/add&${nodeBaseParam}`,
-        payload,
-        { headers: { 'Content-Type': 'application/json' } }
-      );
-
-      const resData = response.data;
-      setResult(resData);
-
-      if (resData.code === 0 || resData.txHash || resData.data?.txHash) {
-        refreshBalance?.();
-        toast.success('Transaction sent successfully');
-      } else {
-        const errorMsg = resData.error || 'Transaction rejected by node';
-        setLocalError(errorMsg);
-        setContextError?.(errorMsg);
-        toast.error(errorMsg);
-      }
+      setResult(formatSubmitResult(data));
+      refreshBalance?.();
+      toast.success('Transaction sent successfully');
     } catch (err) {
-      const msg = err.response?.data?.error || err.message || 'Failed to send';
+      const msg = err.message || 'Failed to send';
       setLocalError(msg);
       setContextError?.(msg);
-      setResult({ error: msg });
       toast.error(msg);
     } finally {
       setIsLoading(false);

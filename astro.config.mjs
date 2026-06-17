@@ -57,16 +57,17 @@ export default defineConfig({
         crypto: path.resolve(projectRoot, 'node_modules/crypto-browserify'),
         stream: path.resolve(projectRoot, 'node_modules/stream-browserify'),
         buffer: path.resolve(projectRoot, 'node_modules/buffer'),
-        process: path.resolve(projectRoot, 'node_modules/process/browser.js'),
+        process: path.resolve(projectRoot, 'src/shims/process.js'),
         vm: path.resolve(projectRoot, 'node_modules/vm-browserify'),
         '@': path.resolve(projectRoot, 'src'),
       },
     },
     optimizeDeps: {
-      include: ['buffer', 'process', 'warthog-js'],
+      include: ['buffer', 'warthog-js'],
     },
     ssr: {
-      external: ['warthog-js', 'buffer', 'elliptic'],
+      external: ['warthog-js', 'buffer', 'elliptic', 'crypto-browserify'],
+      noExternal: [],
     },
 
     plugins: [tailwindcss(), devCspOverride()],

@@ -1,4 +1,3 @@
-import '../shims/browserPolyfills.js';
 import { ensureBuffer } from './ensureBuffer.js';
 
 const PROXY_URL = '/api/proxy';
@@ -16,6 +15,30 @@ export function toNodeResponse(result) {
     return { code: 0, data: result.data };
   }
   return { code: result.code, error: result.error };
+}
+
+/** Shape a successful submit result for transaction result cards. */
+export function formatSubmitResult(data) {
+  return toNodeResponse({ success: true, data });
+}
+
+/** Shape a failed submit result for transaction result cards. */
+export function formatSubmitError(message) {
+  return { code: -1, error: message };
+}
+
+/** GET a node path and return the legacy `{ code, data, error }` response shape. */
+export async function getNodeData(api, path) {
+  return toNodeResponse(await api.getNodePath(path));
+}
+
+/** POST to transaction/add (or another path) and return the legacy response shape. */
+export async function postNodeData(api, path, body) {
+  const normalized = path.replace(/^\//, '');
+  if (normalized === 'transaction/add') {
+    return toNodeResponse(await api.submitTransaction(body));
+  }
+  throw new Error(`Unsupported POST path: ${path}`);
 }
 
 /** Parse a 40- or 48-char recipient address. */
@@ -53,7 +76,7 @@ export async function signAndSubmitTransaction(api, { privateKey, nonceId, build
 
   const ctx = await api.createTransactionContext(fee, nonce);
   const account = Account.fromPrivateKeyHex(privateKey);
-  const tx = buildTx(ctx, account);
+  const tx = await buildTx(ctx, account);
   const submitResult = await api.submitTransaction(tx);
 
   if (!submitResult.success) {

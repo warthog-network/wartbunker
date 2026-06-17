@@ -1,15 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
-
-const API_URL = '/api/proxy';
+import {
+  createWarthogApi,
+  formatSubmitError,
+  formatSubmitResult,
+  getNodeData,
+  signAndSubmitTransaction,
+} from '../utils/warthogClient.js';
 
 const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const {
     nextNonce: contextNextNonce,
-    pinHeight,
-    pinHash,
     selectedNode: contextSelectedNode,
   } = useWallet();
 
@@ -89,34 +91,23 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const getNodeError = (result) =>
     result?.error || result?.message || (result?.code != null ? `Node error (code ${result.code})` : null);
 
-  const fetchMinFeeE8 = async () => {
-    const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
-    const minFeeRes = await axios.get(`${API_URL}?nodePath=transaction/minfee&${nodeBaseParam}`);
-    const minFeeE8 = minFeeRes.data?.data?.minFee?.E8 || minFeeRes.data?.minFee?.E8;
-    if (!minFeeE8) {
-      throw new Error('Could not fetch minimum fee');
-    }
-    return minFeeE8;
-  };
-
-  // ==================== ENHANCED QUERY ====================
   const query = async (key, path, method = 'GET', data = null) => {
     setLoading(prev => ({ ...prev, [key]: true }));
     try {
-      const nodeBaseParam = `nodeBase=${encodeURIComponent(selectedNode)}`;
-      const config = {
-        method,
-        url: `${API_URL}?nodePath=${path}&${nodeBaseParam}`,
-      };
-      if (data) {
-        config.data = data;
-        config.headers = { 'Content-Type': 'application/json' };
+      const api = await createWarthogApi(selectedNode);
+      let result;
+      if (method === 'POST') {
+        const submitRes = await api.submitTransaction(data);
+        result = submitRes.success
+          ? { code: 0, data: submitRes.data }
+          : { code: submitRes.code, error: submitRes.error };
+      } else {
+        result = await getNodeData(api, path);
       }
-      const response = await axios(config);
-      setResults(prev => ({ ...prev, [key]: response.data }));
-      return response.data;
+      setResults(prev => ({ ...prev, [key]: result }));
+      return result;
     } catch (err) {
-      const errorMsg = err.response?.data?.message || err.message;
+      const errorMsg = err.message;
       setResults(prev => ({ ...prev, [key]: { error: errorMsg } }));
       throw err;
     } finally {
@@ -570,27 +561,23 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     }
 
     setLoading(prev => ({ ...prev, liquidityDeposit: true }));
+    setResults(prev => ({ ...prev, liquidityDeposit: null }));
 
     try {
-      const { buildLiquidityDeposit } = await import('../utils/buildDexTx.js');
-      const { payload, nonce } = await buildLiquidityDeposit({
+      const api = await createWarthogApi(selectedNode);
+      const { buildLiquidityDepositTx } = await import('../utils/buildDexTx.js');
+      const { nonce, data } = await signAndSubmitTransaction(api, {
         privateKey: wallet.privateKey,
-        assetHash: assetHashRaw,
-        assetAmount: assetAmountStr,
-        decimals: decimalsStr,
-        wartAmount: wartAmountStr,
-        nonce: nonceId,
-        pinHash,
-        pinHeight,
-        minFeeE8: await fetchMinFeeE8(),
+        nonceId,
+        buildTx: (ctx, account) => buildLiquidityDepositTx(ctx, account, {
+          assetHash: assetHashRaw,
+          assetAmount: assetAmountStr,
+          decimals: decimalsStr,
+          wartAmount: wartAmountStr,
+        }),
       });
 
-      const result = await query('liquidityDeposit', 'transaction/add', 'POST', payload);
-
-      if (!isNodeSuccess(result)) {
-        throw new Error(getNodeError(result) || 'Node rejected liquidity deposit');
-      }
-
+      setResults(prev => ({ ...prev, liquidityDeposit: formatSubmitResult(data) }));
       updateNonceAfterSuccess(nonce);
 
       if (document.getElementById('liquidityNonceOverride')) {
@@ -600,6 +587,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       toast.success('Liquidity deposit sent — check pool info below');
     } catch (err) {
       console.error(err);
+      setResults(prev => ({ ...prev, liquidityDeposit: formatSubmitError(err.message || 'Unknown error') }));
       toast.error('Liquidity deposit failed: ' + (err.message || 'Unknown error'));
     } finally {
       setLoading(prev => ({ ...prev, liquidityDeposit: false }));
@@ -653,28 +641,24 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     }
 
     setLoading(prev => ({ ...prev, limitSwap: true }));
+    setResults(prev => ({ ...prev, limitSwap: null }));
 
     try {
-      const { buildLimitSwap } = await import('../utils/buildDexTx.js');
-      const { payload, nonce } = await buildLimitSwap({
+      const api = await createWarthogApi(selectedNode);
+      const { buildLimitSwapTx } = await import('../utils/buildDexTx.js');
+      const { nonce, data } = await signAndSubmitTransaction(api, {
         privateKey: wallet.privateKey,
-        assetHash: assetHashRaw,
-        isBuy,
-        amount: amountStr,
-        assetDecimals: assetDecimalsStr,
-        limitHex,
-        nonce: nonceId,
-        pinHash,
-        pinHeight,
-        minFeeE8: await fetchMinFeeE8(),
+        nonceId,
+        buildTx: (ctx, account) => buildLimitSwapTx(ctx, account, {
+          assetHash: assetHashRaw,
+          isBuy,
+          amount: amountStr,
+          assetDecimals: assetDecimalsStr,
+          limitHex,
+        }),
       });
 
-      const result = await query('limitSwap', 'transaction/add', 'POST', payload);
-
-      if (!isNodeSuccess(result)) {
-        throw new Error(getNodeError(result) || 'Node rejected limit order');
-      }
-
+      setResults(prev => ({ ...prev, limitSwap: formatSubmitResult(data) }));
       updateNonceAfterSuccess(nonce);
 
       if (document.getElementById('limitNonceOverride')) {
@@ -684,6 +668,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       toast.success('Limit order submitted — balance may stay locked until the order fills');
     } catch (err) {
       console.error(err);
+      setResults(prev => ({ ...prev, limitSwap: formatSubmitError(err.message || 'Unknown error') }));
       toast.error('Limit order failed: ' + (err.message || 'Unknown error'));
     } finally {
       setLoading(prev => ({ ...prev, limitSwap: false }));
