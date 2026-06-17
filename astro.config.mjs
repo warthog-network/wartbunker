@@ -53,12 +53,13 @@ export default defineConfig({
     },
     resolve: {
       alias: {
-        crypto: 'crypto-browserify',
-        stream: 'stream-browserify',
-        buffer: 'buffer',
-        process: 'process/browser.js',
-        vm: 'vm-browserify',
-        '@': '/src',
+        // Absolute paths so file:-linked warthog-js resolves crypto shims correctly
+        crypto: path.resolve(projectRoot, 'node_modules/crypto-browserify'),
+        stream: path.resolve(projectRoot, 'node_modules/stream-browserify'),
+        buffer: path.resolve(projectRoot, 'node_modules/buffer'),
+        process: path.resolve(projectRoot, 'node_modules/process/browser.js'),
+        vm: path.resolve(projectRoot, 'node_modules/vm-browserify'),
+        '@': path.resolve(projectRoot, 'src'),
       },
     },
     optimizeDeps: {
