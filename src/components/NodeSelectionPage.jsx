@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { isLocalNode } from '../utils/nodeAccess';
+import { normalizeNodeUrl } from '../utils/warthogClient.js';
 
 const defaultNodeList = [
   'https://warthognode.duckdns.org',
@@ -32,10 +33,12 @@ const NodeSelectionPage = ({ onNodeChange }) => {
   };
 
   const saveCustomNode = () => {
-    if (customNode) {
-      setSelectedNode(customNode);
-      localStorage.setItem('selectedNode', customNode);
-      if (onNodeChange) onNodeChange(customNode);
+    const normalized = normalizeNodeUrl(customNode);
+    if (normalized) {
+      setSelectedNode(normalized);
+      setCustomNode(normalized);
+      localStorage.setItem('selectedNode', normalized);
+      if (onNodeChange) onNodeChange(normalized);
     }
   };
 
@@ -86,8 +89,13 @@ const NodeSelectionPage = ({ onNodeChange }) => {
         <p><strong>Current Node:</strong> {selectedNode}</p>
         {isLocalNode(selectedNode) && (
           <p className="text-amber-400 text-sm mt-2">
-            Local/LAN node: your browser connects directly (works from production). The Warthog node must allow
-            cross-origin requests (CORS) from this site.
+            Local/LAN node: your browser connects directly. The node must allow CORS from this site.
+          </p>
+        )}
+        {!isLocalNode(selectedNode) && selectedNode.startsWith('http://') && (
+          <p className="text-amber-400 text-sm mt-2">
+            HTTP node: requests go through this site&apos;s server proxy (required on HTTPS). HTTPS nodes (like the
+            testnet) work the same way but are often easier to expose publicly.
           </p>
         )}
         {isTestnetOrCustom && <p className="text-emerald-600">Testnet / Custom node active — DeFi tools enabled</p>}

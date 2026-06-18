@@ -1,18 +1,24 @@
 import { ensureBuffer } from './ensureBuffer.js';
 import { isLocalNode } from './nodeAccess.js';
+import { createBrowserWarthogApi } from './browserWarthogApi.js';
 
-const PROXY_URL = '/api/proxy';
+/** Normalize a node base URL from user input. */
+export function normalizeNodeUrl(nodeBase) {
+  return String(nodeBase || '').trim().replace(/\/+$/, '');
+}
 
 /**
  * Create a WarthogApi client for browser use.
- * Local/LAN nodes connect directly from the user's browser (production-safe).
- * Public nodes use the server proxy to avoid CORS blocks.
+ * Local/LAN nodes connect directly from the user's browser.
+ * Remote nodes use a JSON POST proxy (required for HTTP nodes on HTTPS production).
  */
 export async function createWarthogApi(nodeBase) {
   await ensureBuffer();
   const { WarthogApi } = await import('warthog-js');
-  const proxyUrl = isLocalNode(nodeBase) ? null : PROXY_URL;
-  return new WarthogApi(nodeBase, { proxyUrl });
+  const normalized = normalizeNodeUrl(nodeBase);
+  return createBrowserWarthogApi(WarthogApi, normalized, {
+    useProxy: !isLocalNode(normalized),
+  });
 }
 
 /** Convert WarthogApi result to the `{ code, data, error }` shape UI components expect. */
