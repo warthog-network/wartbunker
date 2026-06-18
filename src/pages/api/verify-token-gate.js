@@ -1,4 +1,5 @@
 import { ethers, SigningKey } from 'ethers';
+import { isLocalNode } from '../../utils/nodeAccess.js';
 import { deriveWarthogAddress } from '../../utils/warthogWalletUtils.js';
 
 const DEFAULT_NODE = 'https://warthognode.duckdns.org';
@@ -26,6 +27,15 @@ export async function POST({ request }) {
     const cleanAddress = address.toLowerCase().replace(/^0x/, '');
     const cleanAsset = assetHash.toLowerCase().replace(/^0x/, '');
     const node = nodeBase || DEFAULT_NODE;
+
+    if (isLocalNode(node)) {
+      return new Response(JSON.stringify({
+        success: false,
+        error:
+          'Server-side balance checks cannot reach local or LAN nodes. '
+          + 'Use a public node for server-verified gating, or verify balances client-side when using a local node.',
+      }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+    }
 
     if (!message || !signature) {
       return new Response(JSON.stringify({

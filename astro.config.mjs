@@ -16,7 +16,7 @@ function devCspOverride() {
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' data: https://fonts.gstatic.com https://fonts.googleapis.com",
     "img-src 'self' data:",
-    "connect-src 'self' ws: wss:",
+    "connect-src 'self' http: https: ws: wss:",
   ].join('; ') + ';';
 
   return {

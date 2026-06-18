@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { isLocalNode } from '../utils/nodeAccess';
 
 const defaultNodeList = [
   'https://warthognode.duckdns.org',
@@ -63,7 +64,7 @@ const NodeSelectionPage = ({ onNodeChange }) => {
           type="text"
           value={customNode}
           onChange={(e) => setCustomNode(e.target.value)}
-          placeholder="https://warthog-defitestnet.duckdns.org"
+          placeholder="http://127.0.0.1:3001 or https://warthog-defitestnet.duckdns.org"
           className="input"
         />
         <button 
@@ -83,7 +84,13 @@ const NodeSelectionPage = ({ onNodeChange }) => {
 
       <div className="result">
         <p><strong>Current Node:</strong> {selectedNode}</p>
-        {isTestnetOrCustom && <p className="text-emerald-600">✅ Testnet / Custom node active → DeFi tools enabled</p>}
+        {isLocalNode(selectedNode) && (
+          <p className="text-amber-400 text-sm mt-2">
+            Local/LAN node: your browser connects directly (works from production). The Warthog node must allow
+            cross-origin requests (CORS) from this site.
+          </p>
+        )}
+        {isTestnetOrCustom && <p className="text-emerald-600">Testnet / Custom node active — DeFi tools enabled</p>}
       </div>
     </section>
   );

@@ -1,4 +1,4 @@
-import { rejectFakeMineIfRemote } from '../../utils/proxyGuards.js';
+import { rejectFakeMineIfRemote, rejectLocalNodeInProxy } from '../../utils/proxyGuards.js';
 
 export async function GET({ request }) {
   const url = new URL(request.url);
@@ -6,6 +6,14 @@ export async function GET({ request }) {
   const nodeBase = url.searchParams.get('nodeBase');
   if (!nodePath || !nodeBase) {
     return new Response('Missing params', { status: 400 });
+  }
+
+  const localNodeRejection = rejectLocalNodeInProxy(nodeBase);
+  if (localNodeRejection) {
+    return new Response(localNodeRejection.body, {
+      status: localNodeRejection.status,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 
   const fakeMineRejection = rejectFakeMineIfRemote(nodePath, nodeBase);
@@ -43,6 +51,14 @@ export async function POST({ request }) {
   const nodeBase = url.searchParams.get('nodeBase');
   if (!nodePath || !nodeBase) {
     return new Response('Missing params', { status: 400 });
+  }
+
+  const localNodeRejection = rejectLocalNodeInProxy(nodeBase);
+  if (localNodeRejection) {
+    return new Response(localNodeRejection.body, {
+      status: localNodeRejection.status,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 
   const fakeMineRejection = rejectFakeMineIfRemote(nodePath, nodeBase);

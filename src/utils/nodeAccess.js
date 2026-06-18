@@ -1,13 +1,38 @@
-/** True only for nodes running locally (safe for debug/fakemine). */
-export const isFakeMineAllowed = (node) => {
-  if (!node) return false;
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '0.0.0.0']);
+
+/** Parse a node URL hostname, or null when invalid. */
+export const parseNodeHostname = (node) => {
+  if (!node) return null;
   try {
-    const host = new URL(node).hostname.toLowerCase();
-    return host === 'localhost' || host === '127.0.0.1';
+    return new URL(node).hostname.toLowerCase();
   } catch {
-    const n = node.toLowerCase();
+    return null;
+  }
+};
+
+/** True for nodes reachable from the user's browser (loopback + private LAN). */
+export const isLocalNode = (node) => {
+  const host = parseNodeHostname(node);
+  if (!host) {
+    const n = String(node).toLowerCase();
     return n.includes('localhost') || n.includes('127.0.0.1');
   }
+  if (LOCAL_HOSTS.has(host)) return true;
+  if (/^10\./.test(host)) return true;
+  if (/^192\.168\./.test(host)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return true;
+  if (host.endsWith('.local')) return true;
+  return false;
+};
+
+/** True only for nodes running locally (safe for debug/fakemine). */
+export const isFakeMineAllowed = (node) => {
+  const host = parseNodeHostname(node);
+  if (!host) {
+    const n = String(node).toLowerCase();
+    return n.includes('localhost') || n.includes('127.0.0.1');
+  }
+  return host === 'localhost' || host === '127.0.0.1';
 };
 
 /** Clear legacy auto-mining preferences from older app versions. */
