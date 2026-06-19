@@ -5,7 +5,7 @@ import { createWarthogApi } from '../utils/warthogClient.js';
 
 const GatedPage = () => {
   const { wallet, selectedNode, currentWalletName } = useWallet();
-  const EXAMPLE_ASSET_HASH = '6eed7c53c4a7753845aee0d991d5417bba8fa0a20e2a975b4ae790a3288dbe65';
+  const EXAMPLE_ASSET_HASH = 'b846d64efa05a3bb1d81c035f97c086ebf7995083236b6ac75c44a8a7b8caa17';
   const EXAMPLE_MIN = '1';
 
   const [exampleAssetMeta, setExampleAssetMeta] = useState(null);

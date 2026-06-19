@@ -1,23 +1,28 @@
 import { ensureBuffer } from './ensureBuffer.js';
-import { isLocalNode } from './nodeAccess.js';
+import { shouldUseNodeProxy } from './nodeAccess.js';
 import { createBrowserWarthogApi } from './browserWarthogApi.js';
 
 /** Normalize a node base URL from user input. */
 export function normalizeNodeUrl(nodeBase) {
-  return String(nodeBase || '').trim().replace(/\/+$/, '');
+  let normalized = String(nodeBase || '').trim().replace(/\/+$/, '');
+  if (!normalized) return '';
+  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(normalized)) {
+    normalized = `http://${normalized}`;
+  }
+  return normalized;
 }
 
 /**
  * Create a WarthogApi client for browser use.
- * Local/LAN nodes connect directly from the user's browser.
- * Remote nodes use a JSON POST proxy (required for HTTP nodes on HTTPS production).
+ * Loopback nodes on HTTP pages connect directly; everything else uses /api/proxy
+ * (required for HTTP nodes when the wallet is served over HTTPS).
  */
 export async function createWarthogApi(nodeBase) {
   await ensureBuffer();
   const { WarthogApi } = await import('warthog-js');
   const normalized = normalizeNodeUrl(nodeBase);
   return createBrowserWarthogApi(WarthogApi, normalized, {
-    useProxy: !isLocalNode(normalized),
+    useProxy: shouldUseNodeProxy(normalized),
   });
 }
 

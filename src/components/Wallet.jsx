@@ -11,6 +11,7 @@ import DeFiTestnetPage from './DeFiTestnetPage';
 import AssetPage from './AssetPage';
 import DexPage from './DexPage';
 import GatedPage from './GatedPage';
+import { isDefiNode } from '../utils/presetNodes.js';
 
 const WalletContent = () => {
   const {
@@ -177,7 +178,7 @@ const WalletContent = () => {
     { key: 'node', label: 'Node' },
   ];
 
-  const isTestnet = selectedNode && !['https://warthognode.duckdns.org', 'http://217.182.64.43:3001'].includes(selectedNode);
+  const isTestnet = selectedNode && isDefiNode(selectedNode);
   if (isTestnet) {
     tabs.push({ key: 'assets', label: 'Assets' });
     tabs.push({ key: 'dex', label: 'DEX' });

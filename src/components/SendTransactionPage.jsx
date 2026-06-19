@@ -7,6 +7,7 @@ import {
   parseRecipientAddress,
   signAndSubmitTransaction,
 } from '../utils/warthogClient.js';
+import { DEFAULT_NODE_URL } from '../utils/presetNodes.js';
 
 const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNode }) => {
   const {
@@ -18,7 +19,7 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
   } = useWallet();
 
   const wallet = propWallet || contextWallet;
-  const selectedNode = propSelectedNode || contextSelectedNode || 'https://warthognode.duckdns.org';
+  const selectedNode = propSelectedNode || contextSelectedNode || DEFAULT_NODE_URL;
 
   const toast = useToast();
 

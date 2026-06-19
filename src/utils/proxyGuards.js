@@ -1,19 +1,19 @@
-import { isFakeMineAllowed, isLocalNode } from './nodeAccess.js';
+import { isFakeMineAllowed, isLoopbackNode } from './nodeAccess.js';
 
 export const isFakeMineNodePath = (nodePath) =>
   /^debug\/fakemine(?:\/|$)/i.test(String(nodePath || '').replace(/^\//, ''));
 
-/** Block local/LAN targets — the server proxy cannot reach the user's machine. */
+/** Block loopback targets — the server proxy would hit its own machine, not the user's. */
 export const rejectLocalNodeInProxy = (nodeBase) => {
-  if (!isLocalNode(nodeBase)) return null;
+  if (!isLoopbackNode(nodeBase)) return null;
 
   return {
     status: 400,
     body: JSON.stringify({
       code: 1,
       error:
-        'Local and LAN nodes must be reached directly from your browser, not through the server proxy. '
-        + 'Reconnect using a localhost or private-network node URL — the wallet will connect automatically.',
+        'Loopback nodes (localhost / 127.0.0.1) cannot be reached through the server proxy. '
+        + 'Use http://127.0.0.1:PORT when running the wallet locally, or use the node\'s public HTTP/HTTPS URL.',
     }),
   };
 };

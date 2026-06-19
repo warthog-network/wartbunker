@@ -3,6 +3,7 @@ import axios from 'axios';
 import { encryptWallet, decryptWallet } from '../utils/warthogWalletUtils';
 import { clearLegacyAutoMinePrefs, isFakeMineAllowed } from '../utils/nodeAccess';
 import { createWarthogApi, normalizeAssetHash } from '../utils/warthogClient.js';
+import { DEFAULT_NODE_URL, isDefiNode, isMainnetNode } from '../utils/presetNodes.js';
 
 const WalletContext = createContext();
 
@@ -23,7 +24,7 @@ export const WalletProvider = ({ children }) => {
   const [nextNonce, setNextNonce] = useState(null);
   const [pinHeight, setPinHeight] = useState(null);
   const [pinHash, setPinHash] = useState(null);
-  const [selectedNode, setSelectedNode] = useState('https://warthognode.duckdns.org');
+  const [selectedNode, setSelectedNode] = useState(DEFAULT_NODE_URL);
   const [sentTransactions, setSentTransactions] = useState([]);
   const [failedTransactions, setFailedTransactions] = useState([]);
   const [error, setError] = useState(null);
@@ -40,18 +41,7 @@ export const WalletProvider = ({ children }) => {
 
   const getWatchedAssetsKey = (address) => address ? `warthogWatchedAssets_${address.toLowerCase()}` : null;
 
-  const isTestnetNode = (node) => {
-    if (!node) return false;
-    const n = node.toLowerCase();
-    return n.includes('localhost') ||
-           n.includes('127.0.0.1') ||
-           n.includes('defitestnet') ||
-           n.includes('testnet');
-  };
-
-  const isMainnetNode = (node) => 
-    node === 'https://warthognode.duckdns.org' || 
-    node === 'http://217.182.64.43:3001';
+  const isTestnetNode = (node) => isDefiNode(node);
 
   // Client-only restore from storage. Using useLayoutEffect so state updates happen
   // synchronously before the browser paints. This guarantees the *first* render
@@ -61,7 +51,7 @@ export const WalletProvider = ({ children }) => {
     clearLegacyAutoMinePrefs();
 
     // Restore preferred node
-    const savedNode = localStorage.getItem('selectedNode') || 'https://warthognode.duckdns.org';
+    const savedNode = localStorage.getItem('selectedNode') || DEFAULT_NODE_URL;
     setSelectedNode(savedNode);
 
     // Restore active wallet session (decrypted data lives in sessionStorage)

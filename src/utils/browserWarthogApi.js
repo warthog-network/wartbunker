@@ -13,7 +13,7 @@ function parseNodeResponse(text) {
 }
 
 /**
- * Browser WarthogApi: direct fetch for local/LAN nodes, JSON POST proxy for remote nodes.
+ * Browser WarthogApi: direct fetch for loopback nodes on HTTP pages; JSON POST proxy otherwise.
  * Avoids putting http:// node URLs in query strings (WAF/HTML issues on some hosts).
  */
 export function createBrowserWarthogApi(WarthogApi, baseUrl, { useProxy = false } = {}) {

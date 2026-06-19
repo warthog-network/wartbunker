@@ -2,7 +2,9 @@ import { ethers, SigningKey } from 'ethers';
 import { isLocalNode } from '../../utils/nodeAccess.js';
 import { deriveWarthogAddress } from '../../utils/warthogWalletUtils.js';
 
-const DEFAULT_NODE = 'https://warthognode.duckdns.org';
+import { DEFAULT_NODE_URL } from '../../utils/presetNodes.js';
+
+const DEFAULT_NODE = DEFAULT_NODE_URL;
 
 const SECRET_CONTENT = process.env.GATED_SECRET
   || 'Congratulations — this content came from the server after a successful on-chain balance check.\n\n'

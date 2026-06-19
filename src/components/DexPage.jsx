@@ -8,6 +8,7 @@ import {
   getNodeData,
   signAndSubmitTransaction,
 } from '../utils/warthogClient.js';
+import { DEFAULT_NODE_URL } from '../utils/presetNodes.js';
 
 const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const {
@@ -15,7 +16,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     selectedNode: contextSelectedNode,
   } = useWallet();
 
-  const selectedNode = propSelectedNode || contextSelectedNode || 'https://warthognode.duckdns.org';
+  const selectedNode = propSelectedNode || contextSelectedNode || DEFAULT_NODE_URL;
 
   const wallet = propWallet || (() => {
     try {

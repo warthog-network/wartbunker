@@ -10,6 +10,16 @@ export const parseNodeHostname = (node) => {
   }
 };
 
+/** True for loopback-only nodes (localhost / 127.0.0.1). */
+export const isLoopbackNode = (node) => {
+  const host = parseNodeHostname(node);
+  if (!host) {
+    const n = String(node).toLowerCase();
+    return n.includes('localhost') || n.includes('127.0.0.1');
+  }
+  return LOCAL_HOSTS.has(host);
+};
+
 /** True for nodes reachable from the user's browser (loopback + private LAN). */
 export const isLocalNode = (node) => {
   const host = parseNodeHostname(node);
@@ -22,6 +32,20 @@ export const isLocalNode = (node) => {
   if (/^192\.168\./.test(host)) return true;
   if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return true;
   if (host.endsWith('.local')) return true;
+  return false;
+};
+
+/**
+ * Whether browser requests should go through /api/proxy (matches warthog.network website).
+ * Only loopback nodes on an HTTP page connect directly; all other hosts use the proxy so
+ * HTTPS deployments can reach plain-HTTP nodes (e.g. http://65.87.7.86:3002).
+ */
+export const shouldUseNodeProxy = (node) => {
+  if (!isLoopbackNode(node)) return true;
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+    const n = String(node).trim().toLowerCase();
+    if (n.startsWith('http://')) return true;
+  }
   return false;
 };
 

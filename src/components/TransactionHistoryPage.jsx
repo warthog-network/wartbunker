@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useWallet } from './WalletContext';
 import TransactionHistory from './TransactionHistory';
+import { DEFAULT_NODE_URL } from '../utils/presetNodes.js';
 
 function readSessionWallet() {
   try {
@@ -17,9 +18,9 @@ const TransactionHistoryPage = ({ wallet: propWallet, selectedNode: propSelected
   const wallet = propWallet || contextWallet || readSessionWallet();
   const selectedNode = propSelectedNode || contextSelectedNode || (() => {
     try {
-      return localStorage.getItem('selectedNode') || 'https://warthognode.duckdns.org';
+      return localStorage.getItem('selectedNode') || DEFAULT_NODE_URL;
     } catch {
-      return 'https://warthognode.duckdns.org';
+      return DEFAULT_NODE_URL;
     }
   })();
 

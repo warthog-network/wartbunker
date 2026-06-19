@@ -5,6 +5,7 @@
 import React, { useState, useEffect } from 'react';
 import { useToast } from './Toast';
 import { createWarthogApi, fetchBlockDetails } from '../utils/warthogClient.js';
+import { isDefiNode } from '../utils/presetNodes.js';
 
 const PAGE_SIZE = 15;
 
@@ -25,7 +26,7 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
   const [timeoutIdMonth, setTimeoutIdMonth] = useState(null);
   const [isDarkMode, setIsDarkMode] = useState(false);
 
-  const isTestnet = node?.includes('localhost') || node?.includes('test') || node?.includes('defi') || node?.includes('127.0.0.1');
+  const isTestnet = isDefiNode(node);
 
   const abbreviate = (str) => str ? `${str.slice(0,6)}...${str.slice(-4)}` : 'N/A';
 
@@ -352,6 +353,7 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
         setHasMore(false);
         setNextCursor(null);
         setCurrentPage(1);
+        setError(histRes.error || 'Failed to fetch transaction history');
         setLoading(false);
         return;
       }

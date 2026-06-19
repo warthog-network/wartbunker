@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
 import { createWarthogApi, getNodeData } from '../utils/warthogClient.js';
+import { DEFAULT_NODE_URL } from '../utils/presetNodes.js';
 
 const ToolsPage = ({ selectedNode: propSelectedNode }) => {
   const { performFakeMine, isFakeMineAllowed } = useWallet();
@@ -12,10 +13,10 @@ const ToolsPage = ({ selectedNode: propSelectedNode }) => {
   const [isMiningNow, setIsMiningNow] = useState(false);
   const selectedNode = propSelectedNode || (() => {
     try {
-      if (typeof localStorage === 'undefined') return 'https://warthognode.duckdns.org';
-      return localStorage.getItem('selectedNode') || 'https://warthognode.duckdns.org';
+      if (typeof localStorage === 'undefined') return DEFAULT_NODE_URL;
+      return localStorage.getItem('selectedNode') || DEFAULT_NODE_URL;
     } catch {
-      return 'https://warthognode.duckdns.org';
+      return DEFAULT_NODE_URL;
     }
   })();
 
