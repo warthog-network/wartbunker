@@ -75,11 +75,64 @@ export function isValidAssetHash(hash) {
 
 /** Validate a Warthog address checksum via warthog-js. */
 export async function isValidWarthogAddress(address) {
-  const clean = (address || '').trim().replace(/^0x/i, '');
-  if (clean.length !== 48) return false;
+  const result = await validateWarthogAddressInput(address);
+  return result.valid === true;
+}
+
+/**
+ * Validate a Warthog address locally (no node required).
+ * Accepts 40-char account IDs (checksum computed) or 48-char full addresses.
+ */
+export async function validateWarthogAddressInput(address) {
+  const clean = (address || '').trim().replace(/^0x/i, '').toLowerCase();
+
+  if (!clean) {
+    return { valid: false, error: 'Please enter an address' };
+  }
+
+  if (!/^[0-9a-f]+$/.test(clean)) {
+    return { valid: false, error: 'Address must contain only hexadecimal characters (0-9, a-f)' };
+  }
+
   await ensureBuffer();
   const { Address } = await import('warthog-js');
-  return Address.validate(clean);
+
+  if (clean.length === 40) {
+    const derived = Address.fromRaw(clean);
+    if (!derived) {
+      return { valid: false, error: 'Invalid 40-character account ID' };
+    }
+    return {
+      valid: true,
+      format: 'raw',
+      accountId: clean,
+      fullAddress: derived.hex,
+      checksumValid: true,
+      message: 'Valid address',
+    };
+  }
+
+  if (clean.length === 48) {
+    if (!Address.validate(clean)) {
+      return {
+        valid: false,
+        error: 'Checksum invalid — one or more characters may be wrong in this 48-character address.',
+      };
+    }
+    return {
+      valid: true,
+      format: 'full',
+      fullAddress: clean,
+      accountId: clean.slice(0, 40),
+      checksumValid: true,
+      message: 'Valid address',
+    };
+  }
+
+  return {
+    valid: false,
+    error: `Address must be 40 hex characters (account ID) or 48 hex characters (full address with checksum). You entered ${clean.length}.`,
+  };
 }
 
 /** Parse a nonce from account data and return the next usable nonce id. */

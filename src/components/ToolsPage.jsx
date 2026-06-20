@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
-import { createWarthogApi, getNodeData } from '../utils/warthogClient.js';
+import { validateWarthogAddressInput } from '../utils/warthogFormat.js';
 import { DEFAULT_NODE_URL } from '../utils/presetNodes.js';
 
 const ToolsPage = ({ selectedNode: propSelectedNode }) => {
@@ -10,6 +10,7 @@ const ToolsPage = ({ selectedNode: propSelectedNode }) => {
 
   const [address, setAddress] = useState('');
   const [validateResult, setValidateResult] = useState(null);
+  const [isValidating, setIsValidating] = useState(false);
   const [isMiningNow, setIsMiningNow] = useState(false);
   const selectedNode = propSelectedNode || (() => {
     try {
@@ -21,16 +22,20 @@ const ToolsPage = ({ selectedNode: propSelectedNode }) => {
   })();
 
   const handleValidateAddress = async () => {
-    if (!address) {
-      setValidateResult({ error: 'Please enter an address' });
-      return;
-    }
+    setIsValidating(true);
     try {
-      const api = await createWarthogApi(selectedNode);
-      setValidateResult(await getNodeData(api, `account/${address}/validate`));
+      setValidateResult(await validateWarthogAddressInput(address));
     } catch (err) {
-      setValidateResult({ error: 'Failed to validate address: ' + err.message });
+      setValidateResult({ valid: false, error: err.message || 'Validation failed' });
     }
+    setIsValidating(false);
+  };
+
+  const copyAddress = (text) => {
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(() => {
+      toast.success('Copied to clipboard');
+    }).catch(() => toast.error('Failed to copy'));
   };
 
   const handleMineNow = async () => {
@@ -47,8 +52,8 @@ const ToolsPage = ({ selectedNode: propSelectedNode }) => {
   return (
     <section>
       <h2>Tools</h2>
-      <p>
-        Validate addresses on the Warthog network.
+      <p className="text-sm text-zinc-400 mb-4">
+        Validate a Warthog address locally — no node connection required.
       </p>
       <div className="form-group">
         <label>Address:</label>
@@ -56,20 +61,49 @@ const ToolsPage = ({ selectedNode: propSelectedNode }) => {
           type="text"
           value={address}
           onChange={(e) => setAddress(e.target.value.trim())}
-          placeholder="Enter 48-character address"
-          className="input"
+          placeholder="Enter address"
+          className="input font-mono text-sm"
+          onKeyDown={(e) => e.key === 'Enter' && handleValidateAddress()}
         />
       </div>
       <button
         onClick={handleValidateAddress}
+        disabled={isValidating || !address}
+        className="wallet-action-btn disabled:opacity-60"
       >
-        Validate Address
+        {isValidating ? 'Validating…' : 'Validate Address'}
       </button>
       {validateResult && (
-        <div className="result">
-          <pre>
-            {JSON.stringify(validateResult, null, 2)}
-          </pre>
+        <div
+          className={`result mt-4 border ${
+            validateResult.valid
+              ? 'border-emerald-800/60 bg-emerald-950/20'
+              : 'border-red-900/60 bg-red-950/20'
+          }`}
+        >
+          {validateResult.valid ? (
+            <>
+              <p className="text-emerald-400 font-medium mb-3">{validateResult.message}</p>
+              <div className="text-[10px] text-zinc-500 mb-1">Address</div>
+              <span
+                className="wallet-address block cursor-pointer hover:opacity-90 transition-opacity"
+                onClick={() => copyAddress(validateResult.fullAddress)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    copyAddress(validateResult.fullAddress);
+                  }
+                }}
+              >
+                {validateResult.fullAddress}
+              </span>
+              <p className="text-[10px] text-zinc-500 mt-2">Click to copy</p>
+            </>
+          ) : (
+            <p className="text-red-400 text-sm">{validateResult.error}</p>
+          )}
         </div>
       )}
 
