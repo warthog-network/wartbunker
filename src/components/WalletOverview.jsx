@@ -217,42 +217,42 @@ const WalletOverview = ({ onLogout }) => {
 
       <div className="space-y-4">
         {/* Balance hero */}
-        <div className="relative overflow-hidden rounded-2xl border border-zinc-700/80 bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-950">
+        <div className="relative overflow-hidden rounded-2xl border border-zinc-700/80 bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-950 min-w-0">
           <div className="absolute -top-10 -right-10 w-40 h-40 rounded-full bg-[#FDB913]/8 blur-3xl pointer-events-none" />
           <div className="absolute bottom-0 left-0 w-28 h-28 rounded-full bg-orange-500/5 blur-2xl pointer-events-none" />
 
           <div className="relative p-5">
-            <div className="flex items-start justify-between gap-3 mb-4">
-              <div>
-                <div className="text-[10px] uppercase tracking-[0.14em] text-zinc-500 font-medium mb-1">
+            <div className="mb-4 min-w-0">
+              <div className="flex items-center justify-between gap-2 mb-1 min-w-0">
+                <div className="text-[10px] uppercase tracking-[0.14em] text-zinc-500 font-medium">
                   Total Balance
                 </div>
-                <div className="flex items-baseline gap-2">
-                  {balanceLoading ? (
-                    <div className="h-9 w-36 bg-zinc-800/80 rounded-lg animate-pulse" />
-                  ) : (
-                    <span className="text-3xl font-semibold text-white tabular-nums tracking-tight">
-                      {balance}
-                    </span>
-                  )}
-                  <span className="text-sm font-medium text-[#FDB913]">WART</span>
-                </div>
-                <div className="text-sm text-zinc-400 mt-1 tabular-nums">
-                  {balanceLoading ? (
-                    <span className="inline-block h-4 w-20 bg-zinc-800/60 rounded animate-pulse" />
-                  ) : (
-                    <>≈ ${usdBalance || '—'} USD</>
-                  )}
-                </div>
+                <button
+                  onClick={refreshBalance}
+                  className="refresh-balance-btn flex flex-shrink-0 items-center gap-1 px-2 py-1 text-[10px] font-medium text-zinc-400 bg-zinc-800/80 hover:bg-zinc-700 border border-zinc-600/50 rounded-lg transition-colors !m-0"
+                  title="Refresh balance"
+                >
+                  <span className="text-[#FDB913] text-[11px] leading-none">⟳</span>
+                  Refresh
+                </button>
               </div>
-              <button
-                onClick={refreshBalance}
-                className="refresh-balance-btn flex flex-shrink-0 items-center gap-1 px-2 py-1 text-[10px] font-medium text-zinc-400 bg-zinc-800/80 hover:bg-zinc-700 border border-zinc-600/50 rounded-lg transition-colors !m-0"
-                title="Refresh balance"
-              >
-                <span className="text-[#FDB913] text-[11px] leading-none">⟳</span>
-                Refresh
-              </button>
+              <div className="flex items-baseline gap-2 min-w-0 flex-wrap">
+                {balanceLoading ? (
+                  <div className="h-9 w-36 bg-zinc-800/80 rounded-lg animate-pulse" />
+                ) : (
+                  <span className="text-3xl font-semibold text-white tabular-nums tracking-tight break-all">
+                    {balance}
+                  </span>
+                )}
+                <span className="text-sm font-medium text-[#FDB913]">WART</span>
+              </div>
+              <div className="text-sm text-zinc-400 mt-1 tabular-nums">
+                {balanceLoading ? (
+                  <span className="inline-block h-4 w-20 bg-zinc-800/60 rounded animate-pulse" />
+                ) : (
+                  <>≈ ${usdBalance || '—'} USD</>
+                )}
+              </div>
             </div>
 
             <button
