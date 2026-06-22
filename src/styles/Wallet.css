@@ -471,7 +471,7 @@
     box-sizing: border-box;
   }
 
-  .container button:not(.mobile-hamburger):not(.remove-token-btn):not(.refresh-balance-btn):not(.dex-tab-btn):not(.wallet-tab-btn):not(.wallet-nav-btn):not(.wallet-action-btn) {
+  .container button:not(.mobile-hamburger):not(.remove-token-btn):not(.refresh-balance-btn):not(.compact-btn):not(.dex-tab-btn):not(.wallet-tab-btn):not(.wallet-nav-btn):not(.wallet-action-btn) {
     font-size: 1rem;
     width: 100%;
     margin-right: 0;
@@ -565,10 +565,45 @@
 
 /* Enhanced touch targets for mobile */
 @media (max-width: 767px) {
-  button:not(.remove-token-btn):not(.refresh-balance-btn):not(.dex-tab-btn):not(.wallet-tab-btn):not(.wallet-nav-btn):not(.wallet-action-btn) {
+  button:not(.remove-token-btn):not(.refresh-balance-btn):not(.compact-btn):not(.dex-tab-btn):not(.wallet-tab-btn):not(.wallet-nav-btn):not(.wallet-action-btn) {
     min-height: 48px;
     touch-action: manipulation;
   }
+}
+
+/* Inline compact buttons — copy hash, pagination, etc. */
+.compact-btn {
+  width: auto !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  flex-shrink: 0 !important;
+  padding: 0.25rem 0.625rem !important;
+  margin: 0 !important;
+  font-size: 0.6875rem !important;
+  line-height: 1.2 !important;
+  border-radius: 0.5rem !important;
+  background: rgba(39, 39, 42, 0.8) !important;
+  color: #a1a1aa !important;
+  border: 1px solid rgba(82, 82, 91, 0.5) !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+.compact-btn::before {
+  display: none !important;
+}
+
+.compact-btn:hover:not(:disabled) {
+  background: #3f3f46 !important;
+  color: #d4d4d8 !important;
+  border-color: rgba(82, 82, 91, 0.5) !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+.compact-btn:disabled {
+  opacity: 0.45 !important;
+  cursor: not-allowed !important;
 }
 
 /* Keep refresh balance button compact on all screen sizes */

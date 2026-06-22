@@ -629,11 +629,21 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
           </div>
         )}
 
-        <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
-          <button onClick={handlePrev} disabled={currentPage === 1 || loading}>
+        <div className="flex gap-2 mt-4">
+          <button
+            type="button"
+            className="compact-btn"
+            onClick={handlePrev}
+            disabled={currentPage === 1 || loading}
+          >
             Previous
           </button>
-          <button onClick={handleNext} disabled={!hasNext || loading}>
+          <button
+            type="button"
+            className="compact-btn"
+            onClick={handleNext}
+            disabled={!hasNext || loading}
+          >
             Next
           </button>
         </div>

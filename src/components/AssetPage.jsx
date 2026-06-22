@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
 import { isValidAssetHash } from '../utils/warthogFormat';
@@ -9,64 +9,115 @@ import {
   getNodeData,
   signAndSubmitTransaction,
 } from '../utils/warthogClient.js';
-import { CHART_INTERVALS, loadBestAssetPriceChart } from '../utils/dexPrice.js';
+import {
+  CHART_INTERVALS,
+  loadDexStylePriceChart,
+  normalizeChartAssetHash,
+} from '../utils/dexPrice.js';
 import AssetPriceChart from './AssetPriceChart.jsx';
 import { DEFAULT_NODE_URL } from '../utils/presetNodes.js';
 
-const AssetCardWithChart = ({ asset, isCompact, selectedNode, onCopyHash }) => {
-  const [chartLoading, setChartLoading] = useState(true);
+const AssetCardWithChart = ({ asset, isCompact, selectedNode, onCopyHash, chartPriority = false }) => {
+  const chartSectionRef = useRef(null);
+  const [chartVisible, setChartVisible] = useState(chartPriority);
+  const [chartLoading, setChartLoading] = useState(false);
   const [chartPoints, setChartPoints] = useState([]);
   const [chartError, setChartError] = useState(null);
   const [chartFallbackNote, setChartFallbackNote] = useState(null);
   const [chartMode, setChartMode] = useState('candles');
   const [chartInterval, setChartInterval] = useState('1h');
+  const [chartRefreshKey, setChartRefreshKey] = useState(0);
+  const chartLoadGenRef = useRef(0);
+
+  const handleRefreshChart = () => {
+    setChartVisible(true);
+    setChartRefreshKey((key) => key + 1);
+  };
 
   useEffect(() => {
-    let cancelled = false;
-    const hash = asset?.hash;
-    if (!hash || !selectedNode) {
-      setChartLoading(false);
+    if (chartPriority) {
+      setChartVisible(true);
       return undefined;
     }
 
-    (async () => {
-      setChartLoading(true);
-      setChartPoints([]);
-      setChartError(null);
-      setChartFallbackNote(null);
+    const el = chartSectionRef.current;
+    if (!el) return undefined;
 
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setChartVisible(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: '100px' },
+    );
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [chartPriority, asset?.hash]);
+
+  useEffect(() => {
+    const hash = normalizeChartAssetHash(asset?.hash || '');
+    if (!chartVisible || !hash || !selectedNode) {
+      return undefined;
+    }
+
+    const loadGen = ++chartLoadGenRef.current;
+
+    setChartLoading(true);
+    setChartPoints([]);
+    setChartError(null);
+    setChartFallbackNote(null);
+
+    (async () => {
       try {
         const api = await createWarthogApi(selectedNode);
-        const { points, error, usedFallback, mode, interval } = await loadBestAssetPriceChart(api, hash, {
+        const {
+          points,
+          error,
+          usedFallback,
+          mode,
+          interval,
+          liveAugment,
+        } = await loadDexStylePriceChart(api, hash, {
           n: 100,
+          mode: 'candles',
+          interval: '1h',
+          allowFallback: false,
+          liveAugment: false,
+          priority: chartPriority || chartRefreshKey > 0,
         });
 
-        if (cancelled) return;
+        if (loadGen !== chartLoadGenRef.current) return;
 
         setChartPoints(points);
         setChartError(points.length ? null : error);
         setChartMode(mode);
         setChartInterval(interval);
-        if (usedFallback) {
+        if (liveAugment) {
+          setChartFallbackNote(
+            'Includes recent matches and pool spot — node chart index can lag a few blocks behind.',
+          );
+        } else if (usedFallback) {
           setChartFallbackNote(
             'Chart API unavailable — showing DEX match trades from recent blocks.',
           );
         }
       } catch (err) {
-        if (!cancelled) {
-          setChartError(err.message || 'Failed to load price chart');
-        }
+        if (loadGen !== chartLoadGenRef.current) return;
+        setChartError(err.message || 'Failed to load price chart');
       } finally {
-        if (!cancelled) {
+        if (loadGen === chartLoadGenRef.current) {
           setChartLoading(false);
         }
       }
     })();
 
     return () => {
-      cancelled = true;
+      chartLoadGenRef.current += 1;
     };
-  }, [asset?.hash, selectedNode]);
+  }, [chartVisible, asset?.hash, selectedNode, chartPriority, chartRefreshKey]);
 
   const intervalLabel = chartMode === 'trades'
     ? 'Trades'
@@ -132,30 +183,49 @@ const AssetCardWithChart = ({ asset, isCompact, selectedNode, onCopyHash }) => {
           )}
         </div>
 
-        <div className="mt-4 pt-3 border-t border-zinc-700 text-xs text-zinc-400 flex items-center justify-between">
+        <div className="mt-4 pt-3 border-t border-zinc-700 text-xs text-zinc-400 flex items-center justify-between gap-2">
           <span>Created on-chain</span>
           <button
+            type="button"
             onClick={() => onCopyHash(hash)}
-            className="px-3 py-1 rounded-lg hover:bg-zinc-800 text-blue-400 hover:text-blue-300 transition-colors text-xs font-medium"
+            className="compact-btn text-blue-400 hover:!text-blue-300"
           >
             Copy Full Hash
           </button>
         </div>
       </div>
 
-      <div className="border-t border-zinc-700 bg-zinc-900/40">
+      <div ref={chartSectionRef} className="border-t border-zinc-700 bg-zinc-900/40">
+        <div className="px-4 pt-3 flex items-center justify-between gap-2">
+          <span className="text-xs font-medium uppercase tracking-wider text-violet-400/90">
+            Price chart
+          </span>
+          <button
+            type="button"
+            className="compact-btn text-violet-300 hover:!text-violet-200"
+            onClick={handleRefreshChart}
+            disabled={chartLoading}
+            title="Reload chart with latest matches and pool price"
+          >
+            {chartLoading ? 'Refreshing…' : '↻ Refresh'}
+          </button>
+        </div>
         {chartFallbackNote && (
-          <p className="px-4 pt-3 text-xs text-amber-400/90">{chartFallbackNote}</p>
+          <p className="px-4 pb-1 text-xs text-amber-400/90">{chartFallbackNote}</p>
         )}
-        <AssetPriceChart
-          points={chartPoints}
-          mode={chartMode}
-          assetName={asset?.name || 'Asset'}
-          intervalLabel={intervalLabel}
-          loading={chartLoading}
-          error={chartError}
-          embedded
-        />
+        {!chartVisible ? (
+          <div className="p-6 text-center text-xs text-zinc-500">Scroll into view to load chart…</div>
+        ) : (
+          <AssetPriceChart
+            points={chartPoints}
+            mode={chartMode}
+            assetName={asset?.name || 'Asset'}
+            intervalLabel={intervalLabel}
+            loading={chartLoading}
+            error={chartError}
+            embedded
+          />
+        )}
       </div>
     </div>
   );
@@ -608,6 +678,7 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                 <div className="mt-6">
                   <AssetCardWithChart
                     asset={results.assetLookup.data}
+                    chartPriority
                     selectedNode={selectedNode}
                     onCopyHash={copyToClipboard}
                   />

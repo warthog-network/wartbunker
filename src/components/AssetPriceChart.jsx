@@ -137,6 +137,11 @@ const AssetPriceChart = ({
             {formatAssetPrice(stats?.last)}
             <span className="text-sm text-zinc-500 font-normal ml-2">WART/{assetName}</span>
           </div>
+          {mode === 'trades' && (
+            <div className="text-[10px] text-zinc-500 mt-0.5">
+              Each point is a matched swap (limit orders only count after they fill)
+            </div>
+          )}
         </div>
         <div className="flex gap-4 text-xs font-mono">
           <div>

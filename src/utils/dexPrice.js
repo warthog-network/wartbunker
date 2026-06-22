@@ -295,6 +295,21 @@ export function buildPriceHistoryFromLatest(latestData, assetHash, { mode, inter
   return trades.slice(-n);
 }
 
+async function getNodeDataWithRetry(api, path, { retries = 1, delayMs = 250 } = {}) {
+  let lastError;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await getNodeData(api, path);
+    } catch (err) {
+      lastError = err;
+      if (attempt < retries) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs * (attempt + 1)));
+      }
+    }
+  }
+  throw lastError;
+}
+
 /**
  * Load chart points for an asset from /chart/* (falls back to /transaction/latest).
  * @param {import('warthog-js').WarthogApi} api
@@ -316,7 +331,7 @@ export async function loadAssetPriceChart(api, assetHash, {
     ? buildCandlesPath(normalized, interval, { n })
     : buildTradesPath(normalized, { n });
 
-  const result = await getNodeData(api, path);
+  const result = await getNodeDataWithRetry(api, path);
 
   if (result.code === 0) {
     const points = mode === 'candles'
@@ -326,7 +341,7 @@ export async function loadAssetPriceChart(api, assetHash, {
   }
 
   if (result.code === CHART_API_UNSUPPORTED_CODE) {
-    const latestRes = await getNodeData(api, 'transaction/latest');
+    const latestRes = await getNodeDataWithRetry(api, 'transaction/latest');
     if (latestRes.code !== 0) {
       return {
         points: [],
@@ -360,85 +375,341 @@ export async function loadAssetPriceChart(api, assetHash, {
   };
 }
 
-const chartLoadCache = new Map();
+/** Serialize chart fetches — parallel asset cards otherwise 502 the proxy. */
+let chartFetchQueue = Promise.resolve();
+/** Duckdns chart API needs ~10s recovery after a 502 on a no-data asset before the next hash works. */
+let chartCooldownUntil = 0;
+
+async function waitChartCooldown() {
+  const waitMs = chartCooldownUntil - Date.now();
+  if (waitMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
+}
+
+function markChartCooldown(ms = 5000) {
+  chartCooldownUntil = Math.max(chartCooldownUntil, Date.now() + ms);
+}
+
+function enqueueChartFetch(task, { priority = false } = {}) {
+  const run = chartFetchQueue.then(async () => {
+    if (!priority) {
+      await waitChartCooldown();
+    } else {
+      // Hash lookups: only wait if a prior 502 cooldown is still active.
+      const waitMs = chartCooldownUntil - Date.now();
+      if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+    }
+    return task();
+  });
+  chartFetchQueue = run
+    .catch(() => {})
+    .then(() => new Promise((resolve) => setTimeout(resolve, priority ? 0 : 50)));
+  return run;
+}
 
 /**
- * Pick the richest chart series for an asset (tries 1h → 5m candles, then trades).
- * Helps assets with few hourly buckets (e.g. BUN with only one 1h candle).
- * Deduplicates in-flight loads per node+asset so search results don't stampede the proxy.
+ * Assets with zero DEX pool reserves return 502 from /chart/* and lock out other assets.
+ * Skip chart calls for those — saves ~5–10s per no-pool asset in multi-result search.
  */
-export async function loadBestAssetPriceChart(api, assetHash, { n = 100 } = {}) {
+async function getAssetMarketSnapshot(api, normalized) {
+  try {
+    const res = await getNodeData(api, `dex/market/${normalized}`);
+    if (res.code !== 0) {
+      return { hasLiquidity: true, poolSpot: null };
+    }
+    const pool = res.data?.liquidityPool;
+    if (!pool) {
+      return { hasLiquidity: false, poolSpot: null };
+    }
+    const wart = parseWartAmount(pool.wart) ?? 0;
+    const asset = parseFundsDecimalAmount(pool.asset) ?? 0;
+    return {
+      hasLiquidity: wart > 0 && asset > 0,
+      poolSpot: asset > 0 ? wart / asset : null,
+    };
+  } catch {
+    return { hasLiquidity: true, poolSpot: null };
+  }
+}
+
+function dedupeTrades(trades) {
+  const seen = new Set();
+  return trades.filter((trade) => {
+    const key = `${trade.height}-${trade.timestamp}-${trade.price?.toFixed(8)}-${trade.base?.toFixed(4)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return trade.price != null && Number.isFinite(trade.price);
+  });
+}
+
+/**
+ * Node /chart/* can lag behind real matches. Merge newer swaps from /transaction/latest
+ * and append current pool spot so recent buys show on the chart.
+ */
+async function augmentChartWithLiveData(api, normalized, result, { n, poolSpot }) {
+  if (!result?.points?.length) {
+    return { ...result, poolSpot, liveAugment: false };
+  }
+
+  let latestRes;
+  try {
+    latestRes = await getNodeData(api, 'transaction/latest');
+  } catch {
+    return { ...result, poolSpot, liveAugment: false };
+  }
+
+  if (latestRes.code !== 0) {
+    return { ...result, poolSpot, liveAugment: false };
+  }
+
+  const liveTrades = parseMatchTradesFromLatest(latestRes.data, normalized);
+  const chartMaxHeight = Math.max(...result.points.map((p) => p.height ?? 0));
+  const chartMaxTs = Math.max(...result.points.map((p) => p.timestamp ?? 0));
+  const liveMaxHeight = liveTrades.length
+    ? Math.max(...liveTrades.map((t) => t.height ?? 0))
+    : chartMaxHeight;
+  const hasNewerMatches = liveTrades.some(
+    (t) => t.height > chartMaxHeight || t.timestamp > chartMaxTs,
+  );
+
+  let points = result.points;
+  let mode = result.mode;
+  let interval = result.interval;
+  let liveAugment = false;
+
+  if (hasNewerMatches) {
+    let indexedTrades = result.mode === 'trades'
+      ? [...result.points]
+      : [];
+
+    if (!indexedTrades.length) {
+      const tradesRes = await fetchChartNodeData(api, buildTradesPath(normalized, { n }));
+      if (tradesRes.code === 0) {
+        indexedTrades = parseTradeResponse(tradesRes.data);
+      }
+    }
+
+    points = dedupeTrades([...indexedTrades, ...liveTrades])
+      .sort((a, b) => a.timestamp - b.timestamp || a.height - b.height)
+      .slice(-n);
+    mode = 'trades';
+    interval = 'trades';
+    liveAugment = true;
+  }
+
+  if (poolSpot != null && points.length) {
+    const last = points[points.length - 1];
+    const lastPrice = mode === 'trades' ? last.price : last.close;
+    if (
+      lastPrice != null
+      && Number.isFinite(lastPrice)
+      && Math.abs(poolSpot - lastPrice) / Math.max(lastPrice, 1e-12) > 0.005
+    ) {
+      points = [
+        ...points,
+        {
+          timestamp: Math.max(last.timestamp ?? 0, Math.floor(Date.now() / 1000)),
+          height: liveMaxHeight,
+          base: 0,
+          quote: 0,
+          price: poolSpot,
+        },
+      ];
+      if (mode !== 'trades') {
+        mode = 'trades';
+        interval = 'trades';
+      }
+      liveAugment = true;
+    }
+  }
+
+  return {
+    ...result,
+    points,
+    mode,
+    interval,
+    poolSpot,
+    liveAugment,
+  };
+}
+
+const CHART_GATEWAY_ERROR_PATTERN = /502|bad gateway|html instead of json|non-json/i;
+
+async function fetchChartNodeData(api, path, { retries = 1, delayMs = 300 } = {}) {
+  let lastError;
+  let sawGatewayError = false;
+
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await getNodeData(api, path);
+    } catch (err) {
+      lastError = err;
+      const message = err?.message || '';
+      if (CHART_GATEWAY_ERROR_PATTERN.test(message)) {
+        sawGatewayError = true;
+        if (attempt < retries) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs * (attempt + 1)));
+          continue;
+        }
+        markChartCooldown();
+        return { code: 404, error: 'Chart gateway error', data: null };
+      }
+      if (attempt < retries) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs * (attempt + 1)));
+      }
+    }
+  }
+
+  if (sawGatewayError) {
+    markChartCooldown();
+    return { code: 404, error: 'Chart gateway error', data: null };
+  }
+
+  throw lastError;
+}
+
+async function loadChartAttempt(api, normalized, attempt, { n }) {
+  const candleInterval = attempt.interval === 'trades' ? '1h' : attempt.interval;
+  const path = attempt.mode === 'candles'
+    ? buildCandlesPath(normalized, candleInterval, { n })
+    : buildTradesPath(normalized, { n });
+
+  let points = [];
+  let usedFallback = false;
+  let error = null;
+
+  try {
+    const result = await fetchChartNodeData(api, path);
+
+    if (result.code === 0) {
+      points = attempt.mode === 'candles'
+        ? parseCandleResponse(result.data)
+        : parseTradeResponse(result.data);
+    } else if (result.code === 404) {
+      error = 'Chart gateway error';
+    } else if (result.code === CHART_API_UNSUPPORTED_CODE) {
+      const latestRes = await fetchChartNodeData(api, 'transaction/latest');
+      if (latestRes.code !== 0) {
+        error = 'Chart API is not enabled on this node and recent trades could not be loaded.';
+      } else {
+        points = buildPriceHistoryFromLatest(latestRes.data, normalized, {
+          mode: attempt.mode,
+          interval: candleInterval,
+          n,
+        });
+        usedFallback = true;
+        if (!points.length) {
+          error = 'No DEX trades found for this asset in recent blocks.';
+        }
+      }
+    } else {
+      error = result.error || 'Node returned an error';
+    }
+  } catch (err) {
+    error = err.message || 'Failed to load chart data';
+  }
+
+  if (!points.length) {
+    return { points: [], error, usedFallback, mode: attempt.mode, interval: attempt.interval };
+  }
+
+  return {
+    points,
+    error: null,
+    usedFallback,
+    mode: attempt.mode,
+    interval: attempt.interval,
+  };
+}
+
+async function loadDexStylePriceChartInner(api, assetHash, {
+  n = 100,
+  mode = 'candles',
+  interval = '1h',
+  allowFallback = false,
+  liveAugment = false,
+} = {}) {
   const normalized = normalizeChartAssetHash(assetHash);
   if (!normalized) {
     return {
       points: [],
       error: 'Invalid asset hash',
       usedFallback: false,
-      mode: 'candles',
-      interval: '1h',
+      mode,
+      interval,
     };
   }
 
-  const nodeKey = api?.baseUrl || '';
-  const cacheKey = `${nodeKey}:${normalized}:${n}`;
-  if (chartLoadCache.has(cacheKey)) {
-    return chartLoadCache.get(cacheKey);
+  const { hasLiquidity, poolSpot } = await getAssetMarketSnapshot(api, normalized);
+  if (!hasLiquidity) {
+    return {
+      points: [],
+      error: 'No DEX pool liquidity yet — chart appears after the asset has pool trades.',
+      usedFallback: false,
+      mode,
+      interval,
+      poolSpot: null,
+      liveAugment: false,
+    };
   }
 
-  const promise = (async () => {
-    const attempts = [
+  const attempts = allowFallback
+    ? [
       { mode: 'candles', interval: '1h' },
       { mode: 'candles', interval: '5m' },
       { mode: 'trades', interval: 'trades' },
-    ];
+    ]
+    : [{ mode, interval: mode === 'trades' ? 'trades' : interval }];
 
-    let best = null;
+  let best = null;
 
-    for (const attempt of attempts) {
-      let res;
-      try {
-        res = await loadAssetPriceChart(api, normalized, {
-          mode: attempt.mode,
-          interval: attempt.interval === 'trades' ? '1h' : attempt.interval,
-          n,
-        });
-      } catch {
-        continue;
-      }
+  for (const attempt of attempts) {
+    const res = await loadChartAttempt(api, normalized, attempt, { n });
 
-      if (res.error && !res.points.length) {
-        continue;
-      }
-
-      if (!best || res.points.length > best.points.length) {
-        best = { ...res, interval: attempt.interval };
-      }
-
-      // Match DEX chart behaviour: stop after a solid 1h candle series.
-      if (
-        attempt.interval === '1h'
-        && res.points.length >= 2
-        && !res.usedFallback
-        && !res.error
-      ) {
+    if (!res.points.length) {
+      if (res.error === 'Chart gateway error') {
         break;
       }
+      continue;
     }
 
-    return best || {
-      points: [],
-      error: 'No DEX price history found for this asset yet.',
-      usedFallback: false,
-      mode: 'candles',
-      interval: '1h',
-    };
-  })();
+    if (!best || res.points.length > best.points.length) {
+      best = res;
+    }
 
-  chartLoadCache.set(cacheKey, promise);
-  try {
-    return await promise;
-  } catch (err) {
-    chartLoadCache.delete(cacheKey);
-    throw err;
+    break;
   }
+
+  if (best?.points?.length) {
+    if (liveAugment) {
+      return augmentChartWithLiveData(api, normalized, best, { n, poolSpot });
+    }
+    return { ...best, poolSpot, liveAugment: false };
+  }
+
+  return {
+    points: [],
+    error: 'No DEX price history found for this asset yet.',
+    usedFallback: false,
+    mode,
+    interval,
+    poolSpot,
+    liveAugment: false,
+  };
 }
+
+/**
+ * Load chart data for embedded asset cards (queued to avoid proxy 502s).
+ * Defaults to 1h candles only; pass allowFallback/liveAugment for the old auto behavior.
+ */
+export function loadDexStylePriceChart(api, assetHash, options = {}) {
+  const { priority = false, ...chartOptions } = options;
+  return enqueueChartFetch(
+    () => loadDexStylePriceChartInner(api, assetHash, chartOptions),
+    { priority },
+  );
+}
+
+/** @deprecated Use loadDexStylePriceChart — kept for any external callers. */
+export const loadBestAssetPriceChart = loadDexStylePriceChart;
