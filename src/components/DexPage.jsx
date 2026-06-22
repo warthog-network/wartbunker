@@ -8,7 +8,27 @@ import {
   getNodeData,
   signAndSubmitTransaction,
 } from '../utils/warthogClient.js';
+import {
+  CHART_API_UNSUPPORTED_CODE,
+  CHART_INTERVALS,
+  buildCandlesPath,
+  buildPriceHistoryFromLatest,
+  buildTradesPath,
+  computePoolSpotPrice,
+  formatAssetPrice,
+  normalizeChartAssetHash,
+  parseCandleResponse,
+  parseTradeResponse,
+} from '../utils/dexPrice.js';
+import AssetPriceChart from './AssetPriceChart.jsx';
 import { DEFAULT_NODE_URL } from '../utils/presetNodes.js';
+import {
+  buildVolumePlan,
+  clampRounds,
+  estimateWartRequired,
+  executeVolumePlan,
+  fetchVolumeContext,
+} from '../utils/dexVolume.js';
 
 const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const {
@@ -33,9 +53,18 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const [results, setResults] = useState({});
   const [loading, setLoading] = useState({});
   const [activeTab, setActiveTab] = useState('market');
+  const [chartMode, setChartMode] = useState('candles');
+  const [chartInterval, setChartInterval] = useState('1h');
+  const [chartAssetName, setChartAssetName] = useState('Asset');
+  const [chartFallbackNote, setChartFallbackNote] = useState(null);
+
+  const [volumePlan, setVolumePlan] = useState([]);
+  const [volumeContext, setVolumeContext] = useState(null);
+  const [volumeLogs, setVolumeLogs] = useState([]);
+  const [volumeStrategy, setVolumeStrategy] = useState('buys');
 
   useEffect(() => {
-    if (activeTab === 'limit') {
+    if (activeTab === 'limit' || activeTab === 'volume') {
       import('../utils/encodeLimitPrice.js').catch(() => {});
     }
   }, [activeTab]);
@@ -190,10 +219,14 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       const wartReserve = safeStr(liquidity.wart || liquidity.WART, '0');
       const assetReserve = safeStr(liquidity.asset || liquidity[asset.name] || liquidity.assetE8, '0');
       
-      let priceRaw = d.price || d.spotPrice || d.doubleAdjustedPrice || d.marketPrice;
-      let price = safeStr(priceRaw, '—');
-      if (price === '—' && priceRaw && typeof priceRaw === 'object') {
-        price = priceRaw.doubleAdjusted != null ? String(priceRaw.doubleAdjusted) : price;
+      const spotPrice = computePoolSpotPrice(d);
+      let price = spotPrice != null ? formatAssetPrice(spotPrice) : '—';
+      if (price === '—') {
+        const priceRaw = d.price || d.spotPrice || d.doubleAdjustedPrice || d.marketPrice;
+        price = safeStr(priceRaw, '—');
+        if (price === '—' && priceRaw && typeof priceRaw === 'object') {
+          price = priceRaw.doubleAdjusted != null ? String(priceRaw.doubleAdjusted) : price;
+        }
       }
       
       return (
@@ -595,6 +628,220 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     }
   };
 
+  const loadPriceChart = async () => {
+    const assetRaw = document.getElementById('chartAssetHash')?.value.trim() || '';
+    const assetHash = normalizeChartAssetHash(assetRaw);
+    if (!assetHash) {
+      toast.error('Asset Hash must be exactly 64 hex characters');
+      return;
+    }
+
+    const countRaw = document.getElementById('chartCount')?.value.trim() || '200';
+    const n = Math.min(500, Math.max(10, parseInt(countRaw, 10) || 200));
+
+    const chartKey = chartMode === 'candles' ? 'priceCandles' : 'priceTrades';
+    setLoading(prev => ({ ...prev, [chartKey]: true }));
+    setChartFallbackNote(null);
+
+    try {
+      const path = chartMode === 'candles'
+        ? buildCandlesPath(assetHash, chartInterval, { n })
+        : buildTradesPath(assetHash, { n });
+
+      const api = await createWarthogApi(selectedNode);
+      const result = await getNodeData(api, path);
+
+      let points = [];
+      let usedFallback = false;
+
+      if (result.code === 0) {
+        points = chartMode === 'candles'
+          ? parseCandleResponse(result.data)
+          : parseTradeResponse(result.data);
+      } else if (result.code === CHART_API_UNSUPPORTED_CODE) {
+        const latestRes = await getNodeData(api, 'transaction/latest');
+        if (latestRes.code !== 0) {
+          setResults(prev => ({
+            ...prev,
+            [chartKey]: {
+              error: 'Chart API is not enabled on this node and recent trades could not be loaded.',
+            },
+          }));
+          return;
+        }
+
+        points = buildPriceHistoryFromLatest(latestRes.data, assetHash, {
+          mode: chartMode,
+          interval: chartInterval,
+          n,
+        });
+        usedFallback = true;
+
+        if (!points.length) {
+          setResults(prev => ({
+            ...prev,
+            [chartKey]: {
+              error: 'Chart API is not enabled on this node yet. No recent DEX matches were found for this asset in the latest blocks.',
+            },
+          }));
+          return;
+        }
+      } else {
+        setResults(prev => ({
+          ...prev,
+          [chartKey]: { error: result.error || 'Node returned an error' },
+        }));
+        return;
+      }
+
+      setResults(prev => ({ ...prev, [chartKey]: { code: 0, data: points } }));
+      if (usedFallback) {
+        setChartFallbackNote(
+          'Chart API unavailable on this node — showing DEX match trades from recent blocks (/transaction/latest).',
+        );
+      }
+
+      const marketRes = await getNodeData(api, `dex/market/${assetHash}`);
+      if (marketRes.code === 0) {
+        const name = marketRes.data?.baseAsset?.name;
+        if (name) setChartAssetName(name);
+      }
+    } catch (err) {
+      setResults(prev => ({
+        ...prev,
+        [chartKey]: { error: err.message || 'Failed to load chart data' },
+      }));
+    } finally {
+      setLoading(prev => ({ ...prev, [chartKey]: false }));
+    }
+  };
+
+  const renderPriceChartSection = () => {
+    const chartKey = chartMode === 'candles' ? 'priceCandles' : 'priceTrades';
+    const chartResult = results[chartKey];
+    const chartLoading = loading[chartKey];
+    const chartError = chartResult?.error
+      || (chartResult && chartResult.code !== 0 ? chartResult.error : null);
+    const chartPoints = chartResult?.code === 0 ? chartResult.data : [];
+    const intervalLabel = CHART_INTERVALS.find((i) => i.id === chartInterval)?.label || chartInterval;
+
+    return (
+      <div className="space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium mb-2">Asset Hash (64 hex chars)</label>
+            <input
+              id="chartAssetHash"
+              placeholder="e.g. 0e4825efffa294610d2ac376713e3bcc9b53d378e823834b64e5df01f75d3b0c"
+              className="input font-mono text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-2">Data points (n)</label>
+            <input id="chartCount" type="number" min="10" max="500" defaultValue="200" className="input" />
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-4 items-end">
+          <div>
+            <label className="block text-xs text-zinc-400 mb-1.5">Chart type</label>
+            <div className="flex gap-1 p-1 bg-zinc-900 border border-zinc-700 rounded-xl">
+              <button
+                type="button"
+                onClick={() => setChartMode('candles')}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${chartMode === 'candles' ? 'bg-violet-600 text-white' : 'text-zinc-400 hover:text-white'}`}
+              >
+                Candles
+              </button>
+              <button
+                type="button"
+                onClick={() => setChartMode('trades')}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${chartMode === 'trades' ? 'bg-violet-600 text-white' : 'text-zinc-400 hover:text-white'}`}
+              >
+                Trades
+              </button>
+            </div>
+          </div>
+
+          {chartMode === 'candles' && (
+            <div>
+              <label className="block text-xs text-zinc-400 mb-1.5">Interval</label>
+              <select
+                value={chartInterval}
+                onChange={(e) => setChartInterval(e.target.value)}
+                className="bg-zinc-900 border border-zinc-700 text-white px-4 py-2.5 rounded-xl outline-none focus:border-violet-500"
+              >
+                {CHART_INTERVALS.map((opt) => (
+                  <option key={opt.id} value={opt.id}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <button
+            onClick={loadPriceChart}
+            disabled={chartLoading}
+            className="px-8 py-2.5 bg-violet-600 hover:bg-violet-700 text-white font-semibold rounded-2xl transition-all disabled:bg-gray-400"
+          >
+            {chartLoading ? 'Loading…' : 'Load Price Chart'}
+          </button>
+        </div>
+
+        {chartFallbackNote && (
+          <div className="p-3 bg-amber-950/40 border border-amber-700/60 rounded-xl text-xs text-amber-200">
+            {chartFallbackNote}
+          </div>
+        )}
+
+        <AssetPriceChart
+          points={chartPoints}
+          mode={chartMode}
+          assetName={chartAssetName}
+          intervalLabel={chartMode === 'candles' ? intervalLabel : 'Recent trades'}
+          loading={chartLoading}
+          error={chartError}
+        />
+
+        {chartMode === 'trades' && chartPoints?.length > 0 && (
+          <details className="group">
+            <summary className="cursor-pointer text-sm text-violet-400 hover:text-violet-300 flex items-center gap-2 select-none">
+              <span className="group-open:rotate-90 inline-block transition">▶</span>
+              Recent trades table ({Math.min(chartPoints.length, 20)} shown)
+            </summary>
+            <div className="mt-2 overflow-x-auto rounded-xl border border-zinc-700">
+              <table className="w-full text-xs font-mono">
+                <thead className="bg-zinc-900 text-zinc-400">
+                  <tr>
+                    <th className="text-left px-3 py-2">Time</th>
+                    <th className="text-right px-3 py-2">Block</th>
+                    <th className="text-right px-3 py-2">Base</th>
+                    <th className="text-right px-3 py-2">Quote (WART)</th>
+                    <th className="text-right px-3 py-2">Price</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...chartPoints].reverse().slice(0, 20).map((t, idx) => (
+                    <tr key={idx} className="border-t border-zinc-800 text-zinc-300">
+                      <td className="px-3 py-1.5">
+                        {new Date(t.timestamp * 1000).toLocaleString()}
+                      </td>
+                      <td className="px-3 py-1.5 text-right">{t.height}</td>
+                      <td className="px-3 py-1.5 text-right">{formatAssetPrice(t.base, 4)}</td>
+                      <td className="px-3 py-1.5 text-right">{formatAssetPrice(t.quote, 4)}</td>
+                      <td className="px-3 py-1.5 text-right text-emerald-400">
+                        {formatAssetPrice(t.price)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        )}
+      </div>
+    );
+  };
+
   const loadPoolAndPosition = async () => {
     const assetRaw = document.getElementById('poolAssetHash')?.value.trim() || '';
     if (!assetRaw) {
@@ -676,6 +923,156 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     }
   };
 
+  const readVolumeForm = () => {
+    const assetRaw = document.getElementById('volumeAssetHash')?.value.trim() || '';
+    const assetHash = normalizeChartAssetHash(assetRaw);
+    return {
+      assetHash,
+      rounds: clampRounds(document.getElementById('volumeRounds')?.value || 5),
+      strategy: volumeStrategy,
+      buyWart: document.getElementById('volumeBuyWart')?.value.trim() || '1',
+      sellAsset: document.getElementById('volumeSellAsset')?.value.trim() || '10',
+      basePrice: parseFloat(document.getElementById('volumeBasePrice')?.value || '0'),
+      priceStep: parseFloat(document.getElementById('volumePriceStep')?.value || '0'),
+      delayMs: Math.max(0, parseInt(document.getElementById('volumeDelayMs')?.value || '1500', 10) || 0),
+    };
+  };
+
+  const previewVolumePlan = async () => {
+    const form = readVolumeForm();
+    if (!form.assetHash) {
+      toast.error('Asset hash must be exactly 64 hex characters');
+      return;
+    }
+    if (!wallet?.address) {
+      toast.error('Connect a wallet first');
+      return;
+    }
+
+    setLoading(prev => ({ ...prev, volumePreview: true }));
+    setVolumeLogs([]);
+
+    try {
+      const api = await createWarthogApi(selectedNode);
+      const ctx = await fetchVolumeContext(api, wallet.address, form.assetHash);
+      setVolumeContext(ctx);
+
+      const plan = await buildVolumePlan({
+        rounds: form.rounds,
+        basePrice: form.basePrice,
+        priceStep: form.priceStep,
+        buyWart: form.buyWart,
+        sellAsset: form.sellAsset,
+        strategy: form.strategy,
+        decimals: ctx.decimals,
+      });
+      setVolumePlan(plan);
+      toast.success(`Plan ready — ${plan.length} orders for ${ctx.assetName}`);
+    } catch (err) {
+      console.error(err);
+      setVolumePlan([]);
+      setVolumeContext(null);
+      toast.error(err.message || 'Could not build volume plan');
+    } finally {
+      setLoading(prev => ({ ...prev, volumePreview: false }));
+    }
+  };
+
+  const applyPoolSpotPrice = async () => {
+    const form = readVolumeForm();
+    if (!form.assetHash || !wallet?.address) {
+      toast.error('Enter asset hash and connect wallet');
+      return;
+    }
+    try {
+      const api = await createWarthogApi(selectedNode);
+      const ctx = await fetchVolumeContext(api, wallet.address, form.assetHash);
+      setVolumeContext(ctx);
+      if (ctx.spotPrice == null) {
+        toast.error('Pool has no liquidity — deposit first or set price manually');
+        return;
+      }
+      const el = document.getElementById('volumeBasePrice');
+      if (el) el.value = String(ctx.spotPrice);
+      toast.success(`Base price set to pool spot (${ctx.spotPriceLabel} WART/${ctx.assetName})`);
+    } catch (err) {
+      toast.error(err.message || 'Could not read pool price');
+    }
+  };
+
+  const runVolumeGenerator = async () => {
+    if (!wallet?.privateKey) {
+      toast.error('Wallet not loaded. Please log in again.');
+      return;
+    }
+
+    const form = readVolumeForm();
+    if (!form.assetHash) {
+      toast.error('Asset hash must be exactly 64 hex characters');
+      return;
+    }
+
+    setLoading(prev => ({ ...prev, volumeRun: true }));
+    setVolumeLogs([]);
+
+    try {
+      const api = await createWarthogApi(selectedNode);
+      const ctx = volumeContext?.assetHash === form.assetHash
+        ? volumeContext
+        : await fetchVolumeContext(api, wallet.address, form.assetHash);
+      setVolumeContext(ctx);
+
+      const plan = volumePlan.length
+        ? volumePlan
+        : await buildVolumePlan({
+          rounds: form.rounds,
+          basePrice: form.basePrice,
+          priceStep: form.priceStep,
+          buyWart: form.buyWart,
+          sellAsset: form.sellAsset,
+          strategy: form.strategy,
+          decimals: ctx.decimals,
+        });
+      setVolumePlan(plan);
+
+      if (ctx.balances.wart === '0' || ctx.balances.wart === '?') {
+        toast.error('Insufficient WART balance');
+        return;
+      }
+
+      let nonce = getSmartNonce();
+      const logs = [];
+
+      const { logs: resultLogs, nextNonce } = await executeVolumePlan({
+        api,
+        privateKey: wallet.privateKey,
+        assetHash: ctx.assetHash,
+        plan,
+        decimals: ctx.decimals,
+        startNonce: nonce,
+        delayMs: form.delayMs,
+        assetBalance: Number(ctx.balances.asset) || 0,
+        onProgress: (entry) => {
+          logs.push(entry);
+          setVolumeLogs([...logs]);
+        },
+      });
+
+      setVolumeLogs(resultLogs);
+      if (resultLogs.some((l) => l.status === 'ok' && l.nonce != null)) {
+        updateNonceAfterSuccess(nextNonce - 1);
+      }
+
+      const ok = resultLogs.filter((l) => l.status === 'ok').length;
+      toast.success(`Volume run complete — ${ok}/${resultLogs.length} orders submitted`);
+    } catch (err) {
+      console.error(err);
+      toast.error('Volume generator failed: ' + (err.message || 'Unknown error'));
+    } finally {
+      setLoading(prev => ({ ...prev, volumeRun: false }));
+    }
+  };
+
   const encodeLimitPrice = async () => {
     const priceStr = document.getElementById('limitPriceHuman')?.value.trim();
     const decimalsStr = document.getElementById('limitPriceDecimals')?.value.trim() || '8';
@@ -702,8 +1099,12 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     }
   };
 
+  const volumeEstimate = volumePlan.length ? estimateWartRequired(volumePlan) : null;
+
   const tabs = [
     { id: 'market', label: 'Market Data' },
+    { id: 'charts', label: 'Price Charts' },
+    { id: 'volume', label: 'Volume Generator' },
     { id: 'trading', label: 'Trading Activity' },
     { id: 'deposit', label: 'Liquidity Deposit' },
     { id: 'position', label: 'Pool & Position' },
@@ -752,6 +1153,206 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
               </button>
               
               {results.dexMarket && renderPoolMarketCard(results.dexMarket)}
+          </div>
+        </section>
+      )}
+
+      {activeTab === 'charts' && (
+        <section className="border-2 border-violet-500 rounded-3xl p-8 bg-violet-50 dark:bg-violet-950 shadow-xl">
+          <h3 className="text-xl font-semibold mb-2 text-violet-700 dark:text-violet-300">
+            Asset Price History
+          </h3>
+          <p className="text-sm text-violet-600 dark:text-violet-400 mb-6">
+            Uses <code className="text-violet-300">/chart/candles/:asset/:interval</code> and{' '}
+            <code className="text-violet-300">/chart/trades/:asset</code> when the node supports them;
+            otherwise builds history from recent DEX matches in <code className="text-violet-300">/transaction/latest</code>.
+            Prices are WART per asset token.
+          </p>
+          {renderPriceChartSection()}
+        </section>
+      )}
+
+      {activeTab === 'volume' && (
+        <section className="border-2 border-amber-500 rounded-3xl p-8 bg-amber-50 dark:bg-amber-950 shadow-xl">
+          <h3 className="text-xl font-semibold mb-2 text-amber-700 dark:text-amber-300">
+            DEX Volume Generator
+          </h3>
+          <p className="text-sm text-amber-700/80 dark:text-amber-400 mb-6">
+            Place stepped limit orders to generate DEX match volume and price history.
+            Buy orders match against pool liquidity; sell orders require asset balance in your wallet.
+            Testnet only — use responsibly.
+          </p>
+
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-2">Asset Hash (64 hex, no 0x)</label>
+              <input
+                id="volumeAssetHash"
+                placeholder="Paste asset hash for your pooled token"
+                className="input font-mono text-sm"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium mb-2">Strategy</label>
+                <select
+                  value={volumeStrategy}
+                  onChange={(e) => setVolumeStrategy(e.target.value)}
+                  className="input"
+                >
+                  <option value="buys">Buys only (WART → asset, uses pool)</option>
+                  <option value="sells">Sells only (asset → WART)</option>
+                  <option value="both">Both (sell then buy each round)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2">Rounds (1–25)</label>
+                <input id="volumeRounds" type="number" min="1" max="25" defaultValue="5" className="input" />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium mb-2">WART per buy order</label>
+                <input id="volumeBuyWart" type="number" step="any" defaultValue="5" className="input" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2">Asset per sell order</label>
+                <input id="volumeSellAsset" type="number" step="any" defaultValue="10" className="input" />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm font-medium mb-2">Base price (WART/asset)</label>
+                <input id="volumeBasePrice" type="number" step="any" defaultValue="0.1" className="input" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2">Price step per round</label>
+                <input id="volumePriceStep" type="number" step="any" defaultValue="0.01" className="input" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2">Delay between orders (ms)</label>
+                <input id="volumeDelayMs" type="number" min="0" step="100" defaultValue="1500" className="input" />
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={applyPoolSpotPrice}
+                className="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl text-sm font-medium transition-colors"
+              >
+                Use pool spot price
+              </button>
+              <button
+                type="button"
+                onClick={previewVolumePlan}
+                disabled={loading.volumePreview || !account}
+                className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-sm font-medium transition-colors disabled:bg-gray-500"
+              >
+                {loading.volumePreview ? 'Loading…' : 'Preview plan'}
+              </button>
+              <button
+                type="button"
+                onClick={runVolumeGenerator}
+                disabled={loading.volumeRun || !account}
+                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-medium transition-colors disabled:bg-gray-500"
+              >
+                {loading.volumeRun ? 'Submitting orders…' : 'Run volume generator'}
+              </button>
+            </div>
+
+            {volumeContext && (
+              <div className="p-4 bg-zinc-950/60 border border-amber-800/50 rounded-2xl text-sm space-y-1">
+                <div className="font-semibold text-amber-300">{volumeContext.assetName} market snapshot</div>
+                <div className="text-zinc-300">
+                  Your balance: <span className="font-mono text-white">{formatBalance(volumeContext.balances.wart)}</span> WART
+                  {' · '}
+                  <span className="font-mono text-white">{formatBalance(volumeContext.balances.asset)}</span> {volumeContext.assetName}
+                </div>
+                <div className="text-zinc-400">
+                  Pool: {formatBalance(volumeContext.pool.wart)} WART / {formatBalance(volumeContext.pool.asset)} {volumeContext.assetName}
+                  {volumeContext.spotPriceLabel && (
+                    <span> · Spot {volumeContext.spotPriceLabel} WART/{volumeContext.assetName}</span>
+                  )}
+                </div>
+                <div className="text-zinc-500 text-xs">
+                  Open orders on book: {volumeContext.openBuys} buys, {volumeContext.openSells} sells
+                </div>
+              </div>
+            )}
+
+            {volumePlan.length > 0 && (
+              <div className="border border-amber-800/40 rounded-2xl overflow-hidden">
+                <div className="px-4 py-2 bg-amber-950/50 text-sm text-amber-200 flex justify-between items-center">
+                  <span>Order plan ({volumePlan.length} orders)</span>
+                  {volumeEstimate && (
+                    <span className="text-xs text-amber-400/80 font-mono">
+                      ~{volumeEstimate.total.toFixed(2)} WART + fees
+                    </span>
+                  )}
+                </div>
+                <div className="max-h-48 overflow-auto">
+                  <table className="w-full text-xs font-mono">
+                    <thead className="bg-zinc-900 text-zinc-400 sticky top-0">
+                      <tr>
+                        <th className="text-left px-3 py-2">#</th>
+                        <th className="text-left px-3 py-2">Side</th>
+                        <th className="text-right px-3 py-2">Amount</th>
+                        <th className="text-right px-3 py-2">Price</th>
+                        <th className="text-right px-3 py-2">Limit</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {volumePlan.map((step, idx) => (
+                        <tr key={idx} className="border-t border-zinc-800 text-zinc-300">
+                          <td className="px-3 py-1.5">{step.round}</td>
+                          <td className={`px-3 py-1.5 ${step.side === 'buy' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {step.side}
+                          </td>
+                          <td className="px-3 py-1.5 text-right">{step.amount}</td>
+                          <td className="px-3 py-1.5 text-right">{formatAssetPrice(step.price)}</td>
+                          <td className="px-3 py-1.5 text-right text-zinc-500">{step.limitHex}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {volumeLogs.length > 0 && (
+              <div className="border border-zinc-700 rounded-2xl overflow-hidden">
+                <div className="px-4 py-2 bg-zinc-900 text-sm text-zinc-300">Execution log</div>
+                <ul className="max-h-40 overflow-auto text-xs font-mono p-3 space-y-1">
+                  {volumeLogs.map((log, idx) => (
+                    <li
+                      key={idx}
+                      className={
+                        log.status === 'ok'
+                          ? 'text-emerald-400'
+                          : log.status === 'skipped'
+                            ? 'text-zinc-500'
+                            : 'text-red-400'
+                      }
+                    >
+                      {log.status === 'ok' ? '✓' : log.status === 'skipped' ? '○' : '✗'}
+                      {' '}
+                      {log.side} #{log.round} @ {formatAssetPrice(log.price)}
+                      {log.message ? ` — ${log.message}` : ''}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {!account && (
+              <p className="text-sm text-amber-600 dark:text-amber-400 italic">
+                Unlock your wallet to preview or submit volume orders.
+              </p>
+            )}
           </div>
         </section>
       )}

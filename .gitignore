@@ -17,6 +17,9 @@ pnpm-debug.log*
 .env
 .env.production
 
+# local testnet volume bot credentials
+scripts/.volume-wallet.json
+
 # macOS-specific files
 .DS_Store
 
