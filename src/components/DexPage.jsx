@@ -21,6 +21,7 @@ import {
   parseTradeResponse,
 } from '../utils/dexPrice.js';
 import AssetPriceChart from './AssetPriceChart.jsx';
+import ConfirmDialog from './ConfirmDialog.jsx';
 import { DEFAULT_NODE_URL } from '../utils/presetNodes.js';
 import {
   buildVolumePlan,
@@ -28,6 +29,7 @@ import {
   estimateWartRequired,
   executeVolumePlan,
   fetchVolumeContext,
+  summarizeVolumePlan,
 } from '../utils/dexVolume.js';
 
 const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
@@ -62,6 +64,9 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const [volumeContext, setVolumeContext] = useState(null);
   const [volumeLogs, setVolumeLogs] = useState([]);
   const [volumeStrategy, setVolumeStrategy] = useState('buys');
+  const [volumeConfirmOpen, setVolumeConfirmOpen] = useState(false);
+  const [volumeConfirmMessage, setVolumeConfirmMessage] = useState('');
+  const [volumePendingRun, setVolumePendingRun] = useState(null);
 
   useEffect(() => {
     if (activeTab === 'limit' || activeTab === 'volume') {
@@ -1000,46 +1005,110 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     }
   };
 
-  const runVolumeGenerator = async () => {
+  const prepareVolumeRun = async () => {
+    const form = readVolumeForm();
+    if (!form.assetHash) {
+      throw new Error('Asset hash must be exactly 64 hex characters');
+    }
+    if (!wallet?.address) {
+      throw new Error('Connect a wallet first');
+    }
+
+    const api = await createWarthogApi(selectedNode);
+    const ctx = volumeContext?.assetHash === form.assetHash
+      ? volumeContext
+      : await fetchVolumeContext(api, wallet.address, form.assetHash);
+    setVolumeContext(ctx);
+
+    const plan = await buildVolumePlan({
+      rounds: form.rounds,
+      basePrice: form.basePrice,
+      priceStep: form.priceStep,
+      buyWart: form.buyWart,
+      sellAsset: form.sellAsset,
+      strategy: form.strategy,
+      decimals: ctx.decimals,
+    });
+    setVolumePlan(plan);
+
+    if (ctx.balances.wart === '0' || ctx.balances.wart === '?') {
+      throw new Error('Insufficient WART balance');
+    }
+
+    return { api, form, ctx, plan };
+  };
+
+  const buildVolumeConfirmMessage = (ctx, plan, form) => {
+    const summary = summarizeVolumePlan(plan, {
+      assetBalance: Number(ctx.balances.asset) || 0,
+      assetName: ctx.assetName,
+    });
+
+    const lines = [
+      `Submit ${summary.submitCount} limit order${summary.submitCount !== 1 ? 's' : ''} for ${ctx.assetName}?`,
+      '',
+      `• ${summary.buyCount} buy order${summary.buyCount !== 1 ? 's' : ''} (~${summary.buyTotal.toFixed(2)} WART on book)`,
+    ];
+
+    if (summary.sellCount > 0) {
+      if (summary.sellsSkipped > 0) {
+        lines.push(`• ${summary.sellCount} sell order${summary.sellCount !== 1 ? 's' : ''} (will be skipped — no ${ctx.assetName} balance)`);
+      } else {
+        lines.push(`• ${summary.sellCount} sell order${summary.sellCount !== 1 ? 's' : ''} (~${summary.assetCommitted.toFixed(2)} ${ctx.assetName} on book)`);
+      }
+    }
+
+    lines.push(
+      '',
+      `Estimated WART committed: ~${summary.buyTotal.toFixed(2)} + ~${summary.feeTotal.toFixed(2)} tx fees`,
+      `Delay between orders: ${form.delayMs} ms`,
+      '',
+      'Orders stay on the book until matched or cancelled. Review the plan above before confirming.',
+    );
+
+    return lines.join('\n');
+  };
+
+  const requestVolumeRun = async () => {
     if (!wallet?.privateKey) {
       toast.error('Wallet not loaded. Please log in again.');
       return;
     }
 
-    const form = readVolumeForm();
-    if (!form.assetHash) {
-      toast.error('Asset hash must be exactly 64 hex characters');
+    setLoading(prev => ({ ...prev, volumeConfirm: true }));
+
+    try {
+      const prepared = await prepareVolumeRun();
+      setVolumePendingRun(prepared);
+      setVolumeConfirmMessage(buildVolumeConfirmMessage(prepared.ctx, prepared.plan, prepared.form));
+      setVolumeConfirmOpen(true);
+    } catch (err) {
+      console.error(err);
+      toast.error(err.message || 'Could not prepare volume run');
+    } finally {
+      setLoading(prev => ({ ...prev, volumeConfirm: false }));
+    }
+  };
+
+  const cancelVolumeRun = () => {
+    setVolumeConfirmOpen(false);
+    setVolumePendingRun(null);
+    setVolumeConfirmMessage('');
+  };
+
+  const runVolumeGenerator = async () => {
+    if (loading.volumeRun) return;
+    if (!wallet?.privateKey || !volumePendingRun) {
+      cancelVolumeRun();
       return;
     }
 
+    const { api, form, ctx, plan } = volumePendingRun;
+    setVolumeConfirmOpen(false);
     setLoading(prev => ({ ...prev, volumeRun: true }));
     setVolumeLogs([]);
 
     try {
-      const api = await createWarthogApi(selectedNode);
-      const ctx = volumeContext?.assetHash === form.assetHash
-        ? volumeContext
-        : await fetchVolumeContext(api, wallet.address, form.assetHash);
-      setVolumeContext(ctx);
-
-      const plan = volumePlan.length
-        ? volumePlan
-        : await buildVolumePlan({
-          rounds: form.rounds,
-          basePrice: form.basePrice,
-          priceStep: form.priceStep,
-          buyWart: form.buyWart,
-          sellAsset: form.sellAsset,
-          strategy: form.strategy,
-          decimals: ctx.decimals,
-        });
-      setVolumePlan(plan);
-
-      if (ctx.balances.wart === '0' || ctx.balances.wart === '?') {
-        toast.error('Insufficient WART balance');
-        return;
-      }
-
       let nonce = getSmartNonce();
       const logs = [];
 
@@ -1069,6 +1138,8 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       console.error(err);
       toast.error('Volume generator failed: ' + (err.message || 'Unknown error'));
     } finally {
+      setVolumePendingRun(null);
+      setVolumeConfirmMessage('');
       setLoading(prev => ({ ...prev, volumeRun: false }));
     }
   };
@@ -1256,11 +1327,15 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
               </button>
               <button
                 type="button"
-                onClick={runVolumeGenerator}
-                disabled={loading.volumeRun || !account}
+                onClick={requestVolumeRun}
+                disabled={loading.volumeRun || loading.volumeConfirm || !account}
                 className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-medium transition-colors disabled:bg-gray-500"
               >
-                {loading.volumeRun ? 'Submitting orders…' : 'Run volume generator'}
+                {loading.volumeRun
+                  ? 'Submitting orders…'
+                  : loading.volumeConfirm
+                    ? 'Preparing…'
+                    : 'Run volume generator'}
               </button>
             </div>
 
@@ -1575,6 +1650,17 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
           </div>
         </section>
       )}
+
+      <ConfirmDialog
+        open={volumeConfirmOpen}
+        title="Confirm volume generator"
+        message={volumeConfirmMessage}
+        confirmText={loading.volumeRun ? 'Submitting…' : 'Submit orders'}
+        cancelText="Cancel"
+        confirmVariant="danger"
+        onConfirm={runVolumeGenerator}
+        onCancel={cancelVolumeRun}
+      />
     </>
   );
 };

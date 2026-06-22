@@ -236,3 +236,30 @@ export function estimateWartRequired(plan, feePerTx = 0.02) {
   const feeTotal = plan.length * feePerTx;
   return { buyTotal, feeTotal, total: buyTotal + feeTotal, orderCount: plan.length };
 }
+
+/**
+ * Human-readable summary for a volume-run confirmation step.
+ * @param {VolumePlanStep[]} plan
+ * @param {{ assetBalance?: number, assetName?: string, feePerTx?: number }} [options]
+ */
+export function summarizeVolumePlan(plan, { assetBalance = 0, assetName = 'ASSET', feePerTx = 0.02 } = {}) {
+  const buySteps = plan.filter((s) => s.side === 'buy');
+  const sellSteps = plan.filter((s) => s.side === 'sell');
+  const hasAsset = Number(assetBalance) > 0;
+  const sellsToSubmit = hasAsset ? sellSteps.length : 0;
+  const sellsSkipped = hasAsset ? 0 : sellSteps.length;
+  const estimate = estimateWartRequired(plan, feePerTx);
+  const assetCommitted = sellSteps
+    .slice(0, sellsToSubmit)
+    .reduce((sum, s) => sum + (Number(s.amount) || 0), 0);
+
+  return {
+    ...estimate,
+    assetName,
+    buyCount: buySteps.length,
+    sellCount: sellSteps.length,
+    submitCount: buySteps.length + sellsToSubmit,
+    sellsSkipped,
+    assetCommitted,
+  };
+}

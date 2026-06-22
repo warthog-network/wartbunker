@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useId, useMemo, useState } from 'react';
 import { formatAssetPrice, toChartSeries } from '../utils/dexPrice.js';
 
 const CHART_WIDTH = 640;
@@ -7,6 +7,12 @@ const PAD = { top: 20, right: 16, bottom: 36, left: 72 };
 
 function buildPath(points, xScale, yScale) {
   if (!points.length) return '';
+  if (points.length === 1) {
+    const x = xScale(points[0].x);
+    const y = yScale(points[0].y);
+    const x2 = Math.min(x + 24, CHART_WIDTH - PAD.right);
+    return `M${x.toFixed(2)},${y.toFixed(2)} L${x2.toFixed(2)},${y.toFixed(2)}`;
+  }
   return points
     .map((pt, i) => {
       const cmd = i === 0 ? 'M' : 'L';
@@ -30,8 +36,13 @@ const AssetPriceChart = ({
   intervalLabel = '',
   loading = false,
   error = null,
+  embedded = false,
 }) => {
   const [hoverIdx, setHoverIdx] = useState(null);
+  const areaGradientId = useId();
+  const shellClass = embedded
+    ? ''
+    : 'mt-4 bg-zinc-950 border border-zinc-700 rounded-2xl overflow-hidden';
 
   const series = useMemo(() => toChartSeries(points, mode), [points, mode]);
 
@@ -86,7 +97,7 @@ const AssetPriceChart = ({
 
   if (loading) {
     return (
-      <div className="mt-4 p-10 bg-zinc-950 border border-zinc-700 rounded-2xl text-center text-zinc-400">
+      <div className={embedded ? 'p-8 text-center text-sm text-zinc-500' : `${shellClass} p-10 text-center text-zinc-400`}>
         Loading price history…
       </div>
     );
@@ -94,7 +105,7 @@ const AssetPriceChart = ({
 
   if (error) {
     return (
-      <div className="mt-4 p-6 bg-red-950/40 border border-red-700 rounded-2xl text-sm text-red-300">
+      <div className={embedded ? 'p-4 text-sm text-red-300/90' : `${shellClass} p-6 bg-red-950/40 border-red-700 text-sm text-red-300`}>
         {error}
       </div>
     );
@@ -102,9 +113,9 @@ const AssetPriceChart = ({
 
   if (!series.length) {
     return (
-      <div className="mt-4 p-10 bg-zinc-950 border border-zinc-700 rounded-2xl text-center">
-        <div className="text-3xl mb-2 opacity-40">📈</div>
-        <p className="text-zinc-300 font-medium">No price history for this asset</p>
+      <div className={embedded ? 'p-8 text-center' : `${shellClass} p-10 text-center`}>
+        <div className="text-2xl mb-2 opacity-30">📈</div>
+        <p className="text-zinc-400 font-medium text-sm">No price history for this asset</p>
         <p className="text-xs text-zinc-500 mt-1">Try a different interval or check that the pool has trades.</p>
       </div>
     );
@@ -116,13 +127,13 @@ const AssetPriceChart = ({
   const changeUp = (stats?.change ?? 0) >= 0;
 
   return (
-    <div className="mt-4 bg-zinc-950 border border-zinc-700 rounded-2xl overflow-hidden">
-      <div className="px-5 py-4 border-b border-zinc-800 flex flex-wrap items-end justify-between gap-3">
+    <div className={shellClass || undefined}>
+      <div className={`${embedded ? 'px-4 py-3' : 'px-5 py-4'} border-b border-zinc-800 flex flex-wrap items-end justify-between gap-3`}>
         <div>
           <div className="text-xs uppercase tracking-wider text-violet-400 mb-0.5">
             {mode === 'candles' ? 'OHLC Close' : 'Trade Price'} • {intervalLabel || 'History'}
           </div>
-          <div className="font-mono text-2xl font-semibold text-white tabular-nums">
+          <div className={`font-mono font-semibold text-white tabular-nums ${embedded ? 'text-xl' : 'text-2xl'}`}>
             {formatAssetPrice(stats?.last)}
             <span className="text-sm text-zinc-500 font-normal ml-2">WART/{assetName}</span>
           </div>
@@ -145,7 +156,7 @@ const AssetPriceChart = ({
         </div>
       </div>
 
-      <div className="p-4">
+      <div className={embedded ? 'p-3' : 'p-4'}>
         <svg
           viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
           className="w-full h-auto select-none"
@@ -153,7 +164,7 @@ const AssetPriceChart = ({
           aria-label={`Price chart for ${assetName}`}
         >
           <defs>
-            <linearGradient id="priceAreaGrad" x1="0" y1="0" x2="0" y2="1">
+            <linearGradient id={areaGradientId} x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="rgb(16, 185, 129)" stopOpacity="0.35" />
               <stop offset="100%" stopColor="rgb(16, 185, 129)" stopOpacity="0" />
             </linearGradient>
@@ -183,7 +194,7 @@ const AssetPriceChart = ({
             </g>
           ))}
 
-          <path d={areaPath} fill="url(#priceAreaGrad)" />
+          <path d={areaPath} fill={`url(#${areaGradientId})`} />
           <path
             d={linePath}
             fill="none"
@@ -245,7 +256,7 @@ const AssetPriceChart = ({
         )}
       </div>
 
-      <div className="px-5 py-3 border-t border-zinc-800 text-[10px] text-zinc-500">
+      <div className={`${embedded ? 'px-4' : 'px-5'} py-2 border-t border-zinc-800 text-[10px] text-zinc-500`}>
         {plot.series.length} data points • hover points for details
       </div>
     </div>

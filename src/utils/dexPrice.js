@@ -1,3 +1,5 @@
+import { getNodeData } from './warthogClient.js';
+
 /** Node error when chart endpoints are not registered (common on pre-release builds). */
 export const CHART_API_UNSUPPORTED_CODE = 324;
 
@@ -291,4 +293,152 @@ export function buildPriceHistoryFromLatest(latestData, assetHash, { mode, inter
     return aggregateTradesToCandles(trades, interval, n);
   }
   return trades.slice(-n);
+}
+
+/**
+ * Load chart points for an asset from /chart/* (falls back to /transaction/latest).
+ * @param {import('warthog-js').WarthogApi} api
+ * @param {string} assetHash
+ * @param {{ mode?: 'candles' | 'trades', interval?: string, n?: number }} [options]
+ * @returns {Promise<{ points: CandlePoint[] | TradePoint[], error: string | null, usedFallback: boolean, mode: 'candles' | 'trades', interval: string }>}
+ */
+export async function loadAssetPriceChart(api, assetHash, {
+  mode = 'candles',
+  interval = '1h',
+  n = 100,
+} = {}) {
+  const normalized = normalizeChartAssetHash(assetHash);
+  if (!normalized) {
+    return { points: [], error: 'Invalid asset hash', usedFallback: false, mode, interval };
+  }
+
+  const path = mode === 'candles'
+    ? buildCandlesPath(normalized, interval, { n })
+    : buildTradesPath(normalized, { n });
+
+  const result = await getNodeData(api, path);
+
+  if (result.code === 0) {
+    const points = mode === 'candles'
+      ? parseCandleResponse(result.data)
+      : parseTradeResponse(result.data);
+    return { points, error: null, usedFallback: false, mode, interval };
+  }
+
+  if (result.code === CHART_API_UNSUPPORTED_CODE) {
+    const latestRes = await getNodeData(api, 'transaction/latest');
+    if (latestRes.code !== 0) {
+      return {
+        points: [],
+        error: 'Chart API is not enabled on this node and recent trades could not be loaded.',
+        usedFallback: false,
+        mode,
+        interval,
+      };
+    }
+
+    const points = buildPriceHistoryFromLatest(latestRes.data, normalized, { mode, interval, n });
+    if (!points.length) {
+      return {
+        points: [],
+        error: 'No DEX trades found for this asset in recent blocks.',
+        usedFallback: true,
+        mode,
+        interval,
+      };
+    }
+
+    return { points, error: null, usedFallback: true, mode, interval };
+  }
+
+  return {
+    points: [],
+    error: result.error || 'Node returned an error',
+    usedFallback: false,
+    mode,
+    interval,
+  };
+}
+
+const chartLoadCache = new Map();
+
+/**
+ * Pick the richest chart series for an asset (tries 1h → 5m candles, then trades).
+ * Helps assets with few hourly buckets (e.g. BUN with only one 1h candle).
+ * Deduplicates in-flight loads per node+asset so search results don't stampede the proxy.
+ */
+export async function loadBestAssetPriceChart(api, assetHash, { n = 100 } = {}) {
+  const normalized = normalizeChartAssetHash(assetHash);
+  if (!normalized) {
+    return {
+      points: [],
+      error: 'Invalid asset hash',
+      usedFallback: false,
+      mode: 'candles',
+      interval: '1h',
+    };
+  }
+
+  const nodeKey = api?.baseUrl || '';
+  const cacheKey = `${nodeKey}:${normalized}:${n}`;
+  if (chartLoadCache.has(cacheKey)) {
+    return chartLoadCache.get(cacheKey);
+  }
+
+  const promise = (async () => {
+    const attempts = [
+      { mode: 'candles', interval: '1h' },
+      { mode: 'candles', interval: '5m' },
+      { mode: 'trades', interval: 'trades' },
+    ];
+
+    let best = null;
+
+    for (const attempt of attempts) {
+      let res;
+      try {
+        res = await loadAssetPriceChart(api, normalized, {
+          mode: attempt.mode,
+          interval: attempt.interval === 'trades' ? '1h' : attempt.interval,
+          n,
+        });
+      } catch {
+        continue;
+      }
+
+      if (res.error && !res.points.length) {
+        continue;
+      }
+
+      if (!best || res.points.length > best.points.length) {
+        best = { ...res, interval: attempt.interval };
+      }
+
+      // Match DEX chart behaviour: stop after a solid 1h candle series.
+      if (
+        attempt.interval === '1h'
+        && res.points.length >= 2
+        && !res.usedFallback
+        && !res.error
+      ) {
+        break;
+      }
+    }
+
+    return best || {
+      points: [],
+      error: 'No DEX price history found for this asset yet.',
+      usedFallback: false,
+      mode: 'candles',
+      interval: '1h',
+    };
+  })();
+
+  chartLoadCache.set(cacheKey, promise);
+  try {
+    return await promise;
+  } catch (err) {
+    chartLoadCache.delete(cacheKey);
+    throw err;
+  }
 }

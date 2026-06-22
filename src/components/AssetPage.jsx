@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
 import { isValidAssetHash } from '../utils/warthogFormat';
@@ -9,7 +9,157 @@ import {
   getNodeData,
   signAndSubmitTransaction,
 } from '../utils/warthogClient.js';
+import { CHART_INTERVALS, loadBestAssetPriceChart } from '../utils/dexPrice.js';
+import AssetPriceChart from './AssetPriceChart.jsx';
 import { DEFAULT_NODE_URL } from '../utils/presetNodes.js';
+
+const AssetCardWithChart = ({ asset, isCompact, selectedNode, onCopyHash }) => {
+  const [chartLoading, setChartLoading] = useState(true);
+  const [chartPoints, setChartPoints] = useState([]);
+  const [chartError, setChartError] = useState(null);
+  const [chartFallbackNote, setChartFallbackNote] = useState(null);
+  const [chartMode, setChartMode] = useState('candles');
+  const [chartInterval, setChartInterval] = useState('1h');
+
+  useEffect(() => {
+    let cancelled = false;
+    const hash = asset?.hash;
+    if (!hash || !selectedNode) {
+      setChartLoading(false);
+      return undefined;
+    }
+
+    (async () => {
+      setChartLoading(true);
+      setChartPoints([]);
+      setChartError(null);
+      setChartFallbackNote(null);
+
+      try {
+        const api = await createWarthogApi(selectedNode);
+        const { points, error, usedFallback, mode, interval } = await loadBestAssetPriceChart(api, hash, {
+          n: 100,
+        });
+
+        if (cancelled) return;
+
+        setChartPoints(points);
+        setChartError(points.length ? null : error);
+        setChartMode(mode);
+        setChartInterval(interval);
+        if (usedFallback) {
+          setChartFallbackNote(
+            'Chart API unavailable — showing DEX match trades from recent blocks.',
+          );
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setChartError(err.message || 'Failed to load price chart');
+        }
+      } finally {
+        if (!cancelled) {
+          setChartLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [asset?.hash, selectedNode]);
+
+  const intervalLabel = chartMode === 'trades'
+    ? 'Trades'
+    : (CHART_INTERVALS.find((i) => i.id === chartInterval)?.label || chartInterval);
+
+  if (!asset) return null;
+
+  const supply = asset.totalSupply?.str || '0';
+  const hash = asset.hash || '';
+
+  return (
+    <div className="bg-zinc-950 border border-zinc-700 rounded-2xl overflow-hidden">
+      <div className={isCompact ? 'p-4' : 'p-5'}>
+        <div className="flex items-start justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-blue-500 via-cyan-500 to-teal-500 flex items-center justify-center text-white font-bold text-2xl shadow-inner ring-1 ring-white/20">
+              {asset.name?.[0] || 'A'}
+            </div>
+            <div>
+              <div className="font-bold text-2xl tracking-tight text-white">{asset.name}</div>
+              <div className="text-xs text-zinc-400 font-mono -mt-1">Asset ID {asset.id}</div>
+            </div>
+          </div>
+          <div
+            onClick={() => onCopyHash(hash)}
+            className="text-right cursor-pointer group"
+          >
+            <div className="text-xs font-mono text-zinc-400 group-hover:text-blue-400 transition-colors">
+              {hash.slice(0, 10)}…{hash.slice(-8)}
+            </div>
+            <div className="text-[10px] text-zinc-500 group-hover:text-zinc-400">Copy Hash</div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+          <div>
+            <div className="text-xs text-zinc-400 mb-0.5">Decimals</div>
+            <div className="font-mono font-medium text-white">{asset.decimals}</div>
+          </div>
+          <div>
+            <div className="text-xs text-zinc-400 mb-0.5">Block Height</div>
+            <div className="font-mono font-medium text-white">{asset.height}</div>
+          </div>
+          <div>
+            <div className="text-xs text-zinc-400 mb-0.5">Total Supply</div>
+            <div className="font-mono font-medium text-emerald-400 tabular-nums">{supply}</div>
+          </div>
+          <div>
+            <div className="text-xs text-zinc-400 mb-0.5">Owner Account</div>
+            <div className="font-mono font-medium text-white">#{asset.ownerAccountId}</div>
+          </div>
+          {asset.groupId != null && (
+            <div>
+              <div className="text-xs text-zinc-400 mb-0.5">Group ID</div>
+              <div className="font-mono font-medium text-white">{asset.groupId}</div>
+            </div>
+          )}
+          {asset.parentId != null && (
+            <div>
+              <div className="text-xs text-zinc-400 mb-0.5">Parent ID</div>
+              <div className="font-mono font-medium text-white">{asset.parentId}</div>
+            </div>
+          )}
+        </div>
+
+        <div className="mt-4 pt-3 border-t border-zinc-700 text-xs text-zinc-400 flex items-center justify-between">
+          <span>Created on-chain</span>
+          <button
+            onClick={() => onCopyHash(hash)}
+            className="px-3 py-1 rounded-lg hover:bg-zinc-800 text-blue-400 hover:text-blue-300 transition-colors text-xs font-medium"
+          >
+            Copy Full Hash
+          </button>
+        </div>
+      </div>
+
+      <div className="border-t border-zinc-700 bg-zinc-900/40">
+        {chartFallbackNote && (
+          <p className="px-4 pt-3 text-xs text-amber-400/90">{chartFallbackNote}</p>
+        )}
+        <AssetPriceChart
+          points={chartPoints}
+          mode={chartMode}
+          assetName={asset?.name || 'Asset'}
+          intervalLabel={intervalLabel}
+          loading={chartLoading}
+          error={chartError}
+          embedded
+        />
+      </div>
+    </div>
+  );
+};
 
 const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const {
@@ -75,81 +225,6 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     } finally {
       setLoading(prev => ({ ...prev, [key]: false }));
     }
-  };
-
-  // ==================== STYLIZED ASSET CARD ====================
-  const renderAssetCard = (asset, isCompact = false) => {
-    if (!asset) return null;
-
-    const supply = asset.totalSupply?.str || '0';
-    const hash = asset.hash || '';
-
-    return (
-      <div className={`bg-zinc-950 border border-zinc-700 rounded-2xl overflow-hidden ${isCompact ? 'p-4' : 'p-5'}`}>
-        {/* Header */}
-        <div className="flex items-start justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-blue-500 via-cyan-500 to-teal-500 flex items-center justify-center text-white font-bold text-2xl shadow-inner ring-1 ring-white/20">
-              {asset.name?.[0] || 'A'}
-            </div>
-            <div>
-              <div className="font-bold text-2xl tracking-tight text-white">{asset.name}</div>
-              <div className="text-xs text-zinc-400 font-mono -mt-1">Asset ID {asset.id}</div>
-            </div>
-          </div>
-          <div 
-            onClick={() => copyToClipboard(hash)}
-            className="text-right cursor-pointer group"
-          >
-            <div className="text-xs font-mono text-zinc-400 group-hover:text-blue-400 transition-colors">
-              {hash.slice(0, 10)}…{hash.slice(-8)}
-            </div>
-            <div className="text-[10px] text-zinc-500 group-hover:text-zinc-400">Copy Hash</div>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-          <div>
-            <div className="text-xs text-zinc-400 mb-0.5">Decimals</div>
-            <div className="font-mono font-medium text-white">{asset.decimals}</div>
-          </div>
-          <div>
-            <div className="text-xs text-zinc-400 mb-0.5">Block Height</div>
-            <div className="font-mono font-medium text-white">{asset.height}</div>
-          </div>
-          <div>
-            <div className="text-xs text-zinc-400 mb-0.5">Total Supply</div>
-            <div className="font-mono font-medium text-emerald-400 tabular-nums">{supply}</div>
-          </div>
-          <div>
-            <div className="text-xs text-zinc-400 mb-0.5">Owner Account</div>
-            <div className="font-mono font-medium text-white">#{asset.ownerAccountId}</div>
-          </div>
-          {asset.groupId != null && (
-            <div>
-              <div className="text-xs text-zinc-400 mb-0.5">Group ID</div>
-              <div className="font-mono font-medium text-white">{asset.groupId}</div>
-            </div>
-          )}
-          {asset.parentId != null && (
-            <div>
-              <div className="text-xs text-zinc-400 mb-0.5">Parent ID</div>
-              <div className="font-mono font-medium text-white">{asset.parentId}</div>
-            </div>
-          )}
-        </div>
-
-        <div className="mt-4 pt-3 border-t border-zinc-700 text-xs text-zinc-400 flex items-center justify-between">
-          <span>Created on-chain</span>
-          <button 
-            onClick={() => copyToClipboard(hash)}
-            className="px-3 py-1 rounded-lg hover:bg-zinc-800 text-blue-400 hover:text-blue-300 transition-colors text-xs font-medium"
-          >
-            Copy Full Hash
-          </button>
-        </div>
-      </div>
-    );
   };
 
   // ==================== TRANSACTION RESULT CARD ====================
@@ -484,8 +559,14 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                     </div>
                   </div>
                   <div className="space-y-3">
-                    {results.assetComplete.data.matches.map((asset, idx) => (
-                      <div key={idx}>{renderAssetCard(asset, true)}</div>
+                    {results.assetComplete.data.matches.map((asset) => (
+                      <AssetCardWithChart
+                        key={asset.hash || asset.id}
+                        asset={asset}
+                        isCompact
+                        selectedNode={selectedNode}
+                        onCopyHash={copyToClipboard}
+                      />
                     ))}
                   </div>
                 </div>
@@ -525,7 +606,11 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
 
               {results.assetLookup && results.assetLookup.code === 0 && results.assetLookup.data && (
                 <div className="mt-6">
-                  {renderAssetCard(results.assetLookup.data)}
+                  <AssetCardWithChart
+                    asset={results.assetLookup.data}
+                    selectedNode={selectedNode}
+                    onCopyHash={copyToClipboard}
+                  />
                 </div>
               )}
 

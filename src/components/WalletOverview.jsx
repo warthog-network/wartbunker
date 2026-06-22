@@ -319,9 +319,20 @@ const WalletOverview = ({ onLogout }) => {
                       </div>
                       <div className="min-w-0">
                         <div className="font-medium text-white truncate">{asset.name}</div>
-                        <div className="text-[10px] text-zinc-500 font-mono truncate">
+                        <span
+                          onClick={() => copyToClipboard(asset.hash)}
+                          className="text-[10px] text-zinc-500 font-mono truncate cursor-pointer"
+                          role="button"
+                          tabIndex={0}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              copyToClipboard(asset.hash);
+                            }
+                          }}
+                        >
                           {asset.hash.slice(0, 8)}…{asset.hash.slice(-6)}
-                        </div>
+                        </span>
                       </div>
                     </div>
 
