@@ -29,6 +29,25 @@ export async function buildLiquidityDepositTx(ctx, account, {
   return serializeTransaction(ctx.depositLiquidity(account, hash, tokenAmount, wart));
 }
 
+/** Build and serialize a liquidity withdrawal transaction. */
+export async function buildLiquidityWithdrawTx(ctx, account, {
+  assetHash,
+  shares,
+}) {
+  const hash = normalizeAssetHash(assetHash);
+  if (!isValidAssetHash(hash)) {
+    throw new Error('Asset hash must be exactly 64 hex characters');
+  }
+
+  const { Liquidity } = await import('warthog-js');
+  const units = Liquidity.parse(String(shares).trim().replace(',', '.'));
+  if (!units) {
+    throw new Error('Invalid LP shares amount');
+  }
+
+  return serializeTransaction(ctx.withdrawLiquidity(account, hash, units));
+}
+
 /** Build and serialize a limit buy or sell transaction. */
 export async function buildLimitSwapTx(ctx, account, {
   assetHash,

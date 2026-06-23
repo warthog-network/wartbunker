@@ -1,16 +1,20 @@
 import React, { useState, Fragment } from 'react';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
+import ConfirmDialog from './ConfirmDialog';
 import { isValidAssetHash } from '../utils/warthogFormat';
 import { createWarthogApi } from '../utils/warthogClient.js';
+import {
+  bumpNonceAfterSuccess,
+  cancelLimitOrder,
+  getSmartNonce,
+} from '../utils/cancelLimitOrder.js';
 
 const WalletOverview = ({ onLogout }) => {
   const {
     wallet,
     balance,
     usdBalance,
-    pinHeight,
-    pinHash,
     selectedNode,
     setCurrentTab,
     refreshBalance,
@@ -19,6 +23,9 @@ const WalletOverview = ({ onLogout }) => {
     addWatchedAsset,
     removeWatchedAsset,
     currentWalletName,
+    nextNonce,
+    isSessionLocked,
+    isSigningUnlocked,
   } = useWallet();
 
   const toast = useToast();
@@ -29,6 +36,9 @@ const WalletOverview = ({ onLogout }) => {
   // NEW: Open Limit Orders state
   const [openOrders, setOpenOrders] = useState(null);
   const [loadingOpenOrders, setLoadingOpenOrders] = useState(false);
+  const [openOrdersExpanded, setOpenOrdersExpanded] = useState(false);
+  const [cancellingOrderHash, setCancellingOrderHash] = useState(null);
+  const [cancelConfirm, setCancelConfirm] = useState(null);
 
   const copyToClipboard = (text) => {
     if (!text) return;
@@ -37,6 +47,12 @@ const WalletOverview = ({ onLogout }) => {
     }).catch(() => {
       toast.error('Failed to copy to clipboard');
     });
+  };
+
+  const abbreviateAddress = (address) => {
+    if (!address) return '';
+    if (address.length <= 11) return address;
+    return `${address.slice(0, 5)}…${address.slice(-5)}`;
   };
 
   const enrichOpenOrders = async (ordersData) => {
@@ -96,16 +112,74 @@ const WalletOverview = ({ onLogout }) => {
         ? { code: 0, data: res.data }
         : { code: res.code, error: res.error };
       setOpenOrders(await enrichOpenOrders(ordersData));
+      setOpenOrdersExpanded(true);
     } catch (err) {
       console.error(err);
       toast.error('Failed to fetch open orders: ' + err.message);
     }
     setLoadingOpenOrders(false);
   };
+
+  const handleOpenOrdersToggle = () => {
+    if (openOrdersExpanded) {
+      setOpenOrdersExpanded(false);
+      return;
+    }
+    if (openOrders) {
+      setOpenOrdersExpanded(true);
+      return;
+    }
+    fetchOpenOrders();
+  };
+  const handleCancelOrder = async (order, direction, assetName) => {
+    if (!isSigningUnlocked) {
+      toast.error(isSessionLocked ? 'Unlock your wallet to cancel orders' : 'Wallet not loaded. Please log in again.');
+      return;
+    }
+    if (!order?.txHash) {
+      toast.error('Order is missing a transaction hash');
+      return;
+    }
+
+    setCancellingOrderHash(order.txHash);
+    try {
+      const api = await createWarthogApi(selectedNode);
+      const nonceId = getSmartNonce(wallet.address, nextNonce);
+      const { nonce } = await cancelLimitOrder({
+        api,
+        txHash: order.txHash,
+        accountAddress: wallet.address,
+        nonceId,
+      });
+      bumpNonceAfterSuccess(wallet.address, nonce, nextNonce);
+      toast.success(`${direction === 'buy' ? 'Buy' : 'Sell'} limit order cancel submitted`);
+      await fetchOpenOrders();
+      refreshBalance?.();
+    } catch (err) {
+      toast.error(err.message || 'Failed to cancel order');
+    } finally {
+      setCancellingOrderHash(null);
+      setCancelConfirm(null);
+    }
+  };
+
+  const requestCancelOrder = (order, direction, assetName) => {
+    if (!isSigningUnlocked) {
+      toast.error(isSessionLocked ? 'Unlock your wallet to cancel orders' : 'Wallet not loaded. Please log in again.');
+      return;
+    }
+    setCancelConfirm({
+      txHash: order.txHash,
+      direction,
+      assetName,
+      order,
+    });
+  };
+
   // ============================================================
 
   // ==================== STYLIZED ORDER CARD RENDERER ====================
-  const renderOrderCard = (order, direction, assetName, assetDecimals, onCopy) => {
+  const renderOrderCard = (order, direction, assetName, onCopy) => {
     const isBuy = direction === 'buy';
     const amountStr = order.amount?.str || '0';
     const filledStr = order.filled?.str || '0';
@@ -116,6 +190,8 @@ const WalletOverview = ({ onLogout }) => {
     const amountNum = parseFloat(amountStr);
     const filledNum = parseFloat(filledStr);
     const fillPct = amountNum > 0 ? Math.min(100, Math.floor((filledNum / amountNum) * 100)) : 0;
+    const isFullyFilled = fillPct >= 100;
+    const isCancelling = cancellingOrderHash === order.txHash;
 
     return (
       <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-3 text-sm">
@@ -182,6 +258,18 @@ const WalletOverview = ({ onLogout }) => {
             <span>●</span> <span>In mempool (unconfirmed)</span>
           </div>
         )}
+
+        <div className="mt-2 pt-2 border-t border-zinc-800 flex justify-end">
+          <button
+            type="button"
+            onClick={() => requestCancelOrder(order, direction, assetName)}
+            disabled={isFullyFilled || isCancelling || !order.txHash}
+            className="compact-btn !text-red-400 hover:!text-red-300 !border-red-800/60 hover:!bg-red-950/50 disabled:opacity-40 disabled:cursor-not-allowed"
+            title={isFullyFilled ? 'Fully filled orders cannot be canceled' : 'Cancel this limit order'}
+          >
+            {isCancelling ? 'Canceling…' : 'Cancel Order'}
+          </button>
+        </div>
       </div>
     );
   };
@@ -202,17 +290,7 @@ const WalletOverview = ({ onLogout }) => {
       {/* Page header */}
       <div className="mb-5">
         <h2 className="!mb-1">Wallet Overview</h2>
-        {currentWalletName ? (
-          <div className="flex items-center gap-2 text-xs text-zinc-500">
-            <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#FDB913]/80" />
-            <span>
-              Saved as{' '}
-              <span className="font-mono text-[#FDB913]">{currentWalletName}</span>
-            </span>
-          </div>
-        ) : (
-          <p className="text-xs text-zinc-500">Your balances, assets, and open orders</p>
-        )}
+        <p className="text-xs text-zinc-500">Your balances, assets, and open orders</p>
       </div>
 
       <div className="space-y-4">
@@ -221,8 +299,17 @@ const WalletOverview = ({ onLogout }) => {
           <div className="absolute -top-10 -right-10 w-40 h-40 rounded-full bg-[#FDB913]/8 blur-3xl pointer-events-none" />
           <div className="absolute bottom-0 left-0 w-28 h-28 rounded-full bg-orange-500/5 blur-2xl pointer-events-none" />
 
-          <div className="relative p-5">
+          <div className="relative p-5 min-w-0">
             <div className="mb-4 min-w-0">
+              {currentWalletName && (
+                <div className="flex items-center gap-1.5 text-[10px] text-zinc-500 mb-2">
+                  <span className="inline-block w-1 h-1 rounded-full bg-[#FDB913]/80 flex-shrink-0" />
+                  <span>
+                    Saved as{' '}
+                    <span className="font-mono text-[#FDB913]">{currentWalletName}</span>
+                  </span>
+                </div>
+              )}
               <div className="flex items-center justify-between gap-2 mb-1 min-w-0">
                 <div className="text-[10px] uppercase tracking-[0.14em] text-zinc-500 font-medium">
                   Total Balance
@@ -255,38 +342,32 @@ const WalletOverview = ({ onLogout }) => {
               </div>
             </div>
 
-            <button
-              onClick={() => setCurrentTab('send')}
-              className="w-full py-3 wallet-action-btn !m-0 font-semibold"
-            >
-              Send WART
-            </button>
-          </div>
-        </div>
-
-        {/* Address */}
-        <div className="bg-zinc-950 border border-zinc-700 rounded-2xl overflow-hidden">
-          <div className="px-4 py-3 bg-zinc-900/80 border-b border-zinc-700">
-            <span className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-400">
-              Wallet Address
-            </span>
-          </div>
-          <div className="p-4">
-            <span
-              className="wallet-address block cursor-pointer hover:opacity-90 transition-opacity"
-              onClick={() => copyToClipboard(wallet.address)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  copyToClipboard(wallet.address);
-                }
-              }}
-            >
-              {wallet.address}
-            </span>
-            <p className="text-[10px] text-zinc-500 mt-2">Click to copy</p>
+            <div className="flex flex-nowrap items-center gap-3 min-w-0">
+              <button
+                onClick={() => setCurrentTab('send')}
+                className="flex-shrink-0 py-3 px-5 wallet-action-btn !m-0 font-semibold whitespace-nowrap"
+              >
+                Send WART
+              </button>
+              <div className="min-w-0 flex-1 flex justify-center overflow-hidden">
+                <span
+                  className="max-w-full truncate whitespace-nowrap font-mono text-[11px] text-zinc-400 hover:text-[#FDB913] cursor-pointer transition-colors text-center"
+                  title={`${wallet.address} — click to copy`}
+                  onClick={() => copyToClipboard(wallet.address)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      copyToClipboard(wallet.address);
+                    }
+                  }}
+                >
+                  <span className="sm:hidden">{abbreviateAddress(wallet.address)}</span>
+                  <span className="hidden sm:inline">{wallet.address}</span>
+                </span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -307,7 +388,7 @@ const WalletOverview = ({ onLogout }) => {
 
           <div className="p-4">
             {assetBalances.length > 0 ? (
-              <div className="space-y-2">
+              <div className="space-y-2 mb-4">
                 {assetBalances.map((asset, index) => (
                   <div
                     key={asset.hash || index}
@@ -353,45 +434,29 @@ const WalletOverview = ({ onLogout }) => {
                 ))}
               </div>
             ) : (
-              <div className="text-center py-6 px-4">
-                <div className="text-2xl mb-2 opacity-30">◎</div>
-                <p className="text-sm text-zinc-400">No custom tokens tracked yet</p>
-                <p className="text-xs text-zinc-500 mt-1">
-                  Add an asset hash below to watch balances here.
-                </p>
-              </div>
+              <p className="text-sm text-zinc-500 mb-4 text-center py-2">
+                No custom tokens tracked yet
+              </p>
             )}
-          </div>
-        </div>
 
-        {/* Add Token */}
-        <div className="bg-zinc-950 border border-zinc-700 rounded-2xl overflow-hidden">
-          <div className="px-4 py-3 bg-zinc-900/80 border-b border-zinc-700">
-            <span className="text-xs font-semibold uppercase tracking-[0.12em] text-orange-400">
-              Add Token
-            </span>
-          </div>
-          <div className="p-4">
-            <div className="flex flex-col sm:flex-row gap-2">
+            <div className="flex flex-col sm:flex-row gap-2 pt-3 border-t border-zinc-800">
               <input
                 type="text"
-                placeholder="Paste 64-char asset hash"
+                placeholder="Paste 64-char asset hash to track"
                 className="input flex-1 font-mono text-sm !mb-0"
                 value={manualAssetHash}
                 onChange={(e) => setManualAssetHash(e.target.value.trim())}
                 onKeyDown={(e) => e.key === 'Enter' && handleFetchManualAsset()}
               />
               <button
+                type="button"
                 onClick={handleFetchManualAsset}
                 disabled={isFetching || !manualAssetHash}
-                className="w-full sm:w-auto px-5 py-2.5 bg-orange-600 hover:bg-orange-700 text-white rounded-xl disabled:opacity-50 font-medium transition-colors !m-0 flex-shrink-0"
+                className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1 w-full sm:w-auto flex-shrink-0"
               >
-                {isFetching ? 'Fetching…' : 'Add Token'}
+                {isFetching ? 'Adding…' : '+ Add Token'}
               </button>
             </div>
-            <p className="text-[11px] text-zinc-500 mt-2.5 leading-relaxed">
-              Tokens you add are saved to your wallet and reload automatically on next login.
-            </p>
           </div>
         </div>
 
@@ -411,19 +476,35 @@ const WalletOverview = ({ onLogout }) => {
           </div>
 
           <div className="p-4">
-            <button
-              onClick={fetchOpenOrders}
-              disabled={loadingOpenOrders}
-              className="w-full py-3 bg-purple-600 hover:bg-purple-700 active:bg-purple-800 text-white font-semibold rounded-xl disabled:opacity-60 transition-all flex items-center justify-center gap-2 !m-0"
-            >
-              {loadingOpenOrders
-                ? 'Loading Open Orders…'
-                : openOrders
-                  ? '⟳ Refresh Open Orders'
-                  : 'View My Open Limit Orders'}
-            </button>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={openOrdersExpanded ? fetchOpenOrders : handleOpenOrdersToggle}
+                disabled={loadingOpenOrders}
+                className={`compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1${
+                  openOrdersExpanded ? ' compact-btn--active' : ''
+                }`}
+              >
+                {loadingOpenOrders
+                  ? 'Loading Open Orders…'
+                  : openOrdersExpanded
+                    ? '⟳ Refresh Open Orders'
+                    : openOrders
+                      ? 'View Open Orders'
+                      : 'View My Open Limit Orders'}
+              </button>
+              {openOrdersExpanded && (
+                <button
+                  type="button"
+                  onClick={() => setOpenOrdersExpanded(false)}
+                  className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1"
+                >
+                  Close
+                </button>
+              )}
+            </div>
 
-            {openOrders && (
+            {openOrders && openOrdersExpanded && (
               <div className="mt-4">
                 {openOrders.code === 0 && Array.isArray(openOrders.data) && openOrders.data.length > 0 ? (
                   <div className="space-y-4">
@@ -475,7 +556,7 @@ const WalletOverview = ({ onLogout }) => {
                                 <div className="space-y-2">
                                   {buyOrders.map((order, oIdx) => (
                                     <Fragment key={order.txHash || `buy-${oIdx}-${asset.hash || ''}`}>
-                                      {renderOrderCard(order, 'buy', asset.name, asset.decimals, copyToClipboard)}
+                                      {renderOrderCard(order, 'buy', asset.name, copyToClipboard)}
                                     </Fragment>
                                   ))}
                                 </div>
@@ -494,7 +575,7 @@ const WalletOverview = ({ onLogout }) => {
                                 <div className="space-y-2">
                                   {sellOrders.map((order, oIdx) => (
                                     <Fragment key={order.txHash || `sell-${oIdx}-${asset.hash || ''}`}>
-                                      {renderOrderCard(order, 'sell', asset.name, asset.decimals, copyToClipboard)}
+                                      {renderOrderCard(order, 'sell', asset.name, copyToClipboard)}
                                     </Fragment>
                                   ))}
                                 </div>
@@ -530,42 +611,43 @@ const WalletOverview = ({ onLogout }) => {
               </div>
             )}
 
-            {!openOrders && (
+            {!openOrdersExpanded && (
               <p className="text-[11px] text-zinc-500 mt-3 text-center">
-                Load pending buy/sell limit orders from the connected node.
+                {openOrders
+                  ? 'Open orders are loaded — tap View to show them again.'
+                  : 'Load pending buy/sell limit orders from the connected node.'}
               </p>
             )}
           </div>
         </div>
 
-        {/* Network status */}
-        <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-4">
-          <div className="text-[10px] uppercase tracking-[0.14em] text-zinc-500 font-medium mb-3">
-            Network Status
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="p-3 rounded-xl bg-zinc-900/50 border border-zinc-800">
-              <div className="text-[10px] text-zinc-500 mb-1">Node</div>
-              <div className="text-xs font-mono text-zinc-300 break-all leading-snug">{selectedNode}</div>
-            </div>
-            <div className="p-3 rounded-xl bg-zinc-900/50 border border-zinc-800">
-              <div className="text-[10px] text-zinc-500 mb-1">Pin Height</div>
-              <div className="text-sm font-mono text-white tabular-nums">{pinHeight ?? '—'}</div>
-            </div>
-            <div className="p-3 rounded-xl bg-zinc-900/50 border border-zinc-800 sm:col-span-1">
-              <div className="text-[10px] text-zinc-500 mb-1">Pin Hash</div>
-              <div className="text-xs font-mono text-zinc-300 break-all leading-snug">{pinHash ?? '—'}</div>
-            </div>
-          </div>
-        </div>
       </div>
 
       <button
         onClick={onLogout}
-        className="px-4 py-2 text-sm font-medium text-red-600 border border-red-300 rounded-lg hover:bg-red-50 dark:hover:bg-red-950 dark:text-red-400 dark:border-red-700 transition-colors mt-4"
+        className="px-4 py-2 text-sm font-medium text-red-400 border border-red-700/60 rounded-lg hover:bg-red-950/40 transition-colors mt-4"
       >
         Logout
       </button>
+
+      <ConfirmDialog
+        open={Boolean(cancelConfirm)}
+        title="Cancel Limit Order"
+        message={
+          cancelConfirm
+            ? `Cancel this ${cancelConfirm.direction === 'buy' ? 'buy' : 'sell'} limit order for ${cancelConfirm.assetName}?\n\nThis submits a cancelation transaction to the node. Unconfirmed orders may need a block mined before the cancel clears.`
+            : ''
+        }
+        confirmText="Cancel Order"
+        cancelText="Keep Order"
+        confirmVariant="danger"
+        onConfirm={() => {
+          if (cancelConfirm) {
+            handleCancelOrder(cancelConfirm.order, cancelConfirm.direction, cancelConfirm.assetName);
+          }
+        }}
+        onCancel={() => setCancelConfirm(null)}
+      />
     </section>
   );
 };

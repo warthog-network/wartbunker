@@ -1,4 +1,3 @@
-import { buildLimitSwapTx } from './buildDexTx.js';
 import { encodeLimitPriceHex } from './encodeLimitPrice.js';
 import { signAndSubmitTransaction } from './warthogClient.js';
 import { computePoolSpotPrice, formatAssetPrice, normalizeChartAssetHash } from './dexPrice.js';
@@ -149,7 +148,7 @@ function sleep(ms) {
  * Submit limit orders from a volume plan.
  * @param {Object} options
  * @param {import('warthog-js').WarthogApi} options.api
- * @param {string} options.privateKey
+
  * @param {string} options.assetHash
  * @param {VolumePlanStep[]} options.plan
  * @param {number} options.decimals
@@ -161,7 +160,6 @@ function sleep(ms) {
  */
 export async function executeVolumePlan({
   api,
-  privateKey,
   assetHash,
   plan,
   decimals,
@@ -191,15 +189,15 @@ export async function executeVolumePlan({
 
     try {
       const { nonce: usedNonce } = await signAndSubmitTransaction(api, {
-        privateKey,
         nonceId: nonce,
-        buildTx: (ctx, account) => buildLimitSwapTx(ctx, account, {
+        buildSpec: {
+          type: 'LIMIT_SWAP',
           assetHash,
           isBuy: step.side === 'buy',
           amount: step.amount,
           assetDecimals: decimals,
           limitHex: step.limitHex,
-        }),
+        },
       });
 
       const entry = {

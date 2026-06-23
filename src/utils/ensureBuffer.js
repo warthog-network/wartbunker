@@ -1,5 +1,10 @@
+let bufferReady = false;
+let cryptoReady = false;
+
 /** Browser polyfills required by warthog-js and its crypto deps. */
 export async function ensureBuffer() {
+  if (bufferReady) return;
+
   if (typeof globalThis.global === 'undefined') {
     globalThis.global = globalThis;
   }
@@ -21,4 +26,16 @@ export async function ensureBuffer() {
       globalThis.Buffer = BufferPolyfill;
     }
   }
+
+  bufferReady = true;
+}
+
+/** Warm up crypto after Buffer exists — required before warthog-js loads in workers. */
+export async function ensureWorkerCrypto() {
+  await ensureBuffer();
+  if (cryptoReady) return;
+
+  const { createHash } = await import('crypto');
+  createHash('sha256').update(globalThis.Buffer.alloc(0)).digest();
+  cryptoReady = true;
 }

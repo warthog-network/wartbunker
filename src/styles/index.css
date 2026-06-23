@@ -25,7 +25,7 @@
 
 body {
   /* Removed global text-align: center — it was forcing awkward overrides everywhere */
-  background-color: #000000;
+  background-color: transparent;
 }
 
 

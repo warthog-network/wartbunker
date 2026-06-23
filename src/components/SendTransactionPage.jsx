@@ -14,8 +14,12 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
     wallet: contextWallet,
     selectedNode: contextSelectedNode,
     nextNonce,
+    balance,
     refreshBalance,
     setError: setContextError,
+    setCurrentTab,
+    isSigningUnlocked,
+    isSessionLocked,
   } = useWallet();
 
   const wallet = propWallet || contextWallet;
@@ -72,6 +76,15 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
       setContextError?.(msg);
       return;
     }
+    if (!isSigningUnlocked) {
+      const msg = isSessionLocked
+        ? 'Unlock your wallet to send WART'
+        : 'Wallet not loaded. Please log in again.';
+      setLocalError(msg);
+      setContextError?.(msg);
+      toast.error(msg);
+      return;
+    }
 
     setIsLoading(true);
     setResult(null);
@@ -81,7 +94,6 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
     try {
       const api = await createWarthogApi(selectedNode);
       const { Address, Wart } = await import('warthog-js');
-      const { serializeTransaction } = await import('../utils/warthogTx.js');
 
       const recipient = parseRecipientAddress(Address, toAddress);
       if (!recipient) {
@@ -94,10 +106,12 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
       }
 
       const { nonce, data } = await signAndSubmitTransaction(api, {
-        privateKey: wallet.privateKey,
         nonceId: parseInt(nonceInput, 10) || 0,
-        buildTx: (ctx, account) =>
-          serializeTransaction(ctx.transferWart(account, recipient, wartAmount)),
+        buildSpec: {
+          type: 'TRANSFER_WART',
+          recipientHex: recipient.hex,
+          amount,
+        },
       });
 
       setSentNonce(nonce);
@@ -206,69 +220,115 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
     return <section><h2>Send WART</h2><p>Please log in first.</p></section>;
   }
 
+  const handleMaxAmount = () => {
+    if (balance && balance !== '0.00000000') {
+      setAmount(balance);
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !isLoading && toAddress && amount) handleSend();
+  };
+
   return (
-    <section>
-      <h2>Send WART</h2>
-      <p className="text-gray-400 text-sm mb-4">Signed via warthog-js · fee from node minimum</p>
-
-      <div className="mb-4 flex items-center gap-2">
-        <span className="text-xs text-gray-400">Detected originId:</span>
-        <span className="px-3 py-1 bg-emerald-900/50 text-emerald-400 font-mono text-sm rounded-full border border-emerald-700">
-          {originId}
-        </span>
+    <section className="!p-0 !bg-transparent !border-0 !shadow-none">
+      <div className="mb-5">
+        <h2 className="!mb-1">Send WART</h2>
+        <p className="text-xs text-zinc-500">Transfer WART to another address on the connected node</p>
       </div>
 
-      <div className="form-group">
-        <label>To Address (48 hex chars)</label>
-        <input
-          type="text"
-          value={toAddress}
-          onChange={e => setToAddress(e.target.value.trim())}
-          placeholder="647d1f856e51968cd8eb41a139bc55306a3d1a2e9eccda69"
-          className="input font-mono text-sm"
-        />
-      </div>
+      <div className="bg-zinc-950 border border-zinc-700 rounded-2xl p-5 space-y-4">
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-zinc-500">Available balance</span>
+          <span className="font-mono text-white tabular-nums">
+            {balance ?? '…'} <span className="text-[#FDB913]">WART</span>
+          </span>
+        </div>
 
-      <div className="form-group">
-        <label>Amount (WART)</label>
-        <input
-          type="text"
-          value={amount}
-          onChange={e => setAmount(e.target.value)}
-          placeholder="0.00100000"
-          className="input"
-        />
-      </div>
-
-      <div className="grid grid-cols-2 gap-4">
-        <div className="form-group">
-          <label>Fee (WART) — auto-set to node minimum</label>
+        <div className="form-group !mb-0">
+          <label>Recipient Address</label>
           <input
             type="text"
-            value={feeInput}
-            onChange={e => setFeeInput(e.target.value)}
-            placeholder="0.0001"
-            className="input"
+            value={toAddress}
+            onChange={e => setToAddress(e.target.value.trim())}
+            onKeyDown={handleKeyDown}
+            placeholder="48-character hex address"
+            className="input font-mono text-sm"
+            autoComplete="off"
           />
         </div>
-        <div className="form-group">
-          <label>Nonce</label>
+
+        <div className="form-group !mb-0">
+          <div className="flex items-center justify-between gap-3 mb-1">
+            <label className="!mb-0">Amount</label>
+            <button
+              type="button"
+              onClick={handleMaxAmount}
+              disabled={!balance || balance === '0.00000000'}
+              className="compact-btn hover:!text-[#FDB913] disabled:opacity-40 !mx-2 !my-1 !px-3 !py-1"
+            >
+              MAX
+            </button>
+          </div>
           <input
-            type="number"
-            value={nonceInput}
-            onChange={e => setNonceInput(e.target.value)}
+            type="text"
+            value={amount}
+            onChange={e => setAmount(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="0.00100000"
             className="input"
           />
         </div>
+
+        <details className="group">
+          <summary className="text-xs text-zinc-500 cursor-pointer hover:text-zinc-300 transition-colors list-none flex items-center gap-1">
+            <span className="group-open:rotate-90 transition-transform inline-block">▸</span>
+            Advanced options (nonce, fee)
+          </summary>
+          <div className="grid grid-cols-2 gap-4 mt-3 pt-3 border-t border-zinc-800">
+            <div className="form-group !mb-0">
+              <label className="text-sm">Fee</label>
+              <input
+                type="text"
+                value={feeInput}
+                onChange={e => setFeeInput(e.target.value)}
+                placeholder="Node minimum"
+                className="input text-sm"
+              />
+            </div>
+            <div className="form-group !mb-0">
+              <label className="text-sm">Nonce</label>
+              <input
+                type="number"
+                value={nonceInput}
+                onChange={e => setNonceInput(e.target.value)}
+                className="input text-sm"
+              />
+            </div>
+            <div className="col-span-2 text-[10px] text-zinc-600">
+              Origin ID: <span className="font-mono text-zinc-400">{originId}</span>
+            </div>
+          </div>
+        </details>
+
+        <button
+          onClick={handleSend}
+          disabled={isLoading || !toAddress || !amount}
+          className="w-full py-3.5 wallet-action-btn disabled:opacity-60 !m-0"
+        >
+          {isLoading ? 'Signing & Sending…' : 'Send WART'}
+        </button>
       </div>
 
-      <button
-        onClick={handleSend}
-        disabled={isLoading || !toAddress || !amount}
-        className="mt-4 w-full py-3.5 wallet-action-btn disabled:opacity-60"
-      >
-        {isLoading ? 'Signing & Sending...' : 'Sign and Send WART'}
-      </button>
+      {result && (
+        <button
+          type="button"
+          onClick={() => setCurrentTab?.('history')}
+          className="mt-3 w-full text-xs text-zinc-500 hover:text-[#FDB913] transition-colors py-2"
+        >
+          View in transaction history →
+        </button>
+      )}
 
       {localError && (
         <div className="error mt-4">

@@ -12,6 +12,7 @@ import AssetPage from './AssetPage';
 import DexPage from './DexPage';
 import GatedPage from './GatedPage';
 import { isDefiNode } from '../utils/presetNodes.js';
+import { clearWalletSession } from '../utils/sessionWallet.js';
 
 const WalletContent = () => {
   const {
@@ -30,6 +31,9 @@ const WalletContent = () => {
     lockWallet,
     unlockWallet,
     isSessionLocked,
+    isSigningUnlocked,
+    clearSigningSession,
+    registerAutoLockCallback,
   } = useWallet();
 
   const toast = useToast();
@@ -48,6 +52,17 @@ const WalletContent = () => {
   const [showUnlockPrompt, setShowUnlockPrompt] = useState(false);
   const [unlockPassword, setUnlockPassword] = useState('');
   const [unlockPromptError, setUnlockPromptError] = useState(null);
+
+  useEffect(() => {
+    registerAutoLockCallback?.(({ hasSavedWallet }) => {
+      if (hasSavedWallet) {
+        toast.info('Wallet auto-locked after inactivity — use Unlock to sign again');
+      } else {
+        toast.info('Wallet auto-locked after inactivity');
+      }
+    });
+    return () => registerAutoLockCallback?.(null);
+  }, [registerAutoLockCallback, toast]);
 
   // PWA logic (unchanged)
   useEffect(() => {
@@ -85,14 +100,14 @@ const WalletContent = () => {
 
   const handleUpdate = () => window.location.reload();
 
-  const handlePromptSaveWallet = () => {
+  const handlePromptSaveWallet = async () => {
     setPromptError(null);
     const name = promptWalletName.trim();
     if (!name || !promptPassword || promptPassword !== promptConfirmPassword) {
       setPromptError('Please provide a wallet name and matching passwords to save');
       return;
     }
-    const ok = saveNamedWallet(name, promptPassword);
+    const ok = await saveNamedWallet(name, promptPassword);
     if (ok) {
       toast.success(`Wallet saved as "${name}"`);
       setShowNamePrompt(false);
@@ -116,13 +131,13 @@ const WalletContent = () => {
     toast.info('Wallet session active. You can name & save it later for easy login.');
   };
 
-  const handleUnlockWallet = () => {
+  const handleUnlockWallet = async () => {
     setUnlockPromptError(null);
     if (!unlockPassword) {
       setUnlockPromptError('Password is required to unlock');
       return;
     }
-    const ok = unlockWallet?.(unlockPassword);
+    const ok = await unlockWallet?.(unlockPassword);
     if (ok) {
       toast.success(currentWalletName ? `Unlocked "${currentWalletName}"` : 'Wallet unlocked');
       setShowUnlockPrompt(false);
@@ -139,9 +154,9 @@ const WalletContent = () => {
     setUnlockPromptError(null);
   };
 
-  const handleLogout = () => {
-    sessionStorage.removeItem('warthogWalletDecrypted');
-    sessionStorage.removeItem('warthogCurrentWalletName');
+  const handleLogout = async () => {
+    await clearSigningSession?.();
+    clearWalletSession();
     setWallet(null);
     setIsLoggedIn(false);
     setCurrentWalletName(null);  // explicitly clear the saved name association
@@ -169,28 +184,29 @@ const WalletContent = () => {
     return <WalletSetup />;
   }
 
+  const isTestnet = selectedNode && isDefiNode(selectedNode);
+
   const tabs = [
     { key: 'overview', label: 'Overview' },
     { key: 'send', label: 'Send' },
     { key: 'history', label: 'History' },
+    ...(isTestnet ? [
+      { key: 'assets', label: 'Assets' },
+      { key: 'dex', label: 'DEX' },
+    ] : []),
     { key: 'tools', label: 'Tools' },
+    { key: 'network', label: 'Network' },
     { key: 'gated', label: 'Gated' },
-    { key: 'node', label: 'Node' },
   ];
-
-  const isTestnet = selectedNode && isDefiNode(selectedNode);
-  if (isTestnet) {
-    tabs.push({ key: 'assets', label: 'Assets' });
-    tabs.push({ key: 'dex', label: 'DEX' });
-  }
 
   const renderTabContent = () => {
     switch (currentTab) {
       case 'overview': return <WalletOverview onLogout={handleLogout} />;
       case 'send': return <SendTransactionPage wallet={wallet} selectedNode={selectedNode} />;
       case 'history': return <TransactionHistoryPage wallet={wallet} selectedNode={selectedNode} />;
-      case 'tools': return <ToolsPage selectedNode={selectedNode} />;
+      case 'tools': return <ToolsPage selectedNode={selectedNode} wallet={wallet} />;
       case 'gated': return <GatedPage />;
+      case 'network':
       case 'node': return <NodeSelectionPage onNodeChange={setSelectedNode} />;
       case 'assets': return <AssetPage selectedNode={selectedNode} />;
       case 'dex': return <DexPage selectedNode={selectedNode} wallet={wallet} />;
@@ -202,19 +218,19 @@ const WalletContent = () => {
     <div className="container">
 
       {/* Header */}
-      <div className="flex items-center justify-between px-1 py-4 mb-2">
+      <div className="flex items-start justify-between px-1 py-4 mb-2 gap-3">
         <div>
           <div className="text-[22px] font-semibold tracking-[-0.4px] text-[#FDB913]">Warthog</div>
           <div className="text-[10px] text-zinc-500 -mt-0.5 font-mono">NETWORK DEFI</div>
         </div>
-        <div className="flex items-center gap-2">
-          {isLoggedIn && wallet?.privateKey && (
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {isLoggedIn && isSigningUnlocked && (
             <button
-              onClick={() => {
-                lockWallet?.();
-                toast.success('Wallet locked — private key cleared from this session');
+              onClick={async () => {
+                await lockWallet?.();
+                toast.success('Wallet locked — signing disabled until you unlock');
               }}
-              className="wallet-action-btn"
+              className="wallet-action-btn hidden sm:inline-flex"
               title="Lock wallet: remove private key from this browser session"
             >
               Lock
@@ -224,7 +240,7 @@ const WalletContent = () => {
           {isLoggedIn && isSessionLocked && currentWalletName && (
             <button
               onClick={() => setShowUnlockPrompt(true)}
-              className="text-xs px-3 py-1.5 rounded-xl border border-emerald-700/60 hover:bg-emerald-900/30 text-emerald-400 hover:text-emerald-300 transition-colors"
+              className="text-xs px-3 py-1.5 rounded-xl border border-emerald-700/60 hover:bg-emerald-900/30 text-emerald-400 hover:text-emerald-300 transition-colors hidden sm:inline-flex"
               title={`Unlock wallet "${currentWalletName}"`}
             >
               Unlock

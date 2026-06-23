@@ -47,6 +47,9 @@ export default defineConfig({
     cacheOnDemandPages: true,
   }),
   vite: {
+    worker: {
+      format: 'es',
+    },
     define: {
       global: 'globalThis',
       'process.env': {},
@@ -60,10 +63,15 @@ export default defineConfig({
         process: path.resolve(projectRoot, 'src/shims/process.js'),
         vm: path.resolve(projectRoot, 'node_modules/vm-browserify'),
         '@': path.resolve(projectRoot, 'src'),
+        // Workers ignore package "browser" fields — force ethers to use @noble/hashes shims.
+        [path.resolve(projectRoot, 'node_modules/ethers/lib.esm/crypto/crypto.js')]: path.resolve(
+          projectRoot,
+          'node_modules/ethers/lib.esm/crypto/crypto-browser.js',
+        ),
       },
     },
     optimizeDeps: {
-      include: ['buffer', 'warthog-js'],
+      include: ['buffer', 'warthog-js', 'crypto-browserify', 'elliptic', 'ethers'],
     },
     ssr: {
       external: ['warthog-js', 'buffer', 'elliptic', 'crypto-browserify'],

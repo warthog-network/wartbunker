@@ -5,7 +5,7 @@
   margin: 0 auto;
   padding: 20px;
   font-family: 'Roboto', sans-serif;
-  background: var(--bg-card);
+  background: transparent;
   color: var(--text-primary);
   min-height: 100vh;
   box-sizing: border-box;
@@ -471,7 +471,7 @@
     box-sizing: border-box;
   }
 
-  .container button:not(.mobile-hamburger):not(.remove-token-btn):not(.refresh-balance-btn):not(.compact-btn):not(.dex-tab-btn):not(.wallet-tab-btn):not(.wallet-nav-btn):not(.wallet-action-btn) {
+  .container button:not(.mobile-hamburger):not(.remove-token-btn):not(.refresh-balance-btn):not(.compact-btn):not(.saved-wallet-card):not(.dex-tab-btn):not(.wallet-tab-btn):not(.wallet-nav-btn):not(.wallet-action-btn):not(.network-node-btn) {
     font-size: 1rem;
     width: 100%;
     margin-right: 0;
@@ -565,7 +565,7 @@
 
 /* Enhanced touch targets for mobile */
 @media (max-width: 767px) {
-  button:not(.remove-token-btn):not(.refresh-balance-btn):not(.compact-btn):not(.dex-tab-btn):not(.wallet-tab-btn):not(.wallet-nav-btn):not(.wallet-action-btn) {
+  button:not(.remove-token-btn):not(.refresh-balance-btn):not(.compact-btn):not(.saved-wallet-card):not(.dex-tab-btn):not(.wallet-tab-btn):not(.wallet-nav-btn):not(.wallet-action-btn):not(.network-node-btn) {
     min-height: 48px;
     touch-action: manipulation;
   }
@@ -587,6 +587,13 @@
   border: 1px solid rgba(82, 82, 91, 0.5) !important;
   box-shadow: none !important;
   transform: none !important;
+  overflow: visible !important;
+}
+
+.compact-btn-tooltip-host {
+  position: relative;
+  display: inline-flex;
+  overflow: visible;
 }
 
 .compact-btn::before {
@@ -604,6 +611,95 @@
 .compact-btn:disabled {
   opacity: 0.45 !important;
   cursor: not-allowed !important;
+}
+
+.compact-btn--active,
+.compact-btn--active:hover:not(:disabled) {
+  background: rgba(253, 185, 19, 0.12) !important;
+  color: #FDB913 !important;
+  border-color: rgba(253, 185, 19, 0.6) !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+/* Saved wallet picker cards on login — override .container button orange primary */
+.saved-wallet-card {
+  width: 100% !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  padding: 0.75rem 1rem !important;
+  text-align: left !important;
+  font-size: 0.875rem !important;
+  font-weight: 500 !important;
+  line-height: 1.3 !important;
+  border-radius: 0.75rem !important;
+  background: rgba(24, 24, 27, 0.5) !important;
+  color: #d4d4d8 !important;
+  border: 1px solid #3f3f46 !important;
+  box-shadow: none !important;
+  transform: none !important;
+  transition: border-color 0.2s, background-color 0.2s, box-shadow 0.2s !important;
+}
+
+.saved-wallet-card::before {
+  display: none !important;
+}
+
+.saved-wallet-card:hover:not(.saved-wallet-card--selected) {
+  background: rgba(39, 39, 42, 0.7) !important;
+  color: #e4e4e7 !important;
+  border-color: #52525b !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+.saved-wallet-card--selected,
+.saved-wallet-card--selected:hover,
+.saved-wallet-card--selected:focus,
+.saved-wallet-card--selected:focus-visible {
+  background: rgba(253, 185, 19, 0.12) !important;
+  color: #ffffff !important;
+  border-color: #FDB913 !important;
+  box-shadow: 0 0 0 2px rgba(253, 185, 19, 0.35) !important;
+  transform: none !important;
+}
+
+.saved-wallet-card__name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.875rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.saved-wallet-card__meta {
+  font-size: 0.625rem;
+  color: #71717a;
+  margin-top: 0.125rem;
+}
+
+.saved-wallet-card--selected .saved-wallet-card__meta {
+  color: rgba(253, 185, 19, 0.75);
+}
+
+.saved-wallet-card__check {
+  flex-shrink: 0;
+  width: 1.125rem;
+  height: 1.125rem;
+  border-radius: 9999px;
+  border: 1.5px solid #52525b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 0.125rem;
+}
+
+.saved-wallet-card--selected .saved-wallet-card__check {
+  border-color: #FDB913;
+  background: #FDB913;
+  color: #18181b;
 }
 
 /* Keep refresh balance button compact on all screen sizes */
@@ -634,6 +730,62 @@
   border-color: rgba(82, 82, 91, 0.5) !important;
   transform: none !important;
   box-shadow: none !important;
+}
+
+/* Network tab — compact node action buttons (override .container button orange/full-width) */
+.network-node-btn {
+  width: auto !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  flex-shrink: 0 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 0.45rem 0.875rem !important;
+  margin: 0 !important;
+  font-size: 0.75rem !important;
+  font-weight: 500 !important;
+  line-height: 1.2 !important;
+  border-radius: 0.625rem !important;
+  box-shadow: none !important;
+  transform: none !important;
+  overflow: visible !important;
+  position: static !important;
+  cursor: pointer !important;
+  transition: background-color 0.2s, border-color 0.2s, color 0.2s !important;
+}
+
+.network-node-btn::before {
+  display: none !important;
+}
+
+.network-node-btn:hover {
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+.network-node-btn--secondary {
+  background: rgba(39, 39, 42, 0.9) !important;
+  color: #d4d4d8 !important;
+  border: 1px solid rgba(82, 82, 91, 0.6) !important;
+}
+
+.network-node-btn--secondary:hover {
+  background: #3f3f46 !important;
+  color: #fafafa !important;
+  border-color: rgba(113, 113, 122, 0.6) !important;
+}
+
+.network-node-btn--brand {
+  background: var(--primary) !important;
+  color: #fff !important;
+  border: 1px solid var(--primary) !important;
+}
+
+.network-node-btn--brand:hover {
+  background: var(--primary-hover) !important;
+  border-color: var(--primary-hover) !important;
+  color: #fff !important;
 }
 
 /* Keep remove token X buttons compact on all screen sizes (overrides legacy mobile button rules) */

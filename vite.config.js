@@ -4,6 +4,9 @@ import react from '@vitejs/plugin-react';
 import cspGuard from 'vite-plugin-csp-guard'; // New import
 import { VitePWA } from 'vite-plugin-pwa';
 export default defineConfig({
+  worker: {
+    format: 'es',
+  },
   plugins: [
     react(),
     VitePWA({

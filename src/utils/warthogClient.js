@@ -71,10 +71,11 @@ export function normalizeAssetHash(raw) {
 
 /**
  * Fetch fee + chain pin, sign a tx, and submit via WarthogApi.
+ * Prefer `buildSpec` (signing worker). `privateKey` + `buildTx` remain as legacy fallback.
  * @returns {{ nonce: number, data: unknown }}
  */
-export async function signAndSubmitTransaction(api, { privateKey, nonceId, buildTx }) {
-  const { Account, NonceId, RoundedFee } = await import('warthog-js');
+export async function signAndSubmitTransaction(api, { privateKey, nonceId, buildTx, buildSpec }) {
+  const { Account, NonceId, RoundedFee, normalizeChainPin } = await import('warthog-js');
 
   const feeRes = await api.getMinFee();
   if (!feeRes.success) {
@@ -91,9 +92,31 @@ export async function signAndSubmitTransaction(api, { privateKey, nonceId, build
     throw new Error('Invalid nonce');
   }
 
-  const ctx = await api.createTransactionContext(fee, nonce);
-  const account = Account.fromPrivateKeyHex(privateKey);
-  const tx = await buildTx(ctx, account);
+  let tx;
+  if (buildSpec) {
+    const headRes = await api.getChainHead();
+    if (!headRes.success) {
+      throw new Error(headRes.error || 'Failed to fetch chain head');
+    }
+    const { pinHash, pinHeight } = normalizeChainPin(headRes.data);
+    const { buildTransactionInWorker } = await import('./signingBridge.js');
+    tx = await buildTransactionInWorker(
+      {
+        pinHash,
+        pinHeight,
+        feeE8: String(feeRes.data.minFee.E8),
+        nonceId,
+      },
+      buildSpec,
+    );
+  } else if (privateKey && buildTx) {
+    const ctx = await api.createTransactionContext(fee, nonce);
+    const account = Account.fromPrivateKeyHex(privateKey);
+    tx = await buildTx(ctx, account);
+  } else {
+    throw new Error('Wallet is locked — unlock to sign transactions');
+  }
+
   const submitResult = await api.submitTransaction(tx);
 
   if (!submitResult.success) {

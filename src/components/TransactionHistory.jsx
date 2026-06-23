@@ -28,7 +28,40 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
 
   const isTestnet = isDefiNode(node);
 
-  const abbreviate = (str) => str ? `${str.slice(0,6)}...${str.slice(-4)}` : 'N/A';
+  const asDisplayString = (value, fallback = '') => {
+    if (value == null || value === '') return fallback;
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number' || typeof value === 'bigint') return String(value);
+    if (typeof value === 'object') {
+      if (typeof value.hex === 'string') return value.hex;
+      if (typeof value.str === 'string') return value.str;
+      if (typeof value.txHash === 'string') return value.txHash;
+      if (typeof value.hash === 'string') return value.hash;
+      if (typeof value.address === 'string') return value.address;
+      if (typeof value.toHex === 'function') {
+        try {
+          return value.toHex();
+        } catch {
+          /* fall through */
+        }
+      }
+    }
+    return fallback;
+  };
+
+  const abbreviate = (value) => {
+    const str = asDisplayString(value);
+    if (!str || str === 'N/A') return 'N/A';
+    if (str.length <= 12) return str;
+    return `${str.slice(0, 6)}...${str.slice(-4)}`;
+  };
+
+  const abbreviateTxid = (value) => {
+    const str = asDisplayString(value);
+    if (!str || str === 'N/A') return 'N/A';
+    if (str.length <= 14) return str;
+    return `${str.slice(0, 6)}…${str.slice(-6)}`;
+  };
 
   // Safe value extractors for {str, E8, ...} or primitives from API
   const getAmountStr = (v, fallback = '0') => {
@@ -87,15 +120,19 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
 
   // Normalize ANY tx shape coming from perBlock (DeFi body.* or legacy public node)
   const normalizeTransaction = (txItem, block, categoryHint = null, viewingAddress = null) => {
-    const viewer = viewingAddress ? viewingAddress.toLowerCase() : null;
-    const addrEq = (a) => !!(a && viewer && a.toLowerCase() === viewer);
+    const viewer = viewingAddress ? asDisplayString(viewingAddress).toLowerCase() : null;
+    const addrEq = (a) => {
+      const addr = asDisplayString(a);
+      return !!(addr && viewer && addr.toLowerCase() === viewer);
+    };
     // Legacy public node flat shape (from /history on mainnet nodes)
     if (txItem && txItem.txHash) {
-      const fromA = txItem.fromAddress || null;
+      const fromA = asDisplayString(txItem.fromAddress, null) || null;
+      const toAddr = asDisplayString(txItem.toAddress, 'N/A') || 'N/A';
       return {
-        txid: txItem.txHash,
+        txid: asDisplayString(txItem.txHash, 'N/A'),
         fromAddress: fromA,
-        toAddress: txItem.toAddress || 'N/A',
+        toAddress: toAddr,
         amount: txItem.amount || getAmountStr(txItem.amountE8),
         fee: getFeeStr(txItem.fee),
         confirmations: block?.confirmations,
@@ -105,7 +142,7 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
         type: !fromA ? 'reward' : 'wart_transfer',
         asset: 'WART',
         description: !fromA ? `Block reward ${txItem.amount || '0'} WART` : `Sent ${txItem.amount || '0'} WART`,
-        isIncoming: addrEq(txItem.toAddress),
+        isIncoming: addrEq(toAddr),
         category: categoryHint || (!fromA ? 'reward' : 'wartTransfer'),
       };
     }
@@ -116,9 +153,9 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
     const data = tx.data || txItem?.data || {};
     const common = tx.signedCommon || tx.signingData || txItem?.signedCommon || {};
 
-    const hash = tx.hash || txItem?.hash || 'N/A';
-    const fromA = common.originAddress || data.fromAddress || null;
-    const toA = data.toAddress || null;
+    const hash = asDisplayString(tx.hash || txItem?.hash, 'N/A');
+    const fromA = asDisplayString(common.originAddress || data.fromAddress, null) || null;
+    const toA = asDisplayString(data.toAddress, null) || null;
 
     let typ = categoryHint || 'unknown';
     let amt = getAmountStr(data.amount);
@@ -155,15 +192,30 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
       incoming = false;
     } else if (cat.includes('liquiditydeposit') || cat.includes('liquidity_deposit')) {
       typ = 'liquidity_deposit';
-      assetSym = data.baseAsset?.name || 'POOL';
+      assetSym = asDisplayString(data.baseAsset?.name) || 'POOL';
       const dep = data.deposited || {};
+      const processed = tx.processed || txItem?.transaction?.processed || {};
+      const sharesReceived = getAmountStr(processed.sharesReceived);
       amt = `${getAmountStr(dep.asset || dep.base || dep)} + ${getAmountStr(dep.wart || dep.quote || '0')}`;
-      desc = `Deposited liquidity to ${assetSym} pool`;
+      desc = sharesReceived && sharesReceived !== '0'
+        ? `Deposited ${amt} into ${assetSym} pool → received ${sharesReceived} LP shares`
+        : `Deposited liquidity into ${assetSym} pool`;
     } else if (cat.includes('liquiditywithdraw') || cat.includes('liquidity_withdrawal')) {
       typ = 'liquidity_withdrawal';
-      assetSym = data.baseAsset?.name || 'POOL';
-      amt = getAmountStr(data.sharesRedeemed);
-      desc = `Redeemed ${amt} shares from ${assetSym} pool`;
+      assetSym = asDisplayString(data.baseAsset?.name) || 'POOL';
+      const shares = getAmountStr(data.sharesRedeemed);
+      const processed = tx.processed || txItem?.transaction?.processed || {};
+      const received = processed.received || {};
+      const baseRecv = getAmountStr(received.base || received.asset);
+      const quoteRecv = getAmountStr(received.quote || received.wart);
+      incoming = true;
+      if (baseRecv !== '0' || quoteRecv !== '0') {
+        amt = `${baseRecv} ${assetSym} + ${quoteRecv} WART`;
+        desc = `Withdrew ${shares} LP shares from ${assetSym} pool → received ${baseRecv} ${assetSym} + ${quoteRecv} WART`;
+      } else {
+        amt = shares;
+        desc = `Withdrew ${shares} LP shares from ${assetSym} pool`;
+      }
     } else if (cat.includes('assetcreation') || cat.includes('asset_creation')) {
       typ = 'asset_creation';
       assetSym = data.name || 'ASSET';
@@ -185,7 +237,7 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
       }
     } else if (cat.includes('cancel')) {
       typ = 'cancelation';
-      desc = `Canceled tx ${abbreviate(data.cancelTxid || '')}`;
+      desc = `Canceled tx ${abbreviate(data.cancelTxid)}`;
     } else {
       // fallback generic
       amt = getAmountStr(data.amount || data.supply);
@@ -464,38 +516,91 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
       <section style={{ fontFamily: 'Montserrat', color: sectionColor }}>
         <div className="flex flex-col md:flex-row justify-between md:items-center">
           {blockCounts && (
-            <div className="bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 px-3 py-1 rounded-full text-sm font-medium order-1 md:order-2 mt-2 md:mt-0 mb-1 w-fit">
-              blocks 24h <span className="relative cursor-pointer" onMouseEnter={() => { if (timeoutId24h) clearTimeout(timeoutId24h); setShowTooltip24h(true); }} onMouseLeave={() => { const id = setTimeout(() => setShowTooltip24h(false), 1000); setTimeoutId24h(id); }}>
-                {blockCounts['24h']}
-                {showTooltip24h && blockCounts.rewards24h.length > 0 && (
-                  <div className="absolute top-full left-0 mt-1 bg-gray-700 text-white text-xs rounded p-2 z-10 max-w-md" onMouseEnter={() => { if (timeoutId24h) clearTimeout(timeoutId24h); }} onMouseLeave={() => { const id = setTimeout(() => setShowTooltip24h(false), 1000); setTimeoutId24h(id); }}>
-                    <div className="font-semibold mb-1">Reward TXIDs (24h):</div>
-                    <ul className="space-y-1">
-                      {blockCounts.rewards24h.map(txid => <li key={txid} className="break-all cursor-pointer hover:underline" onClick={() => copyToClipboard(txid)}>{abbreviate(txid)}</li>)}
-                    </ul>
-                  </div>
-                )}
-              </span> week <span className="relative cursor-pointer" onMouseEnter={() => { if (timeoutIdWeek) clearTimeout(timeoutIdWeek); setShowTooltipWeek(true); }} onMouseLeave={() => { const id = setTimeout(() => setShowTooltipWeek(false), 1000); setTimeoutIdWeek(id); }}>
-                {blockCounts.week}
-                {showTooltipWeek && blockCounts.rewardsWeek.length > 0 && (
-                  <div className="absolute top-full left-0 mt-1 bg-gray-700 text-white text-xs rounded p-2 z-10 max-w-md" onMouseEnter={() => { if (timeoutIdWeek) clearTimeout(timeoutIdWeek); }} onMouseLeave={() => { const id = setTimeout(() => setShowTooltipWeek(false), 1000); setTimeoutIdWeek(id); }}>
-                    <div className="font-semibold mb-1">Reward TXIDs (Week):</div>
-                    <ul className="space-y-1">
-                      {blockCounts.rewardsWeek.map(txid => <li key={txid} className="break-all cursor-pointer hover:underline" onClick={() => copyToClipboard(txid)}>{abbreviate(txid)}</li>)}
-                    </ul>
-                  </div>
-                )}
-              </span> month <span className="relative cursor-pointer" onMouseEnter={() => { if (timeoutIdMonth) clearTimeout(timeoutIdMonth); setShowTooltipMonth(true); }} onMouseLeave={() => { const id = setTimeout(() => setShowTooltipMonth(false), 1000); setTimeoutIdMonth(id); }}>
-                {blockCounts.month}
-                {showTooltipMonth && blockCounts.rewardsMonth.length > 0 && (
-                  <div className="absolute top-full left-0 mt-1 bg-gray-700 text-white text-xs rounded p-2 z-10 max-w-md" onMouseEnter={() => { if (timeoutIdMonth) clearTimeout(timeoutIdMonth); }} onMouseLeave={() => { const id = setTimeout(() => setShowTooltipMonth(false), 1000); setTimeoutIdMonth(id); }}>
-                    <div className="font-semibold mb-1">Reward TXIDs (Month):</div>
-                    <ul className="space-y-1">
-                      {blockCounts.rewardsMonth.map(txid => <li key={txid} className="break-all cursor-pointer hover:underline" onClick={() => copyToClipboard(txid)}>{abbreviate(txid)}</li>)}
-                    </ul>
-                  </div>
-                )}
-              </span>
+            <div className="flex items-center gap-2 flex-wrap order-1 md:order-2 mt-2 md:mt-0 mb-1">
+              {[
+                {
+                  key: '24h',
+                  label: '24h',
+                  count: blockCounts['24h'],
+                  txids: blockCounts.rewards24h,
+                  show: showTooltip24h,
+                  setShow: setShowTooltip24h,
+                  timeoutId: timeoutId24h,
+                  setTimeoutId: setTimeoutId24h,
+                  tooltipTitle: 'Reward TXIDs (24h)',
+                },
+                {
+                  key: 'week',
+                  label: 'Week',
+                  count: blockCounts.week,
+                  txids: blockCounts.rewardsWeek,
+                  show: showTooltipWeek,
+                  setShow: setShowTooltipWeek,
+                  timeoutId: timeoutIdWeek,
+                  setTimeoutId: setTimeoutIdWeek,
+                  tooltipTitle: 'Reward TXIDs (Week)',
+                },
+                {
+                  key: 'month',
+                  label: 'Month',
+                  count: blockCounts.month,
+                  txids: blockCounts.rewardsMonth,
+                  show: showTooltipMonth,
+                  setShow: setShowTooltipMonth,
+                  timeoutId: timeoutIdMonth,
+                  setTimeoutId: setTimeoutIdMonth,
+                  tooltipTitle: 'Reward TXIDs (Month)',
+                },
+              ].map((period) => (
+                <span
+                  key={period.key}
+                  className="compact-btn-tooltip-host"
+                  onMouseEnter={() => {
+                    if (period.timeoutId) clearTimeout(period.timeoutId);
+                    period.setShow(true);
+                  }}
+                  onMouseLeave={() => {
+                    const id = setTimeout(() => period.setShow(false), 1000);
+                    period.setTimeoutId(id);
+                  }}
+                >
+                  <span className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1 cursor-default">
+                    {period.label} · <span className="font-semibold tabular-nums">{period.count}</span>
+                  </span>
+                  {period.show && period.count > 0 && (
+                    <div className="absolute top-full left-0 mt-1.5 min-w-[220px] max-w-md bg-zinc-900 border border-zinc-700 text-zinc-200 text-xs rounded-xl p-3 z-[100] shadow-2xl shadow-black/50 text-left font-normal normal-case">
+                      <div className="font-semibold mb-1.5 text-[#FDB913]">{period.tooltipTitle}</div>
+                      {period.txids.length > 0 ? (
+                        <ul className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                          {period.txids.map((txid, i) => {
+                            const id = asDisplayString(txid, `reward-${period.key}-${i}`);
+                            return (
+                              <li
+                                key={id}
+                                className="break-all cursor-pointer hover:text-[#FDB913] hover:underline font-mono"
+                                onClick={() => copyToClipboard(id)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' || e.key === ' ') {
+                                    e.preventDefault();
+                                    copyToClipboard(id);
+                                  }
+                                }}
+                                role="button"
+                                tabIndex={0}
+                              >
+                                {abbreviate(id)}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      ) : (
+                        <p className="text-zinc-500 italic">Reward hashes not available for this period.</p>
+                      )}
+                      <p className="text-[10px] text-zinc-500 mt-2">Click a hash to copy</p>
+                    </div>
+                  )}
+                </span>
+              ))}
             </div>
           )}
           <h2 className="text-base font-semibold text-orange-400 flex items-center gap-2 flex-wrap order-2 md:order-1">
@@ -554,11 +659,11 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
                       {typeLabel}
                     </span>
                     <span
-                      title={tx.txid || 'N/A'}
+                      title={asDisplayString(tx.txid, 'N/A')}
                       style={{ cursor: 'pointer', fontFamily: 'monospace', fontSize: '12px' }}
-                      onClick={() => copyToClipboard(tx.txid || '')}
+                      onClick={() => copyToClipboard(asDisplayString(tx.txid))}
                     >
-                      {tx.txid && tx.txid !== 'N/A' ? `${tx.txid.slice(0, 6)}…${tx.txid.slice(-6)}` : 'N/A'}
+                      {abbreviateTxid(tx.txid)}
                     </span>
                   </div>
 
@@ -574,9 +679,9 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '12px' }}>
                       <strong style={{ color: labelColor, minWidth: 42 }}>From:</strong>
                       <span
-                        title={tx.isReward || !tx.fromAddress ? 'Block Reward / System' : tx.fromAddress}
+                        title={tx.isReward || !tx.fromAddress ? 'Block Reward / System' : asDisplayString(tx.fromAddress)}
                         style={{ cursor: tx.fromAddress ? 'pointer' : 'default', fontFamily: 'monospace' }}
-                        onClick={() => tx.fromAddress && copyToClipboard(tx.fromAddress)}
+                        onClick={() => tx.fromAddress && copyToClipboard(asDisplayString(tx.fromAddress))}
                       >
                         {tx.isReward || !tx.fromAddress ? 'System / Reward' : abbreviate(tx.fromAddress)}
                       </span>
@@ -588,9 +693,9 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '12px' }}>
                       <strong style={{ color: labelColor, minWidth: 42 }}>To:</strong>
                       <span
-                        title={tx.toAddress}
+                        title={asDisplayString(tx.toAddress)}
                         style={{ cursor: 'pointer', fontFamily: 'monospace' }}
-                        onClick={() => copyToClipboard(tx.toAddress)}
+                        onClick={() => copyToClipboard(asDisplayString(tx.toAddress))}
                       >
                         {abbreviate(tx.toAddress)}
                       </span>

@@ -1,9 +1,22 @@
-import React, { createContext, useContext, useState, useEffect, useLayoutEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
-import { encryptWallet, decryptWallet } from '../utils/warthogWalletUtils';
+import { encryptWallet, decryptWallet, normalizeDecryptedWallet } from '../utils/warthogWalletUtils';
 import { clearLegacyAutoMinePrefs, isFakeMineAllowed } from '../utils/nodeAccess';
 import { createWarthogApi, normalizeAssetHash } from '../utils/warthogClient.js';
 import { DEFAULT_NODE_URL, isDefiNode, isMainnetNode } from '../utils/presetNodes.js';
+import {
+  getAutoLockMs,
+  lockSigningWorker,
+  terminateSigningWorker,
+  unlockSigningWorker,
+  exportWalletFromWorker,
+} from '../utils/signingBridge.js';
+import {
+  clearWalletSession,
+  persistPublicSession,
+  readPublicSession,
+  stripPrivateKey,
+} from '../utils/sessionWallet.js';
 
 const WalletContext = createContext();
 
@@ -32,6 +45,8 @@ export const WalletProvider = ({ children }) => {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [currentWalletName, setCurrentWalletName] = useState(null);
+  const [isSigningUnlocked, setIsSigningUnlocked] = useState(false);
+  const autoLockCallbackRef = useRef(null);
 
   // NEW: Asset balances (live fetched data)
   const [assetBalances, setAssetBalances] = useState([]);
@@ -54,23 +69,86 @@ export const WalletProvider = ({ children }) => {
     const savedNode = localStorage.getItem('selectedNode') || DEFAULT_NODE_URL;
     setSelectedNode(savedNode);
 
-    // Restore active wallet session (decrypted data lives in sessionStorage)
+    // Restore public wallet session only — private keys live in the signing worker after unlock.
     try {
-      const decryptedWallet = sessionStorage.getItem('warthogWalletDecrypted');
-      if (decryptedWallet) {
-        const parsed = JSON.parse(decryptedWallet);
-        setWallet(parsed);
-
+      const publicWallet = readPublicSession();
+      if (publicWallet?.address) {
         const name = sessionStorage.getItem('warthogCurrentWalletName') || null;
-        setCurrentWalletName(name);
+        if (!name) {
+          clearWalletSession();
+          return;
+        }
 
+        setWallet(publicWallet);
+        setCurrentWalletName(name);
         setIsLoggedIn(true);
+        setIsSigningUnlocked(false);
         setCurrentTab('overview');
       }
     } catch {
-      // corrupt or missing data — stay logged out
+      clearWalletSession();
     }
   }, []);
+
+  const activateWalletSession = useCallback(async (fullWallet, walletName = null) => {
+    const normalizedWallet = await normalizeDecryptedWallet(fullWallet);
+
+    await unlockSigningWorker(normalizedWallet.privateKey, {
+      publicKey: normalizedWallet.publicKey,
+      address: normalizedWallet.address,
+    });
+    const publicWallet = persistPublicSession(normalizedWallet, walletName) || stripPrivateKey(normalizedWallet);
+
+    setWallet(publicWallet);
+    setCurrentWalletName(walletName);
+    setIsLoggedIn(true);
+    setIsSigningUnlocked(true);
+    setError(null);
+    return publicWallet;
+  }, []);
+
+  const lockWallet = useCallback(async () => {
+    if (!isSigningUnlocked) return;
+
+    await lockSigningWorker();
+    setIsSigningUnlocked(false);
+    setError(null);
+  }, [isSigningUnlocked]);
+
+  const registerAutoLockCallback = useCallback((callback) => {
+    autoLockCallbackRef.current = callback;
+  }, []);
+
+  useEffect(() => {
+    if (!isSigningUnlocked) return undefined;
+
+    let timerId;
+    const autoLockMs = getAutoLockMs();
+
+    const resetTimer = () => {
+      clearTimeout(timerId);
+      timerId = window.setTimeout(async () => {
+        await lockWallet();
+        autoLockCallbackRef.current?.({
+          reason: 'inactivity',
+          hasSavedWallet: Boolean(currentWalletName),
+        });
+      }, autoLockMs);
+    };
+
+    const activityEvents = ['mousedown', 'keydown', 'touchstart', 'click', 'scroll'];
+    activityEvents.forEach((eventName) => {
+      window.addEventListener(eventName, resetTimer, { passive: true });
+    });
+    resetTimer();
+
+    return () => {
+      clearTimeout(timerId);
+      activityEvents.forEach((eventName) => {
+        window.removeEventListener(eventName, resetTimer);
+      });
+    };
+  }, [isSigningUnlocked, lockWallet, currentWalletName]);
 
   useEffect(() => {
     if (wallet?.address && selectedNode) {
@@ -257,7 +335,7 @@ export const WalletProvider = ({ children }) => {
   };
 
   // ==================== NAMED WALLET SAVE (for tagging unsaved logins) ====================
-  const saveNamedWallet = (name, password) => {
+  const saveNamedWallet = async (name, password) => {
     if (!wallet || !name || !password) {
       setError('Cannot save: no active wallet or missing name/password');
       return false;
@@ -267,11 +345,20 @@ export const WalletProvider = ({ children }) => {
       return false;
     }
     try {
-      const encrypted = encryptWallet(wallet, password);
+      let walletToSave = wallet;
+      if (!walletToSave.privateKey) {
+        if (!isSigningUnlocked) {
+          setError('Unlock your wallet before saving');
+          return false;
+        }
+        walletToSave = await exportWalletFromWorker();
+      }
+
+      const encrypted = encryptWallet(walletToSave, password);
       localStorage.setItem(`warthogWallet_${name.trim()}`, encrypted);
       const trimmed = name.trim();
       setCurrentWalletName(trimmed);
-      sessionStorage.setItem('warthogCurrentWalletName', trimmed);
+      persistPublicSession(wallet, trimmed);
       return true;
     } catch (err) {
       setError('Failed to save named wallet: ' + err.message);
@@ -313,23 +400,7 @@ export const WalletProvider = ({ children }) => {
 
   // ==================== END WATCHED ASSETS ====================
 
-  const lockWallet = () => {
-    if (!wallet?.privateKey) return;
-
-    const lockedWallet = {
-      address: wallet.address,
-      publicKey: wallet.publicKey,
-    };
-
-    setWallet(lockedWallet);
-    try {
-      sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(lockedWallet));
-    } catch {
-      // in-memory strip is enough
-    }
-  };
-
-  const unlockWallet = (password) => {
+  const unlockWallet = async (password) => {
     if (!currentWalletName) {
       setError('No saved wallet name for this session. Log out and use "Login to Saved Wallet" instead.');
       return false;
@@ -346,17 +417,12 @@ export const WalletProvider = ({ children }) => {
     }
 
     try {
-      const decrypted = decryptWallet(encrypted, password);
-      if (!decrypted?.address) {
-        throw new Error('Invalid decrypted wallet data');
-      }
+      const decrypted = await normalizeDecryptedWallet(decryptWallet(encrypted, password));
       if (decrypted.address.toLowerCase() !== wallet.address.toLowerCase()) {
         setError('Decrypted wallet does not match the current locked session address.');
         return false;
       }
-      setWallet(decrypted);
-      sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(decrypted));
-      setError(null);
+      await activateWalletSession(decrypted, currentWalletName);
       return true;
     } catch (err) {
       setError(`Unlock failed: ${err?.message || 'Invalid password or corrupted data'}`);
@@ -364,7 +430,13 @@ export const WalletProvider = ({ children }) => {
     }
   };
 
-  const isSessionLocked = !!(isLoggedIn && wallet && !wallet.privateKey && currentWalletName);
+  const isSessionLocked = !!(isLoggedIn && wallet && !isSigningUnlocked && currentWalletName);
+
+  const clearSigningSession = useCallback(async () => {
+    await lockSigningWorker();
+    terminateSigningWorker();
+    setIsSigningUnlocked(false);
+  }, []);
 
   const refreshBalance = () => {
     setRefreshTrigger(prev => prev + 1);
@@ -435,6 +507,10 @@ export const WalletProvider = ({ children }) => {
     lockWallet,
     unlockWallet,
     isSessionLocked,
+    isSigningUnlocked,
+    activateWalletSession,
+    clearSigningSession,
+    registerAutoLockCallback,
   };
 
   return (

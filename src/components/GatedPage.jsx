@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { ethers } from 'ethers';
 import { useWallet } from './WalletContext';
 import { createWarthogApi } from '../utils/warthogClient.js';
+import { signMessageInWorker } from '../utils/signingBridge.js';
 
 const GatedPage = () => {
-  const { wallet, selectedNode, currentWalletName } = useWallet();
+  const { wallet, selectedNode, currentWalletName, isSigningUnlocked, isSessionLocked } = useWallet();
   const EXAMPLE_ASSET_HASH = 'b846d64efa05a3bb1d81c035f97c086ebf7995083236b6ac75c44a8a7b8caa17';
   const EXAMPLE_MIN = '1';
 
@@ -42,8 +42,10 @@ const GatedPage = () => {
       setServerError('Please log in first');
       return;
     }
-    if (!wallet.privateKey) {
-      setServerError('Wallet private key not available for signing');
+    if (!isSigningUnlocked) {
+      setServerError(isSessionLocked
+        ? 'Wallet is locked — unlock with your saved wallet password to sign'
+        : 'Wallet not loaded for signing');
       return;
     }
 
@@ -53,8 +55,7 @@ const GatedPage = () => {
 
     try {
       const message = `Unlock server-gated secret for asset ${EXAMPLE_ASSET_HASH} as ${wallet.address} at ${Date.now()}`;
-      const signer = new ethers.Wallet(wallet.privateKey);
-      const signature = await signer.signMessage(message);
+      const signature = await signMessageInWorker(message);
 
       const res = await fetch('/api/verify-token-gate', {
         method: 'POST',
@@ -117,7 +118,7 @@ const GatedPage = () => {
         <div className="flex flex-wrap items-center gap-3">
           <button
             onClick={fetchServerSecret}
-            disabled={serverLoading || !wallet?.address || !wallet?.privateKey}
+            disabled={serverLoading || !wallet?.address || !isSigningUnlocked}
             className="px-6 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold"
           >
             {serverLoading ? 'Verifying with server...' : 'Unlock Protected Content (sign & verify)'}
@@ -130,7 +131,7 @@ const GatedPage = () => {
           )}
         </div>
 
-        {!wallet?.privateKey && currentWalletName && (
+        {!isSigningUnlocked && currentWalletName && (
           <div className="mt-2 text-[11px] text-emerald-400/80">
             Wallet is locked. Use the <span className="font-semibold">Unlock</span> button in the top bar and enter the password for &quot;{currentWalletName}&quot; to enable signing.
           </div>

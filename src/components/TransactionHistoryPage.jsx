@@ -2,20 +2,11 @@ import React, { useState } from 'react';
 import { useWallet } from './WalletContext';
 import TransactionHistory from './TransactionHistory';
 import { DEFAULT_NODE_URL } from '../utils/presetNodes.js';
-
-function readSessionWallet() {
-  try {
-    if (typeof sessionStorage === 'undefined') return null;
-    const saved = sessionStorage.getItem('warthogWalletDecrypted');
-    return saved ? JSON.parse(saved) : null;
-  } catch {
-    return null;
-  }
-}
+import { readPublicSession } from '../utils/sessionWallet.js';
 
 const TransactionHistoryPage = ({ wallet: propWallet, selectedNode: propSelectedNode }) => {
   const { wallet: contextWallet, selectedNode: contextSelectedNode } = useWallet();
-  const wallet = propWallet || contextWallet || readSessionWallet();
+  const wallet = propWallet || contextWallet || readPublicSession();
   const selectedNode = propSelectedNode || contextSelectedNode || (() => {
     try {
       return localStorage.getItem('selectedNode') || DEFAULT_NODE_URL;

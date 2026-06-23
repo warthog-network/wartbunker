@@ -4,9 +4,10 @@ import { useToast } from './Toast';
 import { encryptWallet, decryptWallet } from '../utils/warthogWalletUtils';
 
 const WalletSetup = () => {
-  const { setWallet, setIsLoggedIn, setCurrentTab, setCurrentWalletName } = useWallet();
+  const { setCurrentTab, activateWalletSession } = useWallet();
   const toast = useToast();
 
+  const savedWallets = getSavedWallets();
   const [walletAction, setWalletAction] = useState('create');
   const [mnemonic, setMnemonic] = useState('');
   const [privateKeyInput, setPrivateKeyInput] = useState('');
@@ -38,14 +39,16 @@ const WalletSetup = () => {
         }
         try {
           const decrypted = decryptWallet(encrypted, password);
-          setWallet(decrypted);
-          sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(decrypted));
-          sessionStorage.setItem('warthogCurrentWalletName', selectedSavedWallet);
-          setCurrentWalletName?.(selectedSavedWallet);
-          setIsLoggedIn(true);
+          await activateWalletSession(decrypted, selectedSavedWallet);
           setCurrentTab('overview');
+          toast.success(`Welcome back, ${selectedSavedWallet}`);
         } catch (err) {
-          setError('Failed to decrypt wallet: ' + err.message);
+          const msg = err?.message || 'Unknown error';
+          setError(
+            msg === 'Invalid password'
+              ? 'Invalid password'
+              : `Login failed: ${msg}`,
+          );
         }
         return;
       }
@@ -56,17 +59,13 @@ const WalletSetup = () => {
           return;
         }
         const reader = new FileReader();
-        reader.onload = (e) => {
+        reader.onload = async (e) => {
           try {
             const decrypted = decryptWallet(e.target.result, password);
-            setWallet(decrypted);
-            sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(decrypted));
-            // loaded from file: no name yet — the post-login prompt will offer to name/tag it
-            sessionStorage.removeItem('warthogCurrentWalletName');
-            setCurrentWalletName?.(null);
-            setIsLoggedIn(true);
+            await activateWalletSession(decrypted, null);
             setCurrentTab('overview');
             setShowModal(false);
+            toast.success('Wallet loaded successfully');
           } catch (err) {
             setError('Failed to load wallet: ' + err.message);
           }
@@ -103,7 +102,7 @@ const WalletSetup = () => {
     }
   };
 
-  const handleSaveWallet = () => {
+  const handleSaveWallet = async () => {
     if (!saveWalletConsent || !walletName || !password || password !== confirmPassword) {
       setError('Please provide a wallet name, matching passwords and consent to save');
       return;
@@ -112,48 +111,29 @@ const WalletSetup = () => {
       const encrypted = encryptWallet(walletData, password);
       const name = walletName.trim();
       localStorage.setItem(`warthogWallet_${name}`, encrypted);
-      setWallet(walletData);
-      sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(walletData));
-      sessionStorage.setItem('warthogCurrentWalletName', name);
-      setCurrentWalletName?.(name);
-      setIsLoggedIn(true);
+      await activateWalletSession(walletData, name);
       setCurrentTab('overview');
       setShowModal(false);
       setError(null);
+      toast.success(`Wallet saved as "${name}"`);
     } catch (err) {
       setError('Failed to save wallet: ' + err.message);
     }
   };
 
-  const handleUseNow = () => {
-    // Use the fresh wallet in this session without tagging/saving a named copy.
-    // After login the UI will prompt to name & save it (unless dismissed).
+  const handleUseNow = async () => {
     if (!consentToClose) {
       setError('Please confirm you have saved the seed/private key securely');
       return;
     }
     try {
-      setWallet(walletData);
-      sessionStorage.setItem('warthogWalletDecrypted', JSON.stringify(walletData));
-      // ensure no stale name
-      sessionStorage.removeItem('warthogCurrentWalletName');
-      setCurrentWalletName?.(null);
-      setIsLoggedIn(true);
+      await activateWalletSession(walletData, null);
       setCurrentTab('overview');
       setShowModal(false);
       setError(null);
+      toast.success('Wallet ready — consider saving it for quick login');
     } catch (err) {
       setError('Failed to use wallet: ' + err.message);
-    }
-  };
-
-  const getSavedWallets = () => {
-    try {
-      if (typeof localStorage === 'undefined') return [];
-      const keys = Object.keys(localStorage);
-      return keys.filter(key => key.startsWith('warthogWallet_')).map(key => key.replace('warthogWallet_', ''));
-    } catch {
-      return [];
     }
   };
 
@@ -162,6 +142,10 @@ const WalletSetup = () => {
     navigator.clipboard.writeText(text).then(() => {
       toast.success(label);
     }).catch(() => toast.error('Failed to copy'));
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') handleWalletAction();
   };
 
   return (
@@ -174,7 +158,7 @@ const WalletSetup = () => {
           If you have a saved encrypted wallet file, use the button below to login.
         </p>
         <button
-          onClick={() => setWalletAction('load')}
+          onClick={() => { setWalletAction('load'); setError(null); }}
           className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-2xl transition-colors w-full mb-6"
         >
           Login with Encrypted Wallet File
@@ -186,7 +170,11 @@ const WalletSetup = () => {
 
         <div className="form-group">
           <label>Action:</label>
-          <select value={walletAction} onChange={(e) => setWalletAction(e.target.value)} className="input">
+          <select
+            value={walletAction}
+            onChange={(e) => { setWalletAction(e.target.value); setError(null); }}
+            className="input"
+          >
             <option value="create">Create New Wallet</option>
             <option value="derive">Derive from Mnemonic</option>
             <option value="import">Import Private Key</option>
@@ -199,12 +187,42 @@ const WalletSetup = () => {
           <>
             <div className="form-group">
               <label>Select Saved Wallet:</label>
-              <select value={selectedSavedWallet} onChange={(e) => setSelectedSavedWallet(e.target.value)} className="input">
-                <option value="">-- Select Wallet --</option>
-                {getSavedWallets().map(name => (
-                  <option key={name} value={name}>{name}</option>
-                ))}
-              </select>
+              {savedWallets.length > 0 ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-1">
+                  {savedWallets.map((name) => {
+                    const isSelected = selectedSavedWallet === name;
+                    return (
+                      <button
+                        key={name}
+                        type="button"
+                        onClick={() => { setSelectedSavedWallet(name); setError(null); }}
+                        className={`saved-wallet-card${isSelected ? ' saved-wallet-card--selected' : ''}`}
+                        aria-pressed={isSelected}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="saved-wallet-card__name">{name}</div>
+                            <div className="saved-wallet-card__meta">
+                              {isSelected ? 'Selected' : 'Saved in this browser'}
+                            </div>
+                          </div>
+                          <span className="saved-wallet-card__check" aria-hidden="true">
+                            {isSelected && (
+                              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12" fill="currentColor" className="w-2.5 h-2.5">
+                                <path d="M10.28 2.28a.75.75 0 0 1 0 1.06l-5.5 5.5a.75.75 0 0 1-1.06 0l-2.5-2.5a.75.75 0 1 1 1.06-1.06L4.5 7.19l4.97-4.97a.75.75 0 0 1 1.06 0Z" />
+                              </svg>
+                            )}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-sm text-zinc-500 mt-1">
+                  No saved wallets yet. Create a wallet and save it for quick login.
+                </p>
+              )}
             </div>
             <div className="form-group">
               <label>Password:</label>
@@ -212,8 +230,10 @@ const WalletSetup = () => {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                onKeyDown={handleKeyDown}
                 placeholder="Enter password"
                 className="input"
+                autoComplete="current-password"
               />
             </div>
           </>
@@ -231,8 +251,10 @@ const WalletSetup = () => {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                onKeyDown={handleKeyDown}
                 placeholder="Enter password"
                 className="input"
+                autoComplete="current-password"
               />
             </div>
           </>
@@ -293,6 +315,7 @@ const WalletSetup = () => {
               type="text"
               value={privateKeyInput}
               onChange={(e) => setPrivateKeyInput(e.target.value.trim())}
+              onKeyDown={handleKeyDown}
               placeholder="Enter 64-character private key"
               className="input"
             />
@@ -438,5 +461,16 @@ const WalletSetup = () => {
     </div>
   );
 };
+
+function getSavedWallets() {
+  try {
+    if (typeof localStorage === 'undefined') return [];
+    return Object.keys(localStorage)
+      .filter((key) => key.startsWith('warthogWallet_'))
+      .map((key) => key.replace('warthogWallet_', ''));
+  } catch {
+    return [];
+  }
+}
 
 export default WalletSetup;

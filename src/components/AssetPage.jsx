@@ -236,6 +236,8 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     wallet: contextWallet,
     nextNonce: contextNextNonce,
     selectedNode: contextSelectedNode,
+    isSigningUnlocked,
+    isSessionLocked,
   } = useWallet();
 
   const wallet = propWallet || contextWallet;
@@ -365,8 +367,8 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       toast.error('Please enter a valid total supply greater than 0');
       return;
     }
-    if (!wallet?.privateKey) {
-      toast.error('Wallet not loaded. Please log in again.');
+    if (!isSigningUnlocked) {
+      toast.error(isSessionLocked ? 'Unlock your wallet to create assets' : 'Wallet not loaded. Please log in again.');
       return;
     }
 
@@ -384,15 +386,14 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       }
 
       const api = await createWarthogApi(selectedNode);
-      const { buildAssetCreationTx } = await import('../utils/buildAssetTx.js');
       const { nonce, data } = await signAndSubmitTransaction(api, {
-        privateKey: wallet.privateKey,
         nonceId,
-        buildTx: (ctx, account) => buildAssetCreationTx(ctx, account, {
+        buildSpec: {
+          type: 'ASSET_CREATE',
           name: nameInput,
           supply: supplyStr,
           decimals: decimalsInput,
-        }),
+        },
       });
 
       setResults(prev => ({ ...prev, createAsset: formatSubmitResult(data) }));
@@ -438,8 +439,8 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       toast.error('All transfer fields are required');
       return;
     }
-    if (!wallet?.privateKey) {
-      toast.error('Wallet not loaded. Please log in again.');
+    if (!isSigningUnlocked) {
+      toast.error(isSessionLocked ? 'Unlock your wallet to transfer assets' : 'Wallet not loaded. Please log in again.');
       return;
     }
 
@@ -453,17 +454,16 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
 
     try {
       const api = await createWarthogApi(selectedNode);
-      const { buildAssetTransferTx } = await import('../utils/buildAssetTx.js');
       const { nonce, data } = await signAndSubmitTransaction(api, {
-        privateKey: wallet.privateKey,
         nonceId,
-        buildTx: (ctx, account) => buildAssetTransferTx(ctx, account, {
+        buildSpec: {
+          type: 'ASSET_TRANSFER',
           assetHash: assetIdRaw,
           toAddress: recipientRaw,
           amount: amountStr,
           decimals,
           isLiquidity,
-        }),
+        },
       });
 
       setResults(prev => ({ ...prev, transferAsset: formatSubmitResult(data) }));
