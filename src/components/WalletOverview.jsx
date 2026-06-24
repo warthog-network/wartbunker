@@ -600,7 +600,7 @@ const WalletOverview = ({ onLogout }) => {
                       setDragAssetIndex(null);
                       setDropAssetIndex(null);
                     }}
-                    className={`flex justify-between items-center gap-3 p-3 rounded-xl bg-zinc-900/60 border transition-colors group ${
+                    className={`flex flex-col gap-2 sm:flex-row sm:justify-between sm:items-center sm:gap-3 p-3 rounded-xl bg-zinc-900/60 border transition-colors group min-w-0 overflow-hidden ${
                       dragAssetIndex === index
                         ? 'opacity-50 border-violet-500/50'
                         : dropAssetIndex === index
@@ -608,7 +608,7 @@ const WalletOverview = ({ onLogout }) => {
                           : 'border-zinc-800 hover:border-zinc-700'
                     }`}
                   >
-                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <div className="flex items-center gap-3 min-w-0 w-full sm:flex-1">
                       {orderedAssets.length > 1 && (
                         <button
                           type="button"
@@ -626,11 +626,11 @@ const WalletOverview = ({ onLogout }) => {
                       <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500/80 to-cyan-500/60 flex items-center justify-center text-white font-bold text-sm flex-shrink-0 ring-1 ring-white/10">
                         {asset.name?.[0]?.toUpperCase() || '?'}
                       </div>
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <div className="font-medium text-white truncate">{asset.name}</div>
                         <span
                           onClick={() => copyToClipboard(asset.hash)}
-                          className="text-[10px] text-zinc-500 font-mono truncate cursor-pointer"
+                          className="text-[10px] text-zinc-500 font-mono truncate cursor-pointer block"
                           role="button"
                           tabIndex={0}
                           onKeyDown={(e) => {
@@ -645,36 +645,41 @@ const WalletOverview = ({ onLogout }) => {
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <div className="font-mono text-right text-sm text-white tabular-nums">
+                    <div className="flex items-center justify-between gap-2 min-w-0 w-full sm:w-auto sm:flex-shrink-0 sm:max-w-[55%]">
+                      <div
+                        className="min-w-0 flex-1 font-mono text-xs sm:text-sm text-white tabular-nums truncate text-left sm:text-right"
+                        title={`${asset.balance} ${asset.name}`}
+                      >
                         {asset.balance}
                         <span className="text-[10px] text-zinc-400 ml-1">{asset.name}</span>
                       </div>
-                      {isTestnetNode(selectedNode) && (
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {isTestnetNode(selectedNode) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSendAssetPrefill({
+                                hash: asset.hash,
+                                name: asset.name,
+                                decimals: asset.decimals ?? 8,
+                                balance: asset.balance,
+                              });
+                              setCurrentTab('send');
+                            }}
+                            className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1 whitespace-nowrap"
+                          >
+                            Send Asset
+                          </button>
+                        )}
                         <button
-                          type="button"
-                          onClick={() => {
-                            setSendAssetPrefill({
-                              hash: asset.hash,
-                              name: asset.name,
-                              decimals: asset.decimals ?? 8,
-                              balance: asset.balance,
-                            });
-                            setCurrentTab('send');
-                          }}
-                          className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1"
+                          onClick={() => removeWatchedAsset(asset.hash)}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          className="remove-token-btn flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-lg text-sm leading-none text-red-400/50 hover:bg-red-950/60 hover:text-red-400 transition-all"
+                          title="Remove from wallet"
                         >
-                          Send Asset
+                          ×
                         </button>
-                      )}
-                      <button
-                        onClick={() => removeWatchedAsset(asset.hash)}
-                        onMouseDown={(e) => e.stopPropagation()}
-                        className="remove-token-btn flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-lg text-sm leading-none text-red-400/50 hover:bg-red-950/60 hover:text-red-400 transition-all"
-                        title="Remove from wallet"
-                      >
-                        ×
-                      </button>
+                      </div>
                     </div>
                   </div>
                 ))}

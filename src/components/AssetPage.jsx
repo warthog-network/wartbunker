@@ -27,15 +27,32 @@ const AssetCardWithChart = ({ asset, isCompact, selectedNode, onCopyHash, chartP
   const [chartFallbackNote, setChartFallbackNote] = useState(null);
   const [chartMode, setChartMode] = useState('candles');
   const [chartInterval, setChartInterval] = useState('1h');
-  const [chartRefreshKey, setChartRefreshKey] = useState(0);
+  const [chartLiveView, setChartLiveView] = useState(false);
+  const [chartLoadKey, setChartLoadKey] = useState(0);
   const [tradePrice, setTradePrice] = useState(null);
   const [poolSpot, setPoolSpot] = useState(null);
   const chartLoadGenRef = useRef(0);
 
+  const bumpChartLoad = () => setChartLoadKey((key) => key + 1);
+
   const handleRefreshChart = () => {
     setChartVisible(true);
-    setChartRefreshKey((key) => key + 1);
+    setChartLiveView(true);
+    bumpChartLoad();
   };
+
+  const handleShowIndexedChart = () => {
+    setChartLiveView(false);
+    bumpChartLoad();
+  };
+
+  useEffect(() => {
+    setChartLiveView(false);
+    setChartLoadKey(0);
+    setTradePrice(null);
+    setPoolSpot(null);
+    setChartFallbackNote(null);
+  }, [asset?.hash]);
 
   useEffect(() => {
     if (chartPriority) {
@@ -68,7 +85,7 @@ const AssetCardWithChart = ({ asset, isCompact, selectedNode, onCopyHash, chartP
 
     const loadGen = ++chartLoadGenRef.current;
 
-    const isRefresh = chartRefreshKey > 0;
+    const isLiveView = chartLiveView;
 
     setChartLoading(true);
     setChartPoints([]);
@@ -84,15 +101,15 @@ const AssetCardWithChart = ({ asset, isCompact, selectedNode, onCopyHash, chartP
           n: 100,
           mode: 'candles',
           interval: '1h',
-          allowFallback: isRefresh,
-          liveAugment: isRefresh,
-          priority: chartPriority || isRefresh,
+          allowFallback: isLiveView,
+          liveAugment: isLiveView,
+          priority: chartPriority || isLiveView,
         });
 
         if (loadGen !== chartLoadGenRef.current) return;
 
         let livePrices = { latestTradePrice: null, poolSpot: null };
-        if (isRefresh) {
+        if (isLiveView) {
           livePrices = await fetchAssetLivePrices(api, hash);
         }
 
@@ -109,7 +126,7 @@ const AssetCardWithChart = ({ asset, isCompact, selectedNode, onCopyHash, chartP
           poolSpot: chartPoolSpot,
         } = chartResult;
 
-        if (isRefresh) {
+        if (isLiveView) {
           setTradePrice(livePrices.latestTradePrice);
           setPoolSpot(livePrices.poolSpot ?? chartPoolSpot ?? null);
         }
@@ -144,7 +161,7 @@ const AssetCardWithChart = ({ asset, isCompact, selectedNode, onCopyHash, chartP
     return () => {
       chartLoadGenRef.current += 1;
     };
-  }, [chartVisible, asset?.hash, selectedNode, chartPriority, chartRefreshKey]);
+  }, [chartVisible, asset?.hash, selectedNode, chartPriority, chartLiveView, chartLoadKey]);
 
   const intervalLabel = chartMode === 'trades'
     ? 'Trades'
@@ -223,19 +240,39 @@ const AssetCardWithChart = ({ asset, isCompact, selectedNode, onCopyHash, chartP
       </div>
 
       <div ref={chartSectionRef} className="border-t border-zinc-700 bg-zinc-900/40">
-        <div className="px-4 pt-3 flex items-center justify-between gap-2">
-          <span className="text-xs font-medium uppercase tracking-wider text-violet-400/90">
+        <div className="px-4 pt-3 flex items-start justify-between gap-2">
+          <span className="text-xs font-medium uppercase tracking-wider text-violet-400/90 pt-0.5">
             Price chart
           </span>
-          <button
-            type="button"
-            className="compact-btn text-violet-300 hover:!text-violet-200"
-            onClick={handleRefreshChart}
-            disabled={chartLoading}
-            title="Reload chart with latest matches and pool price"
-          >
-            {chartLoading ? 'Refreshing…' : '↻ Refresh'}
-          </button>
+          <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
+            <div className="flex items-center gap-1.5">
+              {chartLiveView && (
+                <button
+                  type="button"
+                  className="compact-btn text-zinc-400 hover:!text-zinc-200"
+                  onClick={handleShowIndexedChart}
+                  disabled={chartLoading}
+                  title="Return to node-indexed chart candles"
+                >
+                  {chartLoading ? 'Loading…' : '↩ Indexed'}
+                </button>
+              )}
+              <button
+                type="button"
+                className={`compact-btn hover:!text-violet-200 ${
+                  chartLiveView ? 'compact-btn--active text-violet-200' : 'text-violet-300'
+                }`}
+                onClick={handleRefreshChart}
+                disabled={chartLoading}
+                title="Reload chart with latest matches and pool price"
+              >
+                {chartLoading && chartLiveView ? 'Refreshing…' : '↻ Refresh'}
+              </button>
+            </div>
+            <p className="text-[10px] text-zinc-500 leading-tight text-right">
+              {chartLiveView ? 'Switch back to indexed candles' : 'Live trades & pool spot'}
+            </p>
+          </div>
         </div>
         {chartFallbackNote && (
           <p className="px-4 pb-1 text-xs text-amber-400/90">{chartFallbackNote}</p>
