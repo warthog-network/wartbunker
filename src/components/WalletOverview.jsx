@@ -795,18 +795,18 @@ const WalletOverview = ({ onLogout }) => {
                           className="bg-zinc-900 border border-zinc-700 rounded-xl overflow-hidden"
                         >
                           <div
-                            className={`px-4 py-3 bg-zinc-800/50 flex items-center justify-between gap-3 ${
+                            className={`px-4 py-3 bg-zinc-800/50 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between ${
                               isGroupCollapsed ? '' : 'border-b border-zinc-700'
                             }`}
                           >
                             <button
                               type="button"
                               onClick={() => toggleAssetGroup(asset)}
-                              className="group flex items-center gap-3 min-w-0 text-left !m-0 !p-0 !bg-transparent !border-0 hover:!bg-transparent hover:!transform-none hover:!shadow-none"
+                              className="group flex items-start sm:items-center gap-3 min-w-0 w-full text-left !m-0 !p-0 !bg-transparent !border-0 hover:!bg-transparent hover:!transform-none hover:!shadow-none"
                               aria-expanded={!isGroupCollapsed}
                             >
                               <span
-                                className="text-zinc-500 group-hover:text-zinc-400 text-xs w-3 flex-shrink-0 transition-colors"
+                                className="text-zinc-500 group-hover:text-zinc-400 text-xs w-3 flex-shrink-0 transition-colors mt-1 sm:mt-0"
                                 aria-hidden="true"
                               >
                                 {isGroupCollapsed ? '▸' : '▾'}
@@ -814,39 +814,43 @@ const WalletOverview = ({ onLogout }) => {
                               <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-purple-500 via-violet-500 to-fuchsia-500 flex items-center justify-center text-white font-bold text-xl shadow-inner ring-1 ring-white/20 flex-shrink-0">
                                 {asset.name?.[0] || '?'}
                               </div>
-                              <div className="min-w-0">
-                                <div className="font-bold text-lg tracking-tight text-white group-hover:text-zinc-100 truncate transition-colors">
+                              <div className="min-w-0 flex-1">
+                                <div className="font-bold text-base sm:text-lg tracking-tight text-white group-hover:text-zinc-100 truncate transition-colors">
                                   {asset.name}
                                 </div>
-                                <div className="text-[10px] text-zinc-500 group-hover:text-zinc-400 font-mono transition-colors">
-                                  ID {asset.id} · {asset.decimals} decimals
+                                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-zinc-900/80 border border-zinc-700/60 text-[10px] text-zinc-400 font-mono tabular-nums group-hover:text-zinc-300 transition-colors">
+                                    ID {asset.id}
+                                  </span>
+                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-zinc-900/80 border border-zinc-700/60 text-[10px] text-zinc-400 font-mono tabular-nums group-hover:text-zinc-300 transition-colors">
+                                    {asset.decimals} decimals
+                                  </span>
                                   {totalOrders > 0 && (
-                                    <>
-                                      {' · '}
+                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-purple-500/10 border border-purple-500/20 text-[10px] text-purple-300 font-mono tabular-nums group-hover:text-purple-200 transition-colors">
                                       {totalOrders} order{totalOrders !== 1 ? 's' : ''}
                                       {buyOrders.length > 0 && sellOrders.length > 0
-                                        ? ` (${buyOrders.length} buy, ${sellOrders.length} sell)`
+                                        ? ` · ${buyOrders.length}B / ${sellOrders.length}S`
                                         : buyOrders.length > 0
-                                          ? ` (${buyOrders.length} buy)`
-                                          : ` (${sellOrders.length} sell)`}
-                                    </>
+                                          ? ' · buy'
+                                          : ' · sell'}
+                                    </span>
                                   )}
                                 </div>
                               </div>
                             </button>
-                            <div className="flex items-center gap-2 flex-shrink-0">
+                            <div className="flex items-center gap-2 flex-shrink-0 w-full sm:w-auto justify-end">
                               <button
                                 type="button"
                                 onClick={() => copyToClipboard(asset.hash)}
                                 title={`Copy asset hash: ${asset.hash}`}
-                                className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1 font-mono tabular-nums"
+                                className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1 font-mono tabular-nums max-w-[calc(100%-4.5rem)] sm:max-w-none truncate"
                               >
                                 {asset.hash?.slice(0, 8)}…{asset.hash?.slice(-6)}
                               </button>
                               <button
                                 type="button"
                                 onClick={() => toggleAssetGroup(asset)}
-                                className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1"
+                                className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1 flex-shrink-0"
                               >
                                 {isGroupCollapsed ? 'Show' : 'Hide'}
                               </button>
