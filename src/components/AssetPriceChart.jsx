@@ -1,5 +1,11 @@
 import React, { useId, useMemo, useState } from 'react';
-import { formatAssetPrice, toChartSeries } from '../utils/dexPrice.js';
+import {
+  computeChartPriceStats,
+  formatAssetPrice,
+  formatChartChangePercent,
+  formatChartDataSpan,
+  toChartSeries,
+} from '../utils/dexPrice.js';
 
 const CHART_WIDTH = 640;
 const CHART_HEIGHT = 280;
@@ -37,6 +43,9 @@ const AssetPriceChart = ({
   loading = false,
   error = null,
   embedded = false,
+  tradePrice = null,
+  poolSpot = null,
+  candleInterval = '1h',
 }) => {
   const [hoverIdx, setHoverIdx] = useState(null);
   const areaGradientId = useId();
@@ -46,16 +55,11 @@ const AssetPriceChart = ({
 
   const series = useMemo(() => toChartSeries(points, mode), [points, mode]);
 
-  const stats = useMemo(() => {
-    if (!series.length) return null;
-    const prices = series.map((p) => p.y);
-    const first = prices[0];
-    const last = prices[prices.length - 1];
-    const min = Math.min(...prices);
-    const max = Math.max(...prices);
-    const change = first > 0 ? ((last - first) / first) * 100 : 0;
-    return { first, last, min, max, change };
-  }, [series]);
+  const stats = useMemo(() => computeChartPriceStats(series), [series]);
+  const dataSpan = useMemo(
+    () => (mode === 'candles' ? formatChartDataSpan(series, { mode, candleInterval }) : null),
+    [series, mode, candleInterval],
+  );
 
   const plot = useMemo(() => {
     const innerW = CHART_WIDTH - PAD.left - PAD.right;
@@ -105,7 +109,7 @@ const AssetPriceChart = ({
 
   if (error) {
     return (
-      <div className={embedded ? 'p-4 text-sm text-red-300/90' : `${shellClass} p-6 bg-red-950/40 border-red-700 text-sm text-red-300`}>
+      <div className={embedded ? 'p-4 text-sm text-red-400' : `${shellClass} p-6 bg-red-950/40 border-red-900 text-sm text-red-400`}>
         {error}
       </div>
     );
@@ -124,13 +128,15 @@ const AssetPriceChart = ({
   const linePath = buildPath(plot.series, plot.xScale, plot.yScale);
   const areaPath = buildAreaPath(plot.series, plot.xScale, plot.yScale, plot.baselineY);
   const hoverPt = hoverIdx != null ? plot.series[hoverIdx] : null;
-  const changeUp = (stats?.change ?? 0) >= 0;
+  const changeDisplay = formatChartChangePercent(stats?.change);
+  const changeUp = stats?.change != null && stats.change >= 0;
+  const changeNeutral = stats?.change == null;
 
   return (
     <div className={shellClass || undefined}>
       <div className={`${embedded ? 'px-4 py-3' : 'px-5 py-4'} border-b border-zinc-800 flex flex-wrap items-end justify-between gap-3`}>
         <div>
-          <div className="text-xs uppercase tracking-wider text-violet-400 mb-0.5">
+          <div className="text-xs uppercase tracking-[0.12em] text-purple-400 mb-0.5">
             {mode === 'candles' ? 'OHLC Close' : 'Trade Price'} • {intervalLabel || 'History'}
           </div>
           <div className={`font-mono font-semibold text-white tabular-nums ${embedded ? 'text-xl' : 'text-2xl'}`}>
@@ -140,6 +146,24 @@ const AssetPriceChart = ({
           {mode === 'trades' && (
             <div className="text-[10px] text-zinc-500 mt-0.5">
               Each point is a matched swap (limit orders only count after they fill)
+            </div>
+          )}
+          {embedded && mode === 'candles' && (tradePrice != null || poolSpot != null) && (
+            <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-xs font-mono">
+              {tradePrice != null && Number.isFinite(tradePrice) && (
+                <span className="text-zinc-500">
+                  Last trade{' '}
+                  <span className="text-[#FDB913]">{formatAssetPrice(tradePrice)}</span>
+                  <span className="text-zinc-600 ml-1">WART/{assetName}</span>
+                </span>
+              )}
+              {poolSpot != null && Number.isFinite(poolSpot) && (
+                <span className="text-zinc-500">
+                  Pool spot{' '}
+                  <span className="text-blue-400">{formatAssetPrice(poolSpot)}</span>
+                  <span className="text-zinc-600 ml-1">WART/{assetName}</span>
+                </span>
+              )}
             </div>
           )}
         </div>
@@ -153,9 +177,24 @@ const AssetPriceChart = ({
             <span className="text-zinc-300">{formatAssetPrice(stats?.max)}</span>
           </div>
           <div>
-            <span className="text-zinc-500">Δ </span>
-            <span className={changeUp ? 'text-emerald-400' : 'text-rose-400'}>
-              {changeUp ? '+' : ''}{stats?.change?.toFixed(2)}%
+            <span className="text-zinc-500">{stats?.changeLabel ?? 'Δ 24h'} </span>
+            <span
+              className={
+                changeNeutral
+                  ? 'text-zinc-500'
+                  : changeUp
+                    ? 'text-[#FDB913]'
+                    : 'text-rose-400'
+              }
+              title={
+                stats?.changeWindow === 'since_first'
+                  ? 'History spans less than 24h — change from earliest point shown'
+                  : stats?.changeWindow === 'unavailable'
+                    ? 'Not enough history to compute change'
+                    : 'Change vs price at or before 24 hours ago'
+              }
+            >
+              {changeDisplay}
             </span>
           </div>
         </div>
@@ -170,8 +209,8 @@ const AssetPriceChart = ({
         >
           <defs>
             <linearGradient id={areaGradientId} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="rgb(16, 185, 129)" stopOpacity="0.35" />
-              <stop offset="100%" stopColor="rgb(16, 185, 129)" stopOpacity="0" />
+              <stop offset="0%" stopColor="#FDB913" stopOpacity="0.35" />
+              <stop offset="100%" stopColor="#FDB913" stopOpacity="0" />
             </linearGradient>
           </defs>
 
@@ -203,7 +242,7 @@ const AssetPriceChart = ({
           <path
             d={linePath}
             fill="none"
-            stroke="rgb(52, 211, 153)"
+            stroke="#FDB913"
             strokeWidth="2"
             strokeLinejoin="round"
             strokeLinecap="round"
@@ -215,8 +254,8 @@ const AssetPriceChart = ({
               cx={plot.xScale(pt.x)}
               cy={plot.yScale(pt.y)}
               r={hoverIdx === idx ? 5 : 3}
-              fill={hoverIdx === idx ? 'rgb(167, 243, 208)' : 'rgb(16, 185, 129)'}
-              stroke="rgb(6, 78, 59)"
+              fill={hoverIdx === idx ? '#FDB913' : '#E79300'}
+              stroke="#231F20"
               strokeWidth="1"
               className="cursor-pointer"
               onMouseEnter={() => setHoverIdx(idx)}
@@ -231,7 +270,7 @@ const AssetPriceChart = ({
                 y1={PAD.top}
                 x2={plot.xScale(hoverPt.x)}
                 y2={CHART_HEIGHT - PAD.bottom}
-                stroke="rgb(139, 92, 246)"
+                stroke="#c084fc"
                 strokeWidth="1"
                 strokeDasharray="3 3"
               />
@@ -256,13 +295,15 @@ const AssetPriceChart = ({
         {hoverPt && (
           <div className="mt-2 px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-xl text-xs font-mono flex flex-wrap gap-x-4 gap-y-1">
             <span className="text-zinc-400">{hoverPt.label}</span>
-            <span className="text-emerald-400">{hoverPt.meta} WART/{assetName}</span>
+            <span className="text-[#FDB913]">{hoverPt.meta} WART/{assetName}</span>
           </div>
         )}
       </div>
 
       <div className={`${embedded ? 'px-4' : 'px-5'} py-2 border-t border-zinc-800 text-[10px] text-zinc-500`}>
-        {plot.series.length} data points • hover points for details
+        {plot.series.length} data point{plot.series.length !== 1 ? 's' : ''}
+        {dataSpan ? ` · ${dataSpan}` : ''}
+        {' · hover points for details'}
       </div>
     </div>
   );

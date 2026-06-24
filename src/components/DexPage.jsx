@@ -21,6 +21,8 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     selectedNode: contextSelectedNode,
     isSigningUnlocked,
     isSessionLocked,
+    dexPoolPrefill,
+    setDexPoolPrefill,
   } = useWallet();
 
   const selectedNode = propSelectedNode || contextSelectedNode || DEFAULT_NODE_URL;
@@ -32,6 +34,9 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const [loading, setLoading] = useState({});
   const [activeTab, setActiveTab] = useState('market');
   const [liquidityMode, setLiquidityMode] = useState('deposit');
+  const [limitOrderMode, setLimitOrderMode] = useState('buy');
+  const [poolAssetHash, setPoolAssetHash] = useState('');
+  const [positionPoolMode, setPositionPoolMode] = useState('deposit');
 
   useEffect(() => {
     if (activeTab === 'limit') {
@@ -634,13 +639,72 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     }
   };
 
+  const handlePositionPoolDeposit = async () => {
+    const assetHashRaw = poolAssetHash.trim();
+    const assetAmountStr = document.getElementById('positionPoolAssetAmount')?.value.trim() || '';
+    const decimalsStr = document.getElementById('positionPoolDecimals')?.value || '8';
+    const wartAmountStr = document.getElementById('positionPoolWartAmount')?.value.trim() || '';
+    const nonceOverrideRaw = document.getElementById('positionPoolNonceOverride')?.value.trim() || '';
+
+    let nonceId = getSmartNonce();
+    if (nonceOverrideRaw !== '') {
+      const parsed = parseInt(nonceOverrideRaw, 10);
+      if (!Number.isNaN(parsed)) nonceId = parsed;
+    }
+
+    if (!assetHashRaw || !assetAmountStr || !wartAmountStr) {
+      toast.error('Load a pool first, then enter Asset Amount and WART Amount');
+      return;
+    }
+    if (!isSigningUnlocked) {
+      toast.error(isSessionLocked ? 'Unlock your wallet to deposit liquidity' : 'Wallet not loaded. Please log in again.');
+      return;
+    }
+
+    setLoading((prev) => ({ ...prev, liquidityDeposit: true }));
+    setResults((prev) => ({ ...prev, liquidityDeposit: null }));
+
+    try {
+      const api = await createWarthogApi(selectedNode);
+      const { nonce, data } = await signAndSubmitTransaction(api, {
+        nonceId,
+        buildSpec: {
+          type: 'LIQUIDITY_DEPOSIT',
+          assetHash: assetHashRaw,
+          assetAmount: assetAmountStr,
+          decimals: decimalsStr,
+          wartAmount: wartAmountStr,
+        },
+      });
+
+      setResults((prev) => ({ ...prev, liquidityDeposit: formatSubmitResult(data) }));
+      updateNonceAfterSuccess(nonce);
+
+      if (document.getElementById('positionPoolNonceOverride')) {
+        document.getElementById('positionPoolNonceOverride').value = '';
+      }
+
+      toast.success('Liquidity deposit sent — refresh pool info to see updated position');
+      await loadPoolAndPosition(assetHashRaw);
+    } catch (err) {
+      console.error(err);
+      setResults((prev) => ({ ...prev, liquidityDeposit: formatSubmitError(err.message || 'Unknown error') }));
+      toast.error('Liquidity deposit failed: ' + (err.message || 'Unknown error'));
+    } finally {
+      setLoading((prev) => ({ ...prev, liquidityDeposit: false }));
+    }
+  };
+
   const handleLiquidityWithdraw = async () => {
     const assetHashRaw =
       document.getElementById('liquidityWithdrawAssetHash')?.value.trim() ||
       document.getElementById('poolAssetHash')?.value.trim() ||
       '';
     const sharesStr = document.getElementById('liquidityWithdrawShares')?.value.trim() || '';
-    const nonceOverrideRaw = document.getElementById('liquidityWithdrawNonceOverride')?.value.trim() || '';
+    const nonceOverrideRaw =
+      document.getElementById('positionPoolWithdrawNonceOverride')?.value.trim() ||
+      document.getElementById('liquidityWithdrawNonceOverride')?.value.trim() ||
+      '';
 
     let nonceId = getSmartNonce();
     if (nonceOverrideRaw !== '') {
@@ -657,7 +721,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       return;
     }
 
-    setLoading(prev => ({ ...prev, liquidityWithdraw: true }));
+    setLoading((prev) => ({ ...prev, liquidityWithdraw: true }));
     setResults(prev => ({ ...prev, liquidityWithdraw: null }));
 
     try {
@@ -674,17 +738,23 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       setResults(prev => ({ ...prev, liquidityWithdraw: formatSubmitResult(data) }));
       updateNonceAfterSuccess(nonce);
 
+      if (document.getElementById('positionPoolWithdrawNonceOverride')) {
+        document.getElementById('positionPoolWithdrawNonceOverride').value = '';
+      }
       if (document.getElementById('liquidityWithdrawNonceOverride')) {
         document.getElementById('liquidityWithdrawNonceOverride').value = '';
       }
 
       toast.success('Liquidity withdrawal sent — check History for received asset + WART');
+      if (poolAssetHash) {
+        await loadPoolAndPosition(poolAssetHash);
+      }
     } catch (err) {
       console.error(err);
-      setResults(prev => ({ ...prev, liquidityWithdraw: formatSubmitError(err.message || 'Unknown error') }));
+      setResults((prev) => ({ ...prev, liquidityWithdraw: formatSubmitError(err.message || 'Unknown error') }));
       toast.error('Liquidity withdrawal failed: ' + (err.message || 'Unknown error'));
     } finally {
-      setLoading(prev => ({ ...prev, liquidityWithdraw: false }));
+      setLoading((prev) => ({ ...prev, liquidityWithdraw: false }));
     }
   };
 
@@ -711,8 +781,8 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     toast.success('Filled withdraw form with your LP share balance');
   };
 
-  const loadPoolAndPosition = async () => {
-    const assetRaw = document.getElementById('poolAssetHash')?.value.trim() || '';
+  const loadPoolAndPosition = async (assetHashOverride) => {
+    const assetRaw = assetHashOverride || poolAssetHash || document.getElementById('poolAssetHash')?.value.trim() || '';
     if (!assetRaw) {
       toast.error('Please enter an Asset Hash');
       return;
@@ -733,9 +803,19 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     }
   };
 
+  useEffect(() => {
+    if (!dexPoolPrefill?.hash) return;
+
+    const hash = dexPoolPrefill.hash.toLowerCase().replace(/^0x/i, '');
+    setActiveTab('position');
+    setPoolAssetHash(hash);
+    setDexPoolPrefill(null);
+    loadPoolAndPosition(hash);
+  }, [dexPoolPrefill, setDexPoolPrefill]);
+
   const handleLimitSwap = async () => {
     const assetHashRaw = document.getElementById('limitAssetHash')?.value.trim() || '';
-    const isBuy = document.getElementById('limitIsBuy')?.checked ?? true;
+    const isBuy = limitOrderMode === 'buy';
     const amountStr = document.getElementById('limitAmount')?.value.trim() || '';
     const limitHex = document.getElementById('limitEncoded')?.value.trim() || '';
     const assetDecimalsStr = document.getElementById('limitPriceDecimals')?.value || '8';
@@ -1043,46 +1123,126 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
           <div className="flex flex-col md:flex-row gap-3 mb-6">
             <input
               id="poolAssetHash"
+              value={poolAssetHash}
+              onChange={(e) => setPoolAssetHash(e.target.value.trim())}
               placeholder="Paste the same Asset Hash you deposited into"
               className="input flex-1 font-mono text-sm"
             />
             <button
-              onClick={loadPoolAndPosition}
+              type="button"
+              onClick={() => loadPoolAndPosition()}
               disabled={loading.poolMarket || loading.myAssetBalance || loading.myLiquidityBalance}
-              className="px-8 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-2xl transition-all disabled:bg-gray-400 whitespace-nowrap"
+              className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1 self-end whitespace-nowrap"
             >
-              {loading.poolMarket || loading.myAssetBalance || loading.myLiquidityBalance ? 'Loading...' : 'Load Pool & My Position'}
+              {loading.poolMarket || loading.myAssetBalance || loading.myLiquidityBalance ? 'Loading…' : 'Load Pool & My Position'}
             </button>
           </div>
 
           {results.poolMarket && renderPoolMarketCard(results.poolMarket)}
-          {results.myLiquidityBalance && renderLiquiditySharesCard(results.myLiquidityBalance)}
           {results.myAssetBalance && renderPositionCard(results.myAssetBalance)}
+          {results.myLiquidityBalance && renderLiquiditySharesCard(results.myLiquidityBalance)}
 
-          {(results.myLiquidityBalance?.code === 0 || results.poolMarket?.code === 0) && (
-            <div className="mt-8 border-2 border-amber-600/60 rounded-3xl p-6 bg-amber-950/20">
-              <h4 className="text-lg font-semibold text-amber-300 mb-2">Withdraw from this pool</h4>
-              <p className="text-sm text-amber-400/80 mb-4">
-                Redeem LP shares to receive underlying {results.poolMarket?.data?.baseAsset?.name || 'asset'} + WART.
-              </p>
-              <div className="flex flex-col sm:flex-row gap-3 mb-4">
-                <input id="liquidityWithdrawShares" type="number" step="any" placeholder="LP shares to redeem" className="input flex-1" />
+          {results.poolMarket?.code === 0 && (
+            <div className="mt-8">
+              <div className="flex items-center gap-2 mb-4">
                 <button
                   type="button"
-                  onClick={fillWithdrawSharesFromBalance}
-                  className="px-4 py-2 text-sm font-medium rounded-xl border border-amber-700/60 text-amber-300 hover:bg-amber-900/40 transition-colors whitespace-nowrap"
+                  onClick={() => setPositionPoolMode('deposit')}
+                  className={`compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1${
+                    positionPoolMode === 'deposit' ? ' compact-btn--active' : ''
+                  }`}
                 >
-                  Use my full balance
+                  Deposit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPositionPoolMode('withdraw')}
+                  className={`compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1${
+                    positionPoolMode === 'withdraw' ? ' compact-btn--active' : ''
+                  }`}
+                >
+                  Withdraw
                 </button>
               </div>
-              <button
-                onClick={handleLiquidityWithdraw}
-                disabled={loading.liquidityWithdraw}
-                className="w-full py-3 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-2xl transition-all disabled:bg-gray-400"
-              >
-                {loading.liquidityWithdraw ? 'Withdrawing...' : 'Withdraw Liquidity'}
-              </button>
-              {results.liquidityWithdraw && renderTransactionResult(results.liquidityWithdraw, 'Liquidity Withdrawal')}
+
+              {positionPoolMode === 'deposit' ? (
+                <section className="border border-emerald-700 rounded-3xl p-6 bg-emerald-950/30">
+                  <h4 className="text-lg font-semibold mb-2 text-emerald-300">
+                    Deposit into {results.poolMarket?.data?.baseAsset?.name || 'this'} pool
+                  </h4>
+                  <p className="text-sm text-emerald-400/80 mb-4">
+                    Add asset tokens + WART to this pool using the loaded asset hash above. You receive LP shares for your deposit.
+                  </p>
+
+                  <label className="block text-sm font-medium mb-2">Asset Amount (in token units)</label>
+                  <input id="positionPoolAssetAmount" type="number" step="any" placeholder="e.g. 1000" className="input mb-3" />
+
+                  <label className="block text-sm font-medium mb-2">Asset Decimals / Precision</label>
+                  <input
+                    id="positionPoolDecimals"
+                    type="number"
+                    defaultValue={results.poolMarket?.data?.baseAsset?.decimals ?? 8}
+                    key={`position-decimals-${poolAssetHash}`}
+                    className="input mb-3"
+                  />
+
+                  <label className="block text-sm font-medium mb-2">WART Amount to Deposit</label>
+                  <input id="positionPoolWartAmount" type="number" step="any" placeholder="e.g. 10.0" className="input mb-3" />
+
+                  <label className="block text-sm font-medium mb-2 text-amber-400">
+                    Nonce Override (only if duplicate nonce error)
+                  </label>
+                  <input id="positionPoolNonceOverride" type="number" placeholder="Leave empty for auto" className="input mb-6" />
+
+                  <button
+                    type="button"
+                    onClick={handlePositionPoolDeposit}
+                    disabled={loading.liquidityDeposit}
+                    className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-2xl transition-all disabled:bg-gray-400"
+                  >
+                    {loading.liquidityDeposit ? 'Depositing Liquidity…' : 'Deposit Liquidity'}
+                  </button>
+
+                  {results.liquidityDeposit && renderTransactionResult(results.liquidityDeposit, 'Liquidity Deposit')}
+                </section>
+              ) : (
+                <section className="border-2 border-amber-500 rounded-3xl p-6 bg-amber-50 dark:bg-amber-950 shadow-xl">
+                  <h4 className="text-lg font-semibold mb-2 text-amber-700 dark:text-amber-300">
+                    Withdraw from {results.poolMarket?.data?.baseAsset?.name || 'this'} pool
+                  </h4>
+                  <p className="text-sm text-amber-600 dark:text-amber-400 mb-4">
+                    Redeem LP shares to receive underlying {results.poolMarket?.data?.baseAsset?.name || 'asset'} + WART from this pool.
+                  </p>
+
+                  <label className="block text-sm font-medium mb-2">LP Shares to Redeem</label>
+                  <div className="flex flex-col sm:flex-row gap-3 mb-3">
+                    <input id="liquidityWithdrawShares" type="number" step="any" placeholder="LP shares to redeem" className="input flex-1" />
+                    <button
+                      type="button"
+                      onClick={fillWithdrawSharesFromBalance}
+                      className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1 self-end whitespace-nowrap"
+                    >
+                      Use my full balance
+                    </button>
+                  </div>
+
+                  <label className="block text-sm font-medium mb-2 text-amber-400">
+                    Nonce Override (only if duplicate nonce error)
+                  </label>
+                  <input id="positionPoolWithdrawNonceOverride" type="number" placeholder="Leave empty for auto" className="input mb-6" />
+
+                  <button
+                    type="button"
+                    onClick={handleLiquidityWithdraw}
+                    disabled={loading.liquidityWithdraw}
+                    className="w-full py-3 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-2xl transition-all disabled:bg-gray-400"
+                  >
+                    {loading.liquidityWithdraw ? 'Withdrawing…' : 'Withdraw Liquidity'}
+                  </button>
+
+                  {results.liquidityWithdraw && renderTransactionResult(results.liquidityWithdraw, 'Liquidity Withdrawal')}
+                </section>
+              )}
             </div>
           )}
 
@@ -1096,85 +1256,180 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       )}
 
       {activeTab === 'limit' && (
-        <section className="border-2 border-violet-500 rounded-3xl p-8 bg-violet-50 dark:bg-violet-950 shadow-xl">
-          <h3 className="text-xl font-semibold mb-6 text-violet-700 dark:text-violet-300">
-            Limit Orders (Buy / Sell)
-          </h3>
-          <p className="text-sm text-violet-600 dark:text-violet-400 mb-6">
-            Create buy or sell limit orders. Use the price encoder to generate the 6-character limit hex.
-          </p>
-
-          <div>
-              <label className="block text-sm font-medium mb-2">Asset Hash (64 hex chars, no 0x)</label>
-              <input id="limitAssetHash" placeholder="e.g. 0e4825efffa294610d2ac376713e3bcc9b53d378e823834b64e5df01f75d3b0c" className="input mb-3 font-mono text-sm" />
-
-              <div className="flex items-center gap-3 mb-4">
-                <input type="checkbox" id="limitIsBuy" defaultChecked className="w-4 h-4 accent-violet-600" />
-                <label htmlFor="limitIsBuy" className="text-sm font-medium">This is a Buy order (uncheck for Sell)</label>
-              </div>
-
-              <label className="block text-sm font-medium mb-2">Amount</label>
-              <input id="limitAmount" type="number" step="any" placeholder="Amount in WART (buy) or asset units (sell)" className="input mb-4" />
-
-              <div className="bg-zinc-900 border border-violet-700 p-4 rounded-2xl mb-4">
-                <div className="text-sm font-medium text-violet-300 mb-3">
-                  Quick Limit Price Encoder
-                </div>
-
-                <div className="flex flex-col md:flex-row gap-3 items-end">
-                  <div className="flex-1">
-                    <label className="text-xs text-gray-400 block mb-1.5">Price</label>
-                    <input
-                      id="limitPriceHuman"
-                      type="text"
-                      placeholder="e.g. 0.0005"
-                      className="w-full bg-black border border-zinc-700 focus:border-violet-500 text-white px-4 py-3 rounded-xl outline-none"
-                    />
-                  </div>
-
-                  <div className="w-full md:w-28">
-                    <label className="text-xs text-gray-400 block mb-1.5">Decimals</label>
-                    <input
-                      id="limitPriceDecimals"
-                      type="number"
-                      defaultValue="8"
-                      className="w-full bg-black border border-zinc-700 focus:border-violet-500 text-white px-4 py-3 rounded-xl outline-none"
-                    />
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={encodeLimitPrice}
-                    className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1 self-end whitespace-nowrap"
-                  >
-                    Encode
-                  </button>
-                </div>
-
-                <p className="text-xs text-gray-500 mt-2">
-                  Enter human price + decimals → click Encode
-                </p>
-              </div>
-
-              <label className="block text-sm font-medium mb-2">Encoded Limit (exactly 6 hex characters)</label>
-              <input id="limitEncoded" placeholder="e.g. c0e74d" maxLength={6} className="input mb-3 font-mono" />
-
-              <label className="block text-sm font-medium mb-2 text-amber-400">
-                Nonce Override (only if duplicate nonce error)
-              </label>
-              <input id="limitNonceOverride" type="number" placeholder="Leave empty for auto" className="input mb-6" />
-
-              <button
-                onClick={handleLimitSwap}
-                disabled={loading.limitSwap}
-                className="w-full py-4 bg-violet-600 hover:bg-violet-700 text-white font-semibold rounded-2xl transition-all disabled:bg-gray-400"
-              >
-                {loading.limitSwap ? 'Submitting Limit Order...' : 'Submit Limit Order'}
-              </button>
-
-              {results.limitSwap && renderTransactionResult(results.limitSwap, 'Limit Order')}
+        <div>
+          <div className="flex items-center gap-2 mb-6">
+            <button
+              type="button"
+              onClick={() => setLimitOrderMode('buy')}
+              className={`compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1${
+                limitOrderMode === 'buy' ? ' compact-btn--active' : ''
+              }`}
+            >
+              Buy
+            </button>
+            <button
+              type="button"
+              onClick={() => setLimitOrderMode('sell')}
+              className={`compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1${
+                limitOrderMode === 'sell' ? ' compact-btn--active' : ''
+              }`}
+            >
+              Sell
+            </button>
           </div>
-        </section>
+
+          {limitOrderMode === 'buy' ? (
+            <section className="border-2 border-emerald-500 rounded-3xl p-8 bg-emerald-50 dark:bg-emerald-950 shadow-xl">
+              <h3 className="text-xl font-semibold mb-6 text-emerald-700 dark:text-emerald-300">
+                Limit Buy Order (WART → Asset)
+              </h3>
+              <p className="text-sm text-emerald-600 dark:text-emerald-400 mb-6">
+                Offer WART at your limit price to buy the asset when the pool matches. Use the price encoder to generate the 6-character limit hex.
+              </p>
+
+              <div>
+                <label className="block text-sm font-medium mb-2">Asset Hash (64 hex chars, no 0x)</label>
+                <input id="limitAssetHash" placeholder="e.g. 0e4825efffa294610d2ac376713e3bcc9b53d378e823834b64e5df01f75d3b0c" className="input mb-3 font-mono text-sm" />
+
+                <label className="block text-sm font-medium mb-2">Amount (in WART)</label>
+                <input id="limitAmount" type="number" step="any" placeholder="e.g. 1.0" className="input mb-4" />
+
+                <div className="bg-zinc-900 border border-emerald-700 p-4 rounded-2xl mb-4">
+                  <div className="text-sm font-medium text-emerald-300 mb-3">
+                    Quick Limit Price Encoder
+                  </div>
+
+                  <div className="flex flex-col md:flex-row gap-3 items-end">
+                    <div className="flex-1">
+                      <label className="text-xs text-gray-400 block mb-1.5">Price</label>
+                      <input
+                        id="limitPriceHuman"
+                        type="text"
+                        placeholder="e.g. 0.0005"
+                        className="w-full bg-black border border-zinc-700 focus:border-emerald-500 text-white px-4 py-3 rounded-xl outline-none"
+                      />
+                    </div>
+
+                    <div className="w-full md:w-28">
+                      <label className="text-xs text-gray-400 block mb-1.5">Decimals</label>
+                      <input
+                        id="limitPriceDecimals"
+                        type="number"
+                        defaultValue="8"
+                        className="w-full bg-black border border-zinc-700 focus:border-emerald-500 text-white px-4 py-3 rounded-xl outline-none"
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={encodeLimitPrice}
+                      className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1 self-end whitespace-nowrap"
+                    >
+                      Encode
+                    </button>
+                  </div>
+
+                  <p className="text-xs text-gray-500 mt-2">
+                    Enter human price + decimals → click Encode
+                  </p>
+                </div>
+
+                <label className="block text-sm font-medium mb-2">Encoded Limit (exactly 6 hex characters)</label>
+                <input id="limitEncoded" placeholder="e.g. c0e74d" maxLength={6} className="input mb-3 font-mono" />
+
+                <label className="block text-sm font-medium mb-2 text-amber-400">
+                  Nonce Override (only if duplicate nonce error)
+                </label>
+                <input id="limitNonceOverride" type="number" placeholder="Leave empty for auto" className="input mb-6" />
+
+                <button
+                  onClick={handleLimitSwap}
+                  disabled={loading.limitSwap}
+                  className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-2xl transition-all disabled:bg-gray-400"
+                >
+                  {loading.limitSwap ? 'Submitting Buy Order…' : 'Submit Buy Limit Order'}
+                </button>
+
+                {results.limitSwap && renderTransactionResult(results.limitSwap, 'Buy Limit Order')}
+              </div>
+            </section>
+          ) : (
+            <section className="border-2 border-rose-500 rounded-3xl p-8 bg-rose-50 dark:bg-rose-950 shadow-xl">
+              <h3 className="text-xl font-semibold mb-6 text-rose-700 dark:text-rose-300">
+                Limit Sell Order (Asset → WART)
+              </h3>
+              <p className="text-sm text-rose-600 dark:text-rose-400 mb-6">
+                Offer asset tokens at your limit price to sell for WART when the pool matches. Use the price encoder to generate the 6-character limit hex.
+              </p>
+
+              <div>
+                <label className="block text-sm font-medium mb-2">Asset Hash (64 hex chars, no 0x)</label>
+                <input id="limitAssetHash" placeholder="e.g. 0e4825efffa294610d2ac376713e3bcc9b53d378e823834b64e5df01f75d3b0c" className="input mb-3 font-mono text-sm" />
+
+                <label className="block text-sm font-medium mb-2">Amount (in asset units)</label>
+                <input id="limitAmount" type="number" step="any" placeholder="e.g. 1000" className="input mb-4" />
+
+                <div className="bg-zinc-900 border border-rose-700 p-4 rounded-2xl mb-4">
+                  <div className="text-sm font-medium text-rose-300 mb-3">
+                    Quick Limit Price Encoder
+                  </div>
+
+                  <div className="flex flex-col md:flex-row gap-3 items-end">
+                    <div className="flex-1">
+                      <label className="text-xs text-gray-400 block mb-1.5">Price</label>
+                      <input
+                        id="limitPriceHuman"
+                        type="text"
+                        placeholder="e.g. 0.0005"
+                        className="w-full bg-black border border-zinc-700 focus:border-rose-500 text-white px-4 py-3 rounded-xl outline-none"
+                      />
+                    </div>
+
+                    <div className="w-full md:w-28">
+                      <label className="text-xs text-gray-400 block mb-1.5">Decimals</label>
+                      <input
+                        id="limitPriceDecimals"
+                        type="number"
+                        defaultValue="8"
+                        className="w-full bg-black border border-zinc-700 focus:border-rose-500 text-white px-4 py-3 rounded-xl outline-none"
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={encodeLimitPrice}
+                      className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1 self-end whitespace-nowrap"
+                    >
+                      Encode
+                    </button>
+                  </div>
+
+                  <p className="text-xs text-gray-500 mt-2">
+                    Enter human price + decimals → click Encode
+                  </p>
+                </div>
+
+                <label className="block text-sm font-medium mb-2">Encoded Limit (exactly 6 hex characters)</label>
+                <input id="limitEncoded" placeholder="e.g. c0e74d" maxLength={6} className="input mb-3 font-mono" />
+
+                <label className="block text-sm font-medium mb-2 text-amber-400">
+                  Nonce Override (only if duplicate nonce error)
+                </label>
+                <input id="limitNonceOverride" type="number" placeholder="Leave empty for auto" className="input mb-6" />
+
+                <button
+                  onClick={handleLimitSwap}
+                  disabled={loading.limitSwap}
+                  className="w-full py-4 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-2xl transition-all disabled:bg-gray-400"
+                >
+                  {loading.limitSwap ? 'Submitting Sell Order…' : 'Submit Sell Limit Order'}
+                </button>
+
+                {results.limitSwap && renderTransactionResult(results.limitSwap, 'Sell Limit Order')}
+              </div>
+            </section>
+          )}
+        </div>
       )}
 
     </>

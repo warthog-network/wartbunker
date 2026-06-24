@@ -16,6 +16,7 @@ const WalletSetup = () => {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [uploadedFile, setUploadedFile] = useState(null);
+  const [walletFileDragActive, setWalletFileDragActive] = useState(false);
   const [saveWalletConsent, setSaveWalletConsent] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [walletData, setWalletData] = useState(null);
@@ -148,6 +149,23 @@ const WalletSetup = () => {
     if (e.key === 'Enter') handleWalletAction();
   };
 
+  const acceptWalletFile = (file) => {
+    if (!file) return;
+    setUploadedFile(file);
+    setError(null);
+  };
+
+  const handleWalletFileInput = (e) => {
+    acceptWalletFile(e.target.files?.[0] ?? null);
+    e.target.value = '';
+  };
+
+  const handleWalletFileDrop = (e) => {
+    e.preventDefault();
+    setWalletFileDragActive(false);
+    acceptWalletFile(e.dataTransfer.files?.[0] ?? null);
+  };
+
   return (
     <div className="container">
       <h1>Warthog Network Defi</h1>
@@ -243,7 +261,43 @@ const WalletSetup = () => {
           <>
             <div className="form-group">
               <label>Upload Wallet File:</label>
-              <input type="file" accept=".txt" onChange={(e) => setUploadedFile(e.target.files[0])} className="input" />
+              <div
+                className={`rounded-xl border border-dashed p-5 text-center transition-colors ${
+                  walletFileDragActive
+                    ? 'border-[#FDB913] bg-[#FDB913]/10'
+                    : 'border-zinc-600 bg-zinc-900/40'
+                }`}
+                onDragEnter={(e) => { e.preventDefault(); setWalletFileDragActive(true); }}
+                onDragOver={(e) => { e.preventDefault(); setWalletFileDragActive(true); }}
+                onDragLeave={(e) => { e.preventDefault(); setWalletFileDragActive(false); }}
+                onDrop={handleWalletFileDrop}
+              >
+                <input
+                  id="wallet-file-input"
+                  type="file"
+                  accept=".txt,text/plain"
+                  onChange={handleWalletFileInput}
+                  className="sr-only"
+                />
+                {uploadedFile ? (
+                  <div className="space-y-2">
+                    <p className="text-sm text-[#FDB913] font-medium break-all">{uploadedFile.name}</p>
+                    <label htmlFor="wallet-file-input" className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1 cursor-pointer inline-block">
+                      Choose a different file
+                    </label>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <p className="text-sm text-zinc-300">Drag your encrypted wallet file here</p>
+                    <label htmlFor="wallet-file-input" className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1 cursor-pointer inline-block">
+                      Browse for file
+                    </label>
+                  </div>
+                )}
+              </div>
+              <p className="text-xs text-zinc-500 mt-2">
+                If the file picker shows a missing USB path, plug the drive back in or open your home folder in the picker and try again. Drag-and-drop also works.
+              </p>
             </div>
             <div className="form-group">
               <label>Password:</label>

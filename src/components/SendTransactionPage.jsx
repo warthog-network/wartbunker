@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
+import SendAssetCard from './SendAssetCard.jsx';
 import {
   createWarthogApi,
   formatSubmitResult,
@@ -20,6 +21,9 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
     setCurrentTab,
     isSigningUnlocked,
     isSessionLocked,
+    sendAssetPrefill,
+    setSendAssetPrefill,
+    isTestnetNode,
   } = useWallet();
 
   const wallet = propWallet || contextWallet;
@@ -37,6 +41,20 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
   const [localError, setLocalError] = useState(null);
   const [showRawJson, setShowRawJson] = useState(false);
   const [sentNonce, setSentNonce] = useState(null); // ← NEW: Remember the nonce we actually sent
+  const [activeSendTab, setActiveSendTab] = useState('wart');
+
+  const showSendAsset = isTestnetNode(selectedNode);
+
+  const sendTabs = [
+    { id: 'wart', label: 'Send WART' },
+    { id: 'asset', label: 'Send Asset' },
+  ];
+
+  useEffect(() => {
+    if (sendAssetPrefill) {
+      setActiveSendTab('asset');
+    }
+  }, [sendAssetPrefill]);
 
   useEffect(() => {
     const fetchOriginId = async () => {
@@ -230,14 +248,47 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
     if (e.key === 'Enter' && !isLoading && toAddress && amount) handleSend();
   };
 
+  const clearSendAssetPrefill = useCallback(() => {
+    setSendAssetPrefill(null);
+  }, [setSendAssetPrefill]);
+
+  const resolvedSendTab = showSendAsset && sendTabs.some((tab) => tab.id === activeSendTab)
+    ? activeSendTab
+    : 'wart';
+
   return (
     <section className="!p-0 !bg-transparent !border-0 !shadow-none">
       <div className="mb-5">
-        <h2 className="!mb-1">Send WART</h2>
-        <p className="text-xs text-zinc-500">Transfer WART to another address on the connected node</p>
+        <h2 className="!mb-1">Send</h2>
+        <p className="text-xs text-zinc-500">
+          Transfer WART{showSendAsset ? ' or assets' : ''} to another address on the connected node
+        </p>
       </div>
 
+      {showSendAsset && (
+        <div className="dex-tabs flex w-full gap-1 p-1 mb-6 bg-zinc-950 border border-zinc-800 rounded-xl overflow-x-auto scrollbar-hide">
+          {sendTabs.map((tab) => {
+            const isActive = resolvedSendTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveSendTab(tab.id)}
+                className={`dex-tab-btn whitespace-nowrap${isActive ? ' dex-tab-btn--active' : ''}`}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {resolvedSendTab === 'wart' && (
       <div className="bg-zinc-950 border border-zinc-700 rounded-2xl p-5 space-y-4">
+        <div>
+          <h3 className="text-base font-semibold text-white mb-0.5">Send WART</h3>
+          <p className="text-xs text-zinc-500">Native WART transfer</p>
+        </div>
         <div className="flex items-center justify-between text-xs">
           <span className="text-zinc-500">Available balance</span>
           <span className="font-mono text-white tabular-nums">
@@ -319,8 +370,18 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
           {isLoading ? 'Signing & Sending…' : 'Send WART'}
         </button>
       </div>
+      )}
 
-      {result && (
+      {resolvedSendTab === 'asset' && showSendAsset && (
+        <SendAssetCard
+          wallet={wallet}
+          selectedNode={selectedNode}
+          prefill={sendAssetPrefill}
+          onPrefillConsumed={clearSendAssetPrefill}
+        />
+      )}
+
+      {resolvedSendTab === 'wart' && result && (
         <button
           type="button"
           onClick={() => setCurrentTab?.('history')}
@@ -330,14 +391,14 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
         </button>
       )}
 
-      {localError && (
+      {resolvedSendTab === 'wart' && localError && (
         <div className="error mt-4">
           <strong>Error:</strong> {localError}
         </div>
       )}
 
       {/* Stylized Transaction Result Card */}
-      {result && renderTransactionCard()}
+      {resolvedSendTab === 'wart' && result && renderTransactionCard()}
     </section>
   );
 };

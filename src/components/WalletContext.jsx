@@ -42,6 +42,10 @@ export const WalletProvider = ({ children }) => {
   const [failedTransactions, setFailedTransactions] = useState([]);
   const [error, setError] = useState(null);
   const [currentTab, setCurrentTab] = useState('overview');
+  const [sendAssetPrefill, setSendAssetPrefill] = useState(null);
+  const [dexPoolPrefill, setDexPoolPrefill] = useState(null);
+  const [overviewLiquidityPositions, setOverviewLiquidityPositions] = useState(null);
+  const [overviewLiquidityExpanded, setOverviewLiquidityExpanded] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [currentWalletName, setCurrentWalletName] = useState(null);
@@ -89,6 +93,11 @@ export const WalletProvider = ({ children }) => {
       clearWalletSession();
     }
   }, []);
+
+  useEffect(() => {
+    setOverviewLiquidityPositions(null);
+    setOverviewLiquidityExpanded(false);
+  }, [wallet?.address]);
 
   const activateWalletSession = useCallback(async (fullWallet, walletName = null) => {
     const normalizedWallet = await normalizeDecryptedWallet(fullWallet);
@@ -326,6 +335,31 @@ export const WalletProvider = ({ children }) => {
     setAssetBalances(prev => prev.filter(a => a.hash.toLowerCase() !== normalizedHash));
   };
 
+  const reorderWatchedAssets = useCallback((fromIndex, toIndex) => {
+    if (!wallet?.address || fromIndex === toIndex) return;
+    if (fromIndex < 0 || toIndex < 0) return;
+
+    setWatchedAssets((prevWatched) => {
+      if (fromIndex >= prevWatched.length || toIndex >= prevWatched.length) {
+        return prevWatched;
+      }
+
+      const nextWatched = [...prevWatched];
+      const [moved] = nextWatched.splice(fromIndex, 1);
+      nextWatched.splice(toIndex, 0, moved);
+      saveWatchedAssets(wallet.address, nextWatched);
+
+      setAssetBalances((prevBalances) => {
+        const byHash = new Map(prevBalances.map((a) => [a.hash.toLowerCase(), a]));
+        return nextWatched
+          .map((w) => byHash.get(w.hash.toLowerCase()))
+          .filter(Boolean);
+      });
+
+      return nextWatched;
+    });
+  }, [wallet?.address]);
+
   const clearWatchedAssets = () => {
     if (!wallet?.address) return;
     const key = getWatchedAssetsKey(wallet.address);
@@ -487,6 +521,14 @@ export const WalletProvider = ({ children }) => {
     setError,
     currentTab,
     setCurrentTab,
+    sendAssetPrefill,
+    setSendAssetPrefill,
+    dexPoolPrefill,
+    setDexPoolPrefill,
+    overviewLiquidityPositions,
+    setOverviewLiquidityPositions,
+    overviewLiquidityExpanded,
+    setOverviewLiquidityExpanded,
     isLoggedIn,
     setIsLoggedIn,
     currentWalletName,
@@ -500,6 +542,7 @@ export const WalletProvider = ({ children }) => {
     watchedAssets,
     addWatchedAsset,
     removeWatchedAsset,
+    reorderWatchedAssets,
     clearWatchedAssets,
     performFakeMine,
     isFakeMineAllowed,

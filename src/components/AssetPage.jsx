@@ -11,6 +11,7 @@ import {
 } from '../utils/warthogClient.js';
 import {
   CHART_INTERVALS,
+  fetchAssetLivePrices,
   loadDexStylePriceChart,
   normalizeChartAssetHash,
 } from '../utils/dexPrice.js';
@@ -27,6 +28,8 @@ const AssetCardWithChart = ({ asset, isCompact, selectedNode, onCopyHash, chartP
   const [chartMode, setChartMode] = useState('candles');
   const [chartInterval, setChartInterval] = useState('1h');
   const [chartRefreshKey, setChartRefreshKey] = useState(0);
+  const [tradePrice, setTradePrice] = useState(null);
+  const [poolSpot, setPoolSpot] = useState(null);
   const chartLoadGenRef = useRef(0);
 
   const handleRefreshChart = () => {
@@ -65,14 +68,36 @@ const AssetCardWithChart = ({ asset, isCompact, selectedNode, onCopyHash, chartP
 
     const loadGen = ++chartLoadGenRef.current;
 
+    const isRefresh = chartRefreshKey > 0;
+
     setChartLoading(true);
     setChartPoints([]);
     setChartError(null);
     setChartFallbackNote(null);
+    setTradePrice(null);
+    setPoolSpot(null);
 
     (async () => {
       try {
         const api = await createWarthogApi(selectedNode);
+        const chartResult = await loadDexStylePriceChart(api, hash, {
+          n: 100,
+          mode: 'candles',
+          interval: '1h',
+          allowFallback: isRefresh,
+          liveAugment: isRefresh,
+          priority: chartPriority || isRefresh,
+        });
+
+        if (loadGen !== chartLoadGenRef.current) return;
+
+        let livePrices = { latestTradePrice: null, poolSpot: null };
+        if (isRefresh) {
+          livePrices = await fetchAssetLivePrices(api, hash);
+        }
+
+        if (loadGen !== chartLoadGenRef.current) return;
+
         const {
           points,
           error,
@@ -80,28 +105,30 @@ const AssetCardWithChart = ({ asset, isCompact, selectedNode, onCopyHash, chartP
           mode,
           interval,
           liveAugment,
-        } = await loadDexStylePriceChart(api, hash, {
-          n: 100,
-          mode: 'candles',
-          interval: '1h',
-          allowFallback: false,
-          liveAugment: false,
-          priority: chartPriority || chartRefreshKey > 0,
-        });
+          poolSpotOnly,
+          poolSpot: chartPoolSpot,
+        } = chartResult;
 
-        if (loadGen !== chartLoadGenRef.current) return;
+        if (isRefresh) {
+          setTradePrice(livePrices.latestTradePrice);
+          setPoolSpot(livePrices.poolSpot ?? chartPoolSpot ?? null);
+        }
 
         setChartPoints(points);
         setChartError(points.length ? null : error);
         setChartMode(mode);
         setChartInterval(interval);
-        if (liveAugment) {
+        if (poolSpotOnly) {
           setChartFallbackNote(
-            'Includes recent matches and pool spot — node chart index can lag a few blocks behind.',
+            'Chart index has not synced this asset yet — showing current pool spot price from DEX reserves.',
+          );
+        } else if (liveAugment) {
+          setChartFallbackNote(
+            'Latest candle includes recent matches and pool spot — node chart index can lag a few blocks behind.',
           );
         } else if (usedFallback) {
           setChartFallbackNote(
-            'Chart API unavailable — showing DEX match trades from recent blocks.',
+            'Chart history unavailable — showing DEX match trades from recent blocks.',
           );
         }
       } catch (err) {
@@ -129,7 +156,7 @@ const AssetCardWithChart = ({ asset, isCompact, selectedNode, onCopyHash, chartP
   const hash = asset.hash || '';
 
   return (
-    <div className="bg-zinc-950 border border-zinc-700 rounded-2xl overflow-hidden">
+    <div className="w-full bg-zinc-950 border border-zinc-700 rounded-2xl overflow-hidden">
       <div className={isCompact ? 'p-4' : 'p-5'}>
         <div className="flex items-start justify-between mb-4">
           <div className="flex items-center gap-3">
@@ -224,6 +251,9 @@ const AssetCardWithChart = ({ asset, isCompact, selectedNode, onCopyHash, chartP
             loading={chartLoading}
             error={chartError}
             embedded
+            tradePrice={tradePrice}
+            poolSpot={poolSpot}
+            candleInterval={chartInterval}
           />
         )}
       </div>
@@ -248,6 +278,7 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const [results, setResults] = useState({});
   const [loading, setLoading] = useState({});
   const [activeTab, setActiveTab] = useState('create');
+  const [searchLookupMode, setSearchLookupMode] = useState('name');
 
   // ==================== SMART NONCE HANDLING ====================
   const getSmartNonce = () => {
@@ -416,76 +447,8 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     }
   };
 
-  // ==================== TRANSFER ASSET ====================
-  const handleTransferAsset = async () => {
-    const assetIdRaw = document.getElementById('transferAssetId').value.trim();
-    const recipientRaw = document.getElementById('transferRecipient').value.trim();
-    const amountStr = document.getElementById('transferAmount').value.trim();
-    const decimalsStr = document.getElementById('transferDecimals')?.value || '8';
-    const decimals = parseInt(decimalsStr) || 8;
-    const isLiquidityEl = document.getElementById('isLiquidity');
-    const isLiquidity = isLiquidityEl ? isLiquidityEl.checked : false;
-
-    const nonceOverrideRaw = document.getElementById('transferNonceOverride')?.value.trim();
-    let nonceId = getSmartNonce();
-    if (nonceOverrideRaw !== '') {
-      const parsed = parseInt(nonceOverrideRaw);
-      if (!isNaN(parsed)) {
-        nonceId = parsed;
-      }
-    }
-
-    if (!assetIdRaw || !recipientRaw || !amountStr) {
-      toast.error('All transfer fields are required');
-      return;
-    }
-    if (!isSigningUnlocked) {
-      toast.error(isSessionLocked ? 'Unlock your wallet to transfer assets' : 'Wallet not loaded. Please log in again.');
-      return;
-    }
-
-    if (!isValidAssetHash(assetIdRaw)) {
-      toast.error('Asset hash must be exactly 64 hex characters');
-      return;
-    }
-
-    setLoading(prev => ({ ...prev, transferAsset: true }));
-    setResults(prev => ({ ...prev, transferAsset: null }));
-
-    try {
-      const api = await createWarthogApi(selectedNode);
-      const { nonce, data } = await signAndSubmitTransaction(api, {
-        nonceId,
-        buildSpec: {
-          type: 'ASSET_TRANSFER',
-          assetHash: assetIdRaw,
-          toAddress: recipientRaw,
-          amount: amountStr,
-          decimals,
-          isLiquidity,
-        },
-      });
-
-      setResults(prev => ({ ...prev, transferAsset: formatSubmitResult(data) }));
-      updateNonceAfterSuccess(nonce);
-
-      if (document.getElementById('transferNonceOverride')) {
-        document.getElementById('transferNonceOverride').value = '';
-      }
-
-      toast.success('Asset transfer sent — check History tab');
-    } catch (err) {
-      console.error(err);
-      setResults(prev => ({ ...prev, transferAsset: formatSubmitError(err.message || 'Unknown error') }));
-      toast.error('Transfer failed: ' + (err.message || 'Unknown error'));
-    } finally {
-      setLoading(prev => ({ ...prev, transferAsset: false }));
-    }
-  };
-
   const tabs = [
     { id: 'create', label: 'Create Asset' },
-    { id: 'transfer', label: 'Transfer Asset' },
     { id: 'search', label: 'Search & Lookup' },
   ];
 
@@ -493,24 +456,23 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     <div className="space-y-8">
       <h2 className="text-3xl font-bold">Asset Tools</h2>
       <p className="mb-6 text-gray-600 dark:text-gray-400">
-        Create, transfer, search, and look up assets on the DeFi testnet.
+        Create, search, and look up assets on the DeFi testnet. Send assets from the Send tab.
       </p>
 
       {/* SUB TABS - consistent with DexPage styling */}
-      <div className="dex-tabs flex w-full gap-1 p-1 mb-6 bg-zinc-950 border border-zinc-800 rounded-xl overflow-x-auto scrollbar-hide">
-        {tabs.map((tab) => {
-          const isActive = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-              className={`dex-tab-btn whitespace-nowrap${isActive ? ' dex-tab-btn--active' : ''}`}
-            >
-              {tab.label}
-            </button>
-          );
-        })}
+      <div className="flex items-center gap-2 mb-6 flex-wrap">
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setActiveTab(tab.id)}
+            className={`compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1 whitespace-nowrap${
+              activeTab === tab.id ? ' compact-btn--active' : ''
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
       {/* CREATE ASSET TAB */}
@@ -540,7 +502,7 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
               <button
                 onClick={handleCreateAsset}
                 disabled={loading.createAsset}
-                className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-2xl transition-all"
+                className="compact-btn hover:!text-[#FDB913] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
               >
                 {loading.createAsset ? 'Creating Asset...' : 'Create Asset'}
               </button>
@@ -550,155 +512,204 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
         </section>
       )}
 
-      {/* TRANSFER ASSET TAB */}
-      {activeTab === 'transfer' && (
-        <section className="border-2 border-cyan-500 rounded-3xl p-8 bg-cyan-50 dark:bg-cyan-950 shadow-xl">
-          <h3 className="text-2xl font-bold mb-6 text-cyan-700 dark:text-cyan-300">Transfer Asset</h3>
-          <p className="text-sm text-cyan-600 dark:text-cyan-400 mb-4">
-            Smart nonce is used by default. Use the Nonce Override field only when you get "Duplicate nonce" errors.
-          </p>
-          <div>
-              <label className="block text-sm font-medium mb-2">Asset Hash (64 hex chars, no 0x)</label>
-              <input id="transferAssetId" placeholder="e.g. b92b88491b478c22fbc5b3f03f8b5539555ff2680944a8c847a1eb90ef69894e" className="input mb-3" />
-
-              <label className="block text-sm font-medium mb-2">Decimals / Precision</label>
-              <input id="transferDecimals" type="number" defaultValue="8" className="input mb-1" />
-
-              <div className="flex items-center mb-3">
-                <input type="checkbox" id="isLiquidity" className="mr-2 h-4 w-4 accent-blue-600" />
-                <label htmlFor="isLiquidity" className="text-sm font-medium text-gray-300">This is a Liquidity Token (force precision 8)</label>
-              </div>
-
-              <label className="block text-sm font-medium mb-2">Recipient Address</label>
-              <input id="transferRecipient" placeholder="recipient address (no 0x)" className="input mb-3" />
-
-              <label className="block text-sm font-medium mb-2">Amount (in token units)</label>
-              <input id="transferAmount" type="number" step="any" placeholder="e.g. 1.5" className="input mb-3" />
-
-              <label className="block text-sm font-medium mb-2 text-amber-400">
-                Nonce Override (only use if you get "Duplicate nonce")
-              </label>
-              <input 
-                id="transferNonceOverride" 
-                type="number" 
-                placeholder="Leave empty for auto" 
-                className="input mb-6" 
-              />
-
-              <button
-                onClick={handleTransferAsset}
-                disabled={loading.transferAsset}
-                className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-2xl transition-all"
-              >
-                {loading.transferAsset ? 'Transferring...' : 'Transfer Asset'}
-              </button>
-
-              {results.transferAsset && renderTransactionResult(results.transferAsset, 'Asset Transfer')}
-          </div>
-        </section>
-      )}
-
       {/* SEARCH & LOOKUP TAB */}
       {activeTab === 'search' && (
-        <section className="border-2 border-violet-500 rounded-3xl p-8 bg-violet-50 dark:bg-violet-950 shadow-xl">
-          <h3 className="text-2xl font-bold mb-6 text-violet-700 dark:text-violet-300">Asset Search & Lookup</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <div>
-              <label className="block text-sm font-medium mb-2">Asset Complete (by name)</label>
-              <input id="namePrefix" placeholder="namePrefix" className="input mb-3" />
-              <input id="hashPrefix" placeholder="hashPrefix (optional)" className="input mb-4" />
-              <button
-                onClick={() => {
-                  const name = document.getElementById('namePrefix').value;
-                  const hash = document.getElementById('hashPrefix').value;
-                  let path = `asset/complete?namePrefix=${encodeURIComponent(name)}`;
-                  if (hash) path += `&hashPrefix=${encodeURIComponent(hash)}`;
-                  query('assetComplete', path);
-                }}
-                disabled={loading.assetComplete}
-                className="px-6 py-3 w-full bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-2xl transition-colors"
-              >
-                {loading.assetComplete ? 'Querying...' : 'Query'}
-              </button>
+        <div className="space-y-4">
+          <section className="border-2 border-violet-500 rounded-3xl p-8 bg-violet-50 dark:bg-violet-950 shadow-xl">
+            <h3 className="text-2xl font-bold mb-2 text-violet-700 dark:text-violet-300">Asset Search & Lookup</h3>
+            <p className="text-sm text-violet-600/80 dark:text-violet-400/80 mb-5">
+              Find assets by name prefix, hash prefix, or exact 64-character hash.
+            </p>
 
-              {results.assetComplete && results.assetComplete.code === 0 && results.assetComplete.data?.matches?.length > 0 && (
-                <div className="mt-6">
-                  <div className="flex items-center justify-between mb-3 px-1">
-                    <div className="text-sm text-zinc-400">
-                      Found <span className="font-semibold text-white">{results.assetComplete.data.matches.length}</span> match{results.assetComplete.data.matches.length !== 1 ? 'es' : ''} for “{results.assetComplete.data.namePrefix}”
-                    </div>
-                  </div>
-                  <div className="space-y-3">
-                    {results.assetComplete.data.matches.map((asset) => (
-                      <AssetCardWithChart
-                        key={asset.hash || asset.id}
-                        asset={asset}
-                        isCompact
-                        selectedNode={selectedNode}
-                        onCopyHash={copyToClipboard}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {results.assetComplete && results.assetComplete.code === 0 && results.assetComplete.data?.matches?.length === 0 && (
-                <div className="mt-6 p-4 bg-zinc-950 border border-zinc-700 rounded-2xl text-center text-sm text-zinc-400">
-                  No assets found matching your search.
-                </div>
-              )}
-
-              {results.assetComplete && results.assetComplete.error && (
-                <div className="mt-6 p-4 bg-red-950/40 border border-red-700 rounded-2xl text-sm text-red-400">
-                  {results.assetComplete.error}
-                </div>
-              )}
+            <div className="flex items-center gap-2 mb-5 flex-wrap">
+              {[
+                { id: 'name', label: 'Search by name' },
+                { id: 'hashMatch', label: 'Hash prefix match' },
+                { id: 'lookup', label: 'Lookup by hash' },
+              ].map((mode) => (
+                <button
+                  key={mode.id}
+                  type="button"
+                  onClick={() => {
+                    setSearchLookupMode(mode.id);
+                    setResults((prev) => ({
+                      ...prev,
+                      assetComplete: mode.id === 'lookup' ? undefined : prev.assetComplete,
+                      assetLookup: mode.id !== 'lookup' ? undefined : prev.assetLookup,
+                    }));
+                  }}
+                  className={`compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1 whitespace-nowrap${
+                    searchLookupMode === mode.id ? ' compact-btn--active' : ''
+                  }`}
+                >
+                  {mode.label}
+                </button>
+              ))}
             </div>
 
-            <div>
-              <label className="block text-sm font-medium mb-2">Lookup Asset (by hash)</label>
-              <input id="assetLookup" placeholder="asset hash (64 hex)" className="input mb-4" />
-              <button
-                onClick={() => {
-                  const val = document.getElementById('assetLookup').value.trim();
-                  const clean = val.replace(/^0x/i, '').toLowerCase();
-                  if (!isValidAssetHash(clean)) {
-                    toast.error('Asset hash must be exactly 64 hex characters');
-                    return;
-                  }
-                  query('assetLookup', `asset/lookup/${encodeURIComponent(clean)}`);
-                }}
-                disabled={loading.assetLookup}
-                className="px-6 py-3 w-full bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-2xl transition-colors"
-              >
-                {loading.assetLookup ? 'Querying...' : 'Query'}
-              </button>
+            {searchLookupMode === 'name' && (
+              <div className="space-y-3 max-w-xl">
+                <div className="form-group !mb-0">
+                  <label>Name prefix <span className="text-zinc-500 font-normal">(leave empty to list all)</span></label>
+                  <input id="namePrefix" placeholder="e.g. BUN — or leave blank for all assets" className="input" />
+                </div>
+                <div className="form-group !mb-0">
+                  <label>Hash prefix <span className="text-zinc-500 font-normal">(optional)</span></label>
+                  <input id="nameHashPrefix" placeholder="First hex chars of asset hash" className="input font-mono text-sm" />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const name = document.getElementById('namePrefix').value.trim();
+                    const hash = document.getElementById('nameHashPrefix').value.trim().replace(/^0x/i, '');
+                    let path = `asset/complete?namePrefix=${encodeURIComponent(name)}`;
+                    if (hash) path += `&hashPrefix=${encodeURIComponent(hash)}`;
+                    query('assetComplete', path);
+                  }}
+                  disabled={loading.assetComplete}
+                  className="compact-btn hover:!text-[#FDB913] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
+                >
+                  {loading.assetComplete ? 'Querying…' : 'Query'}
+                </button>
+              </div>
+            )}
 
-              {results.assetLookup && results.assetLookup.code === 0 && results.assetLookup.data && (
-                <div className="mt-6">
-                  <AssetCardWithChart
-                    asset={results.assetLookup.data}
-                    chartPriority
-                    selectedNode={selectedNode}
-                    onCopyHash={copyToClipboard}
+            {searchLookupMode === 'hashMatch' && (
+              <div className="space-y-3 max-w-xl">
+                <div className="form-group !mb-0">
+                  <label>Hash prefix</label>
+                  <input
+                    id="hashMatchPrefix"
+                    placeholder="e.g. 67be5795"
+                    className="input font-mono text-sm"
                   />
                 </div>
-              )}
-
-              {results.assetLookup && results.assetLookup.code === 0 && !results.assetLookup.data && (
-                <div className="mt-6 p-4 bg-zinc-950 border border-zinc-700 rounded-2xl text-center text-sm text-zinc-400">
-                  Asset not found.
+                <div className="form-group !mb-0">
+                  <label>Name prefix <span className="text-zinc-500 font-normal">(optional filter)</span></label>
+                  <input id="hashMatchNamePrefix" placeholder="Narrow by asset name" className="input" />
                 </div>
-              )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const hashPrefix = document.getElementById('hashMatchPrefix').value.trim().replace(/^0x/i, '');
+                    if (!hashPrefix) {
+                      toast.error('Enter a hash prefix');
+                      return;
+                    }
+                    const namePrefix = document.getElementById('hashMatchNamePrefix').value.trim();
+                    let path = `asset/complete?hashPrefix=${encodeURIComponent(hashPrefix)}`;
+                    if (namePrefix) {
+                      path += `&namePrefix=${encodeURIComponent(namePrefix)}`;
+                    } else {
+                      path += '&namePrefix=';
+                    }
+                    query('assetComplete', path);
+                  }}
+                  disabled={loading.assetComplete}
+                  className="compact-btn hover:!text-[#FDB913] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
+                >
+                  {loading.assetComplete ? 'Querying…' : 'Query'}
+                </button>
+              </div>
+            )}
 
-              {results.assetLookup && results.assetLookup.error && (
-                <div className="mt-6 p-4 bg-red-950/40 border border-red-700 rounded-2xl text-sm text-red-400">
-                  {results.assetLookup.error}
+            {searchLookupMode === 'lookup' && (
+              <div className="space-y-3 max-w-xl">
+                <div className="form-group !mb-0">
+                  <label>Asset hash</label>
+                  <input
+                    id="assetLookup"
+                    placeholder="64 hex characters (no 0x)"
+                    className="input font-mono text-sm"
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter') return;
+                      const val = document.getElementById('assetLookup').value.trim();
+                      const clean = val.replace(/^0x/i, '').toLowerCase();
+                      if (!isValidAssetHash(clean)) {
+                        toast.error('Asset hash must be exactly 64 hex characters');
+                        return;
+                      }
+                      query('assetLookup', `asset/lookup/${encodeURIComponent(clean)}`);
+                    }}
+                  />
                 </div>
-              )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const val = document.getElementById('assetLookup').value.trim();
+                    const clean = val.replace(/^0x/i, '').toLowerCase();
+                    if (!isValidAssetHash(clean)) {
+                      toast.error('Asset hash must be exactly 64 hex characters');
+                      return;
+                    }
+                    query('assetLookup', `asset/lookup/${encodeURIComponent(clean)}`);
+                  }}
+                  disabled={loading.assetLookup}
+                  className="compact-btn hover:!text-[#FDB913] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
+                >
+                  {loading.assetLookup ? 'Querying…' : 'Query'}
+                </button>
+              </div>
+            )}
+          </section>
+
+          {searchLookupMode !== 'lookup' && results.assetComplete && results.assetComplete.code === 0 && results.assetComplete.data?.matches?.length > 0 && (
+            <div className="space-y-3 w-full">
+              <div className="text-sm text-zinc-400 px-1">
+                Found <span className="font-semibold text-white">{results.assetComplete.data.matches.length}</span> match{results.assetComplete.data.matches.length !== 1 ? 'es' : ''}
+                {results.assetComplete.data.namePrefix
+                  ? ` for “${results.assetComplete.data.namePrefix}”`
+                  : results.assetComplete.data.hashPrefix
+                    ? ` with hash prefix “${results.assetComplete.data.hashPrefix}”`
+                    : ' (all assets)'}
+              </div>
+              {results.assetComplete.data.matches.map((asset) => (
+                <AssetCardWithChart
+                  key={asset.hash || asset.id}
+                  asset={asset}
+                  isCompact
+                  selectedNode={selectedNode}
+                  onCopyHash={copyToClipboard}
+                />
+              ))}
             </div>
-          </div>
-        </section>
+          )}
+
+          {searchLookupMode !== 'lookup' && results.assetComplete && results.assetComplete.code === 0 && results.assetComplete.data?.matches?.length === 0 && (
+            <div className="p-4 bg-zinc-950 border border-zinc-700 rounded-2xl text-center text-sm text-zinc-400 w-full">
+              No assets found matching your search.
+            </div>
+          )}
+
+          {searchLookupMode !== 'lookup' && results.assetComplete && results.assetComplete.error && (
+            <div className="p-4 bg-red-950/40 border border-red-700 rounded-2xl text-sm text-red-400 w-full">
+              {results.assetComplete.error}
+            </div>
+          )}
+
+          {searchLookupMode === 'lookup' && results.assetLookup && results.assetLookup.code === 0 && results.assetLookup.data && (
+            <div className="w-full">
+              <AssetCardWithChart
+                asset={results.assetLookup.data}
+                chartPriority
+                selectedNode={selectedNode}
+                onCopyHash={copyToClipboard}
+              />
+            </div>
+          )}
+
+          {searchLookupMode === 'lookup' && results.assetLookup && results.assetLookup.code === 0 && !results.assetLookup.data && (
+            <div className="p-4 bg-zinc-950 border border-zinc-700 rounded-2xl text-center text-sm text-zinc-400 w-full">
+              Asset not found.
+            </div>
+          )}
+
+          {searchLookupMode === 'lookup' && results.assetLookup && results.assetLookup.error && (
+            <div className="p-4 bg-red-950/40 border border-red-700 rounded-2xl text-sm text-red-400 w-full">
+              {results.assetLookup.error}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

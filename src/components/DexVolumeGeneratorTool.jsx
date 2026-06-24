@@ -297,11 +297,9 @@ const DexVolumeGeneratorTool = ({ selectedNode: propSelectedNode, wallet: propWa
 
   return (
     <>
-      <section className="border-2 border-amber-500 rounded-3xl p-8 bg-amber-50 dark:bg-amber-950 shadow-xl">
-        <h3 className="text-xl font-semibold mb-2 text-amber-700 dark:text-amber-300">
-          DEX Volume Generator
-        </h3>
-        <p className="text-sm text-amber-700/80 dark:text-amber-400 mb-6">
+      <div className="bg-zinc-950 border border-zinc-700 rounded-2xl p-5">
+        <h3 className="text-base font-semibold text-white mb-1">DEX Volume Generator</h3>
+        <p className="text-sm text-zinc-400 mb-4">
           Place stepped limit orders to generate DEX match volume and price history.
           Buy orders match against pool liquidity; sell orders require asset balance in your wallet.
           Testnet only — use responsibly.
@@ -362,11 +360,11 @@ const DexVolumeGeneratorTool = ({ selectedNode: propSelectedNode, wallet: propWa
             </div>
           </div>
 
-          <div className="flex flex-wrap gap-3">
+          <div className="flex flex-wrap gap-2">
             <button
               type="button"
               onClick={applyPoolSpotPrice}
-              className="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl text-sm font-medium transition-colors"
+              className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1"
             >
               Use pool spot price
             </button>
@@ -374,7 +372,7 @@ const DexVolumeGeneratorTool = ({ selectedNode: propSelectedNode, wallet: propWa
               type="button"
               onClick={previewVolumePlan}
               disabled={loading.volumePreview || !account}
-              className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-sm font-medium transition-colors disabled:bg-gray-500"
+              className="compact-btn hover:!text-[#FDB913] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
             >
               {loading.volumePreview ? 'Loading…' : 'Preview plan'}
             </button>
@@ -382,7 +380,7 @@ const DexVolumeGeneratorTool = ({ selectedNode: propSelectedNode, wallet: propWa
               type="button"
               onClick={requestVolumeRun}
               disabled={loading.volumeRun || loading.volumeConfirm || !account}
-              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-medium transition-colors disabled:bg-gray-500"
+              className="compact-btn hover:!text-[#FDB913] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
             >
               {loading.volumeRun
                 ? 'Submitting orders…'
@@ -393,8 +391,8 @@ const DexVolumeGeneratorTool = ({ selectedNode: propSelectedNode, wallet: propWa
           </div>
 
           {volumeContext && (
-            <div className="p-4 bg-zinc-950/60 border border-amber-800/50 rounded-2xl text-sm space-y-1">
-              <div className="font-semibold text-amber-300">{volumeContext.assetName} market snapshot</div>
+            <div className="p-4 bg-zinc-900/60 border border-zinc-700 rounded-2xl text-sm space-y-1">
+              <div className="font-semibold text-white">{volumeContext.assetName} market snapshot</div>
               <div className="text-zinc-300">
                 Your balance: <span className="font-mono text-white">{formatBalance(volumeContext.balances.wart)}</span> WART
                 {' · '}
@@ -413,11 +411,11 @@ const DexVolumeGeneratorTool = ({ selectedNode: propSelectedNode, wallet: propWa
           )}
 
           {volumePlan.length > 0 && (
-            <div className="border border-amber-800/40 rounded-2xl overflow-hidden">
-              <div className="px-4 py-2 bg-amber-950/50 text-sm text-amber-200 flex justify-between items-center">
+            <div className="border border-zinc-700 rounded-2xl overflow-hidden">
+              <div className="px-4 py-2 bg-zinc-900 text-sm text-zinc-300 flex justify-between items-center">
                 <span>Order plan ({volumePlan.length} orders)</span>
                 {volumeEstimate && (
-                  <span className="text-xs text-amber-400/80 font-mono">
+                  <span className="text-xs text-zinc-500 font-mono">
                     ~{volumeEstimate.total.toFixed(2)} WART + fees
                   </span>
                 )}
@@ -460,7 +458,7 @@ const DexVolumeGeneratorTool = ({ selectedNode: propSelectedNode, wallet: propWa
                     key={idx}
                     className={
                       log.status === 'ok'
-                        ? 'text-emerald-400'
+                        ? 'text-[#FDB913]'
                         : log.status === 'skipped'
                           ? 'text-zinc-500'
                           : 'text-red-400'
@@ -477,12 +475,12 @@ const DexVolumeGeneratorTool = ({ selectedNode: propSelectedNode, wallet: propWa
           )}
 
           {!account && (
-            <p className="text-sm text-amber-600 dark:text-amber-400 italic">
+            <p className="text-sm text-zinc-500 italic">
               Unlock your wallet to preview or submit volume orders.
             </p>
           )}
         </div>
-      </section>
+      </div>
 
       <ConfirmDialog
         open={volumeConfirmOpen}

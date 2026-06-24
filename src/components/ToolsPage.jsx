@@ -116,7 +116,7 @@ const ToolsPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
           <button
             onClick={handleValidateAddress}
             disabled={isValidating || !address}
-            className="wallet-action-btn disabled:opacity-60"
+            className="compact-btn hover:!text-[#FDB913] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
           >
             {isValidating ? 'Validating…' : 'Validate Address'}
           </button>
@@ -124,13 +124,13 @@ const ToolsPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
             <div
               className={`result mt-4 border ${
                 validateResult.valid
-                  ? 'border-emerald-800/60 bg-emerald-950/20'
+                  ? 'border-zinc-700 bg-zinc-900/60'
                   : 'border-red-900/60 bg-red-950/20'
               }`}
             >
               {validateResult.valid ? (
                 <>
-                  <p className="text-emerald-400 font-medium mb-3">{validateResult.message}</p>
+                  <p className="text-[#FDB913] font-medium mb-3">{validateResult.message}</p>
                   <div className="text-[10px] text-zinc-500 mb-1">Address</div>
                   <span
                     className="wallet-address block cursor-pointer hover:opacity-90 transition-opacity"
@@ -158,14 +158,14 @@ const ToolsPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
 
       {resolvedTool === 'mine' && (
         <div className="bg-zinc-950 border border-zinc-700 rounded-2xl p-5">
-          <h3 className="text-base font-semibold text-emerald-400 mb-1">Mine Block</h3>
+          <h3 className="text-base font-semibold text-white mb-1">Mine Block</h3>
           <p className="text-sm text-zinc-400 mb-4">
             Local dev helper — mines a block on your localhost node to confirm pending mempool transactions.
           </p>
           <button
             onClick={handleMineNow}
             disabled={!isFakeMineAllowed(selectedNode) || isMiningNow}
-            className="w-full py-3 font-semibold rounded-2xl transition-all bg-orange-500 hover:bg-orange-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+            className="compact-btn hover:!text-[#FDB913] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
           >
             {isMiningNow ? 'Mining...' : '⛏️ Mine Now'}
           </button>

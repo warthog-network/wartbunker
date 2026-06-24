@@ -622,6 +622,17 @@
   box-shadow: none !important;
 }
 
+.compact-btn--square {
+  width: 1.5rem !important;
+  height: 1.5rem !important;
+  min-width: 1.5rem !important;
+  padding: 0 !important;
+  border-radius: 0.375rem !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
 /* Saved wallet picker cards on login — override .container button orange primary */
 .saved-wallet-card {
   width: 100% !important;

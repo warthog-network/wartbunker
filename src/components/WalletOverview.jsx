@@ -1,9 +1,9 @@
-import React, { useState, Fragment } from 'react';
+import React, { useEffect, useMemo, useState, Fragment } from 'react';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
 import ConfirmDialog from './ConfirmDialog';
 import { isValidAssetHash } from '../utils/warthogFormat';
-import { createWarthogApi } from '../utils/warthogClient.js';
+import { createWarthogApi, getNodeData } from '../utils/warthogClient.js';
 import {
   bumpNonceAfterSuccess,
   cancelLimitOrder,
@@ -17,11 +17,20 @@ const WalletOverview = ({ onLogout }) => {
     usdBalance,
     selectedNode,
     setCurrentTab,
+    setSendAssetPrefill,
+    setDexPoolPrefill,
+    isTestnetNode,
     refreshBalance,
     assetBalances,
+    watchedAssets,
     fetchAssetBalance,
     addWatchedAsset,
     removeWatchedAsset,
+    reorderWatchedAssets,
+    overviewLiquidityPositions,
+    setOverviewLiquidityPositions,
+    overviewLiquidityExpanded,
+    setOverviewLiquidityExpanded,
     currentWalletName,
     nextNonce,
     isSessionLocked,
@@ -32,13 +41,78 @@ const WalletOverview = ({ onLogout }) => {
 
   const [manualAssetHash, setManualAssetHash] = useState('');
   const [isFetching, setIsFetching] = useState(false);
+  const [dragAssetIndex, setDragAssetIndex] = useState(null);
+  const [dropAssetIndex, setDropAssetIndex] = useState(null);
+
+  const orderedAssets = useMemo(() => {
+    if (!watchedAssets.length) return assetBalances;
+    const byHash = new Map(assetBalances.map((a) => [a.hash.toLowerCase(), a]));
+    const ordered = watchedAssets
+      .map((w) => byHash.get(w.hash.toLowerCase()))
+      .filter(Boolean);
+    const watchedSet = new Set(watchedAssets.map((w) => w.hash.toLowerCase()));
+    const extras = assetBalances.filter((a) => !watchedSet.has(a.hash.toLowerCase()));
+    return [...ordered, ...extras];
+  }, [watchedAssets, assetBalances]);
+
+  const trackedAssetHashKey = useMemo(
+    () => orderedAssets.map((asset) => asset.hash?.toLowerCase()).filter(Boolean).join(','),
+    [orderedAssets],
+  );
 
   // NEW: Open Limit Orders state
   const [openOrders, setOpenOrders] = useState(null);
   const [loadingOpenOrders, setLoadingOpenOrders] = useState(false);
   const [openOrdersExpanded, setOpenOrdersExpanded] = useState(false);
+  const [collapsedAssetGroups, setCollapsedAssetGroups] = useState(() => new Set());
+  const [loadingLiquidityPositions, setLoadingLiquidityPositions] = useState(false);
   const [cancellingOrderHash, setCancellingOrderHash] = useState(null);
   const [cancelConfirm, setCancelConfirm] = useState(null);
+
+  const trimBalanceDisplay = (value) => {
+    const s = value == null ? '0' : String(value);
+    if (!s.includes('.')) return s;
+    return s.replace(/(\.\d*?[1-9])0+$|\.0+$/, '$1') || '0';
+  };
+
+  const hasPositiveBalance = (balanceInfo) => {
+    if (!balanceInfo) return false;
+    if (balanceInfo.str != null) {
+      const amount = parseFloat(balanceInfo.str);
+      return Number.isFinite(amount) && amount > 0;
+    }
+    if (balanceInfo.u64 != null) {
+      try {
+        return BigInt(balanceInfo.u64) > 0n;
+      } catch {
+        return Number(balanceInfo.u64) > 0;
+      }
+    }
+    if (balanceInfo.E8 != null) return Number(balanceInfo.E8) > 0;
+    return false;
+  };
+
+  const assetGroupKey = (asset) => (asset?.hash || String(asset?.id ?? '')).toLowerCase();
+
+  const toggleAssetGroup = (asset) => {
+    const key = assetGroupKey(asset);
+    if (!key) return;
+    setCollapsedAssetGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const expandAllAssetGroups = () => setCollapsedAssetGroups(new Set());
+
+  const collapseAllAssetGroups = (ordersData) => {
+    if (!Array.isArray(ordersData)) return;
+    setCollapsedAssetGroups(
+      new Set(ordersData.map((assetOrder) => assetGroupKey(assetOrder.baseAsset)).filter(Boolean)),
+    );
+  };
 
   const copyToClipboard = (text) => {
     if (!text) return;
@@ -98,9 +172,9 @@ const WalletOverview = ({ onLogout }) => {
   };
 
   // ==================== FETCH OPEN LIMIT ORDERS ====================
-  const fetchOpenOrders = async () => {
+  const fetchOpenOrders = async ({ expand = true, silent = false } = {}) => {
     if (!wallet?.address) {
-      toast.error('No wallet connected');
+      if (!silent) toast.error('No wallet connected');
       return;
     }
 
@@ -111,11 +185,15 @@ const WalletOverview = ({ onLogout }) => {
       const ordersData = res.success
         ? { code: 0, data: res.data }
         : { code: res.code, error: res.error };
-      setOpenOrders(await enrichOpenOrders(ordersData));
-      setOpenOrdersExpanded(true);
+      const enriched = await enrichOpenOrders(ordersData);
+      setOpenOrders(enriched);
+      if (expand) {
+        collapseAllAssetGroups(enriched?.data);
+        setOpenOrdersExpanded(true);
+      }
     } catch (err) {
       console.error(err);
-      toast.error('Failed to fetch open orders: ' + err.message);
+      if (!silent) toast.error('Failed to fetch open orders: ' + err.message);
     }
     setLoadingOpenOrders(false);
   };
@@ -126,10 +204,119 @@ const WalletOverview = ({ onLogout }) => {
       return;
     }
     if (openOrders) {
+      collapseAllAssetGroups(openOrders.data);
       setOpenOrdersExpanded(true);
       return;
     }
     fetchOpenOrders();
+  };
+
+  const fetchLiquidityPositions = async ({ expand = true, silent = false } = {}) => {
+    if (!wallet?.address) {
+      if (!silent) toast.error('No wallet connected');
+      return;
+    }
+    if (!isTestnetNode(selectedNode)) {
+      if (!silent) toast.error('Liquidity positions require a DeFi testnet node');
+      return;
+    }
+
+    setLoadingLiquidityPositions(true);
+    try {
+      const api = await createWarthogApi(selectedNode);
+      const { formatTokenBalance } = await import('../utils/warthogFormat.js');
+
+      const hashSet = new Set();
+      orderedAssets.forEach((asset) => {
+        if (asset?.hash) hashSet.add(asset.hash.toLowerCase());
+      });
+      openOrders?.data?.forEach((assetOrder) => {
+        const hash = assetOrder?.baseAsset?.hash;
+        if (hash) hashSet.add(hash.toLowerCase());
+      });
+
+      const hashes = [...hashSet];
+      if (!hashes.length) {
+        setOverviewLiquidityPositions([]);
+        if (expand) setOverviewLiquidityExpanded(true);
+        return;
+      }
+
+      const positions = await Promise.all(
+        hashes.map(async (hash) => {
+          try {
+            const [liquidityRes, marketRes] = await Promise.all([
+              getNodeData(api, `account/${wallet.address}/balance/liquidity:${hash}`),
+              getNodeData(api, `dex/market/${encodeURIComponent(hash)}`),
+            ]);
+
+            if (liquidityRes.code !== 0 || !liquidityRes.data) return null;
+
+            const balanceData = liquidityRes.data;
+            const tokenInfo = balanceData.token || balanceData.asset || {};
+            const balanceInfo = balanceData.balance?.total || balanceData.balance || balanceData;
+            if (!hasPositiveBalance(balanceInfo)) return null;
+
+            const decimals = tokenInfo.decimals ?? 8;
+            const lpBalance = trimBalanceDisplay(await formatTokenBalance(balanceInfo, decimals));
+
+            const market = marketRes.code === 0 ? marketRes.data : null;
+            const baseAsset = market?.baseAsset || market?.asset || orderedAssets.find(
+              (asset) => asset.hash?.toLowerCase() === hash,
+            ) || {};
+            const pool = market?.liquidityPool || market?.liquidity || {};
+            const assetName = baseAsset.name || tokenInfo.name || 'Asset';
+
+            const formatReserve = (reserve) => {
+              if (reserve?.str) return trimBalanceDisplay(reserve.str);
+              return trimBalanceDisplay(reserve ?? '0');
+            };
+
+            return {
+              hash,
+              name: assetName,
+              assetId: baseAsset.id,
+              decimals,
+              lpBalance,
+              poolWart: formatReserve(pool.wart || pool.WART),
+              poolAsset: formatReserve(pool.asset || pool[assetName]),
+            };
+          } catch {
+            return null;
+          }
+        }),
+      );
+
+      setOverviewLiquidityPositions(positions.filter(Boolean));
+      if (expand) setOverviewLiquidityExpanded(true);
+    } catch (err) {
+      console.error(err);
+      if (!silent) toast.error('Failed to load liquidity positions: ' + err.message);
+    } finally {
+      setLoadingLiquidityPositions(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!wallet?.address || !isTestnetNode(selectedNode)) return;
+    fetchOpenOrders({ expand: false, silent: true });
+  }, [wallet?.address, selectedNode]);
+
+  useEffect(() => {
+    if (!wallet?.address || !isTestnetNode(selectedNode)) return;
+    fetchLiquidityPositions({ expand: false, silent: true });
+  }, [wallet?.address, selectedNode, trackedAssetHashKey, openOrders?.data]);
+
+  const handleLiquidityToggle = () => {
+    if (overviewLiquidityExpanded) {
+      setOverviewLiquidityExpanded(false);
+      return;
+    }
+    if (overviewLiquidityPositions) {
+      setOverviewLiquidityExpanded(true);
+      return;
+    }
+    fetchLiquidityPositions();
   };
   const handleCancelOrder = async (order, direction, assetName) => {
     if (!isSigningUnlocked) {
@@ -235,22 +422,14 @@ const WalletOverview = ({ onLogout }) => {
         </div>
 
         {/* Transaction Hash */}
-        <div className="pt-2 border-t border-zinc-700 flex items-center justify-between text-xs">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <span className="text-zinc-500 flex-shrink-0">Tx</span>
-            <span 
-              onClick={() => onCopy(order.txHash)}
-              className="font-mono text-purple-400 hover:text-purple-300 cursor-pointer truncate"
-            >
-              {order.txHash?.slice(0, 8)}…{order.txHash?.slice(-6)}
-            </span>
-          </div>
-          <button 
+        <div className="pt-2 border-t border-zinc-700 flex items-center gap-1.5 text-xs min-w-0">
+          <span className="text-zinc-500 flex-shrink-0">Tx</span>
+          <span
             onClick={() => onCopy(order.txHash)}
-            className="text-purple-400 hover:text-white active:text-purple-300 px-2 py-0.5 rounded hover:bg-purple-500/10 text-xs font-medium transition-colors"
+            className="font-mono text-purple-400 hover:text-purple-300 cursor-pointer truncate"
           >
-            COPY
-          </button>
+            {order.txHash?.slice(0, 8)}…{order.txHash?.slice(-6)}
+          </span>
         </div>
 
         {order.inMempool && (
@@ -378,23 +557,72 @@ const WalletOverview = ({ onLogout }) => {
               <span className="text-xs font-semibold uppercase tracking-[0.12em] text-blue-400">
                 Your Assets
               </span>
-              {assetBalances.length > 0 && (
+              {orderedAssets.length > 0 && (
                 <span className="text-[10px] px-2 py-0.5 bg-blue-500/10 text-blue-300 rounded-full font-mono border border-blue-500/20">
-                  {assetBalances.length}
+                  {orderedAssets.length}
                 </span>
               )}
             </div>
+            {orderedAssets.length > 1 && (
+              <span className="text-[10px] text-zinc-500">Press and hold to reorder</span>
+            )}
           </div>
 
           <div className="p-4">
-            {assetBalances.length > 0 ? (
+            {orderedAssets.length > 0 ? (
               <div className="space-y-2 mb-4">
-                {assetBalances.map((asset, index) => (
+                {orderedAssets.map((asset, index) => (
                   <div
                     key={asset.hash || index}
-                    className="flex justify-between items-center gap-3 p-3 rounded-xl bg-zinc-900/60 border border-zinc-800 hover:border-zinc-700 transition-colors group"
+                    draggable={orderedAssets.length > 1}
+                    onDragStart={(e) => {
+                      setDragAssetIndex(index);
+                      e.dataTransfer.effectAllowed = 'move';
+                      e.dataTransfer.setData('text/plain', String(index));
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = 'move';
+                      if (dropAssetIndex !== index) setDropAssetIndex(index);
+                    }}
+                    onDragLeave={() => {
+                      if (dropAssetIndex === index) setDropAssetIndex(null);
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const fromRaw = e.dataTransfer.getData('text/plain');
+                      const from = dragAssetIndex ?? parseInt(fromRaw, 10);
+                      if (Number.isFinite(from)) reorderWatchedAssets(from, index);
+                      setDragAssetIndex(null);
+                      setDropAssetIndex(null);
+                    }}
+                    onDragEnd={() => {
+                      setDragAssetIndex(null);
+                      setDropAssetIndex(null);
+                    }}
+                    className={`flex justify-between items-center gap-3 p-3 rounded-xl bg-zinc-900/60 border transition-colors group ${
+                      dragAssetIndex === index
+                        ? 'opacity-50 border-violet-500/50'
+                        : dropAssetIndex === index
+                          ? 'border-violet-500 bg-violet-950/20'
+                          : 'border-zinc-800 hover:border-zinc-700'
+                    }`}
                   >
                     <div className="flex items-center gap-3 min-w-0 flex-1">
+                      {orderedAssets.length > 1 && (
+                        <button
+                          type="button"
+                          className="asset-drag-handle compact-btn compact-btn--square hover:!text-[#FDB913] !mx-0 !my-0 cursor-grab active:cursor-grabbing"
+                          aria-label={`Press and hold to reorder ${asset.name}`}
+                          onMouseDown={(e) => e.stopPropagation()}
+                        >
+                          <span className="grid grid-cols-3 gap-px" aria-hidden="true">
+                            {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((dot) => (
+                              <span key={dot} className="w-0.5 h-0.5 rounded-full bg-current opacity-80" />
+                            ))}
+                          </span>
+                        </button>
+                      )}
                       <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500/80 to-cyan-500/60 flex items-center justify-center text-white font-bold text-sm flex-shrink-0 ring-1 ring-white/10">
                         {asset.name?.[0]?.toUpperCase() || '?'}
                       </div>
@@ -422,8 +650,26 @@ const WalletOverview = ({ onLogout }) => {
                         {asset.balance}
                         <span className="text-[10px] text-zinc-400 ml-1">{asset.name}</span>
                       </div>
+                      {isTestnetNode(selectedNode) && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSendAssetPrefill({
+                              hash: asset.hash,
+                              name: asset.name,
+                              decimals: asset.decimals ?? 8,
+                              balance: asset.balance,
+                            });
+                            setCurrentTab('send');
+                          }}
+                          className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1"
+                        >
+                          Send Asset
+                        </button>
+                      )}
                       <button
                         onClick={() => removeWatchedAsset(asset.hash)}
+                        onMouseDown={(e) => e.stopPropagation()}
                         className="remove-token-btn flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-lg text-sm leading-none text-red-400/50 hover:bg-red-950/60 hover:text-red-400 transition-all"
                         title="Remove from wallet"
                       >
@@ -467,9 +713,14 @@ const WalletOverview = ({ onLogout }) => {
               <span className="text-xs font-semibold uppercase tracking-[0.12em] text-purple-400">
                 Open Limit Orders
               </span>
-              {openOrders?.data && Array.isArray(openOrders.data) && (
+              {openOrders?.code === 0 && Array.isArray(openOrders.data) && (
                 <span className="text-[10px] px-2 py-0.5 bg-purple-500/15 text-purple-300 rounded-full font-mono border border-purple-500/20">
                   {openOrders.data.length} asset{openOrders.data.length !== 1 ? 's' : ''}
+                </span>
+              )}
+              {loadingOpenOrders && !openOrders && (
+                <span className="text-[10px] px-2 py-0.5 bg-zinc-800 text-zinc-500 rounded-full font-mono border border-zinc-700">
+                  …
                 </span>
               )}
             </div>
@@ -479,7 +730,7 @@ const WalletOverview = ({ onLogout }) => {
             <div className="flex items-center gap-2 flex-wrap">
               <button
                 type="button"
-                onClick={openOrdersExpanded ? fetchOpenOrders : handleOpenOrdersToggle}
+                onClick={openOrdersExpanded ? () => fetchOpenOrders() : handleOpenOrdersToggle}
                 disabled={loadingOpenOrders}
                 className={`compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1${
                   openOrdersExpanded ? ' compact-btn--active' : ''
@@ -508,41 +759,96 @@ const WalletOverview = ({ onLogout }) => {
               <div className="mt-4">
                 {openOrders.code === 0 && Array.isArray(openOrders.data) && openOrders.data.length > 0 ? (
                   <div className="space-y-4">
+                    {openOrders.data.length > 1 && (
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={expandAllAssetGroups}
+                          className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1"
+                        >
+                          Show all assets
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => collapseAllAssetGroups(openOrders.data)}
+                          className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1"
+                        >
+                          Hide all assets
+                        </button>
+                      </div>
+                    )}
                     {openOrders.data.map((assetOrder, idx) => {
                       const asset = assetOrder.baseAsset;
                       const buyOrders = assetOrder.wartToAssetSwaps || [];
                       const sellOrders = assetOrder.assetToWartSwaps || [];
                       const totalOrders = buyOrders.length + sellOrders.length;
+                      const isGroupCollapsed = collapsedAssetGroups.has(assetGroupKey(asset));
 
                       return (
                         <div
                           key={asset.hash || asset.id || idx}
                           className="bg-zinc-900 border border-zinc-700 rounded-xl overflow-hidden"
                         >
-                          <div className="px-4 py-3 bg-zinc-800/50 border-b border-zinc-700 flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-purple-500 via-violet-500 to-fuchsia-500 flex items-center justify-center text-white font-bold text-xl shadow-inner ring-1 ring-white/20">
-                                {asset.name?.[0] || '?'}
-                              </div>
-                              <div>
-                                <div className="font-bold text-lg tracking-tight text-white">{asset.name}</div>
-                                <div className="text-[10px] text-zinc-500 font-mono">
-                                  ID {asset.id} · {asset.decimals} decimals
-                                </div>
-                              </div>
-                            </div>
+                          <div
+                            className={`px-4 py-3 bg-zinc-800/50 flex items-center justify-between gap-3 ${
+                              isGroupCollapsed ? '' : 'border-b border-zinc-700'
+                            }`}
+                          >
                             <button
                               type="button"
-                              onClick={() => copyToClipboard(asset.hash)}
-                              className="text-right group !m-0 !p-0 !bg-transparent !border-0 hover:!bg-transparent"
+                              onClick={() => toggleAssetGroup(asset)}
+                              className="group flex items-center gap-3 min-w-0 text-left !m-0 !p-0 !bg-transparent !border-0 hover:!bg-transparent hover:!transform-none hover:!shadow-none"
+                              aria-expanded={!isGroupCollapsed}
                             >
-                              <div className="text-xs font-mono text-zinc-400 group-hover:text-purple-400 transition-colors">
-                                {asset.hash?.slice(0, 8)}…{asset.hash?.slice(-6)}
+                              <span
+                                className="text-zinc-500 group-hover:text-zinc-400 text-xs w-3 flex-shrink-0 transition-colors"
+                                aria-hidden="true"
+                              >
+                                {isGroupCollapsed ? '▸' : '▾'}
+                              </span>
+                              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-purple-500 via-violet-500 to-fuchsia-500 flex items-center justify-center text-white font-bold text-xl shadow-inner ring-1 ring-white/20 flex-shrink-0">
+                                {asset.name?.[0] || '?'}
                               </div>
-                              <div className="text-[10px] text-zinc-500 group-hover:text-zinc-400">Copy hash</div>
+                              <div className="min-w-0">
+                                <div className="font-bold text-lg tracking-tight text-white group-hover:text-zinc-100 truncate transition-colors">
+                                  {asset.name}
+                                </div>
+                                <div className="text-[10px] text-zinc-500 group-hover:text-zinc-400 font-mono transition-colors">
+                                  ID {asset.id} · {asset.decimals} decimals
+                                  {totalOrders > 0 && (
+                                    <>
+                                      {' · '}
+                                      {totalOrders} order{totalOrders !== 1 ? 's' : ''}
+                                      {buyOrders.length > 0 && sellOrders.length > 0
+                                        ? ` (${buyOrders.length} buy, ${sellOrders.length} sell)`
+                                        : buyOrders.length > 0
+                                          ? ` (${buyOrders.length} buy)`
+                                          : ` (${sellOrders.length} sell)`}
+                                    </>
+                                  )}
+                                </div>
+                              </div>
                             </button>
+                            <div className="flex items-center gap-2 flex-shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => copyToClipboard(asset.hash)}
+                                title={`Copy asset hash: ${asset.hash}`}
+                                className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1 font-mono tabular-nums"
+                              >
+                                {asset.hash?.slice(0, 8)}…{asset.hash?.slice(-6)}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => toggleAssetGroup(asset)}
+                                className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1"
+                              >
+                                {isGroupCollapsed ? 'Show' : 'Hide'}
+                              </button>
+                            </div>
                           </div>
 
+                          {!isGroupCollapsed && (
                           <div className="p-4 space-y-4">
                             {buyOrders.length > 0 && (
                               <div>
@@ -588,6 +894,7 @@ const WalletOverview = ({ onLogout }) => {
                               </div>
                             )}
                           </div>
+                          )}
                         </div>
                       );
                     })}
@@ -620,6 +927,154 @@ const WalletOverview = ({ onLogout }) => {
             )}
           </div>
         </div>
+
+        {isTestnetNode(selectedNode) && (
+          <div className="bg-zinc-950 border border-zinc-700 rounded-2xl overflow-hidden">
+            <div className="px-4 py-3 bg-zinc-900/80 border-b border-zinc-700 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold uppercase tracking-[0.12em] text-amber-400">
+                  My Liquidity Positions
+                </span>
+                {overviewLiquidityPositions && (
+                  <span className="text-[10px] px-2 py-0.5 bg-amber-500/15 text-amber-300 rounded-full font-mono border border-amber-500/20">
+                    {overviewLiquidityPositions.length} pool{overviewLiquidityPositions.length !== 1 ? 's' : ''}
+                  </span>
+                )}
+                {loadingLiquidityPositions && overviewLiquidityPositions == null && (
+                  <span className="text-[10px] px-2 py-0.5 bg-zinc-800 text-zinc-500 rounded-full font-mono border border-zinc-700">
+                    …
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="p-4">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={overviewLiquidityExpanded ? () => fetchLiquidityPositions() : handleLiquidityToggle}
+                    disabled={loadingLiquidityPositions}
+                    className={`compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1${
+                      overviewLiquidityExpanded ? ' compact-btn--active' : ''
+                    }`}
+                  >
+                    {loadingLiquidityPositions
+                      ? 'Loading Liquidity…'
+                      : overviewLiquidityExpanded
+                        ? '⟳ Refresh Liquidity'
+                        : overviewLiquidityPositions
+                          ? 'View Liquidity Positions'
+                          : 'View My Liquidity Positions'}
+                  </button>
+                  {overviewLiquidityExpanded && (
+                    <button
+                      type="button"
+                      onClick={() => setOverviewLiquidityExpanded(false)}
+                      className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1"
+                    >
+                      Close
+                    </button>
+                  )}
+                </div>
+
+                {overviewLiquidityPositions && overviewLiquidityExpanded && (
+                  <div className="mt-4 space-y-3">
+                    {overviewLiquidityPositions.length > 0 ? (
+                      overviewLiquidityPositions.map((position) => (
+                        <div
+                          key={position.hash}
+                          className="bg-zinc-900 border border-zinc-700 rounded-xl p-4"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-500 via-orange-500 to-yellow-500 flex items-center justify-center text-white font-bold text-xl shadow-inner ring-1 ring-white/20 flex-shrink-0">
+                                {position.name?.[0] || 'L'}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="font-bold text-lg tracking-tight text-white truncate">
+                                  {position.name} <span className="text-amber-400/70 font-normal text-sm">LP</span>
+                                </div>
+                                <div className="text-[10px] text-zinc-500 font-mono">
+                                  {position.assetId != null ? `ID ${position.assetId} · ` : ''}
+                                  {position.decimals} decimals
+                                </div>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => copyToClipboard(position.hash)}
+                              title={`Copy asset hash: ${position.hash}`}
+                              className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1 font-mono tabular-nums flex-shrink-0"
+                            >
+                              {position.hash?.slice(0, 8)}…{position.hash?.slice(-6)}
+                            </button>
+                          </div>
+
+                          <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                            <div className="bg-zinc-950/80 border border-amber-800/40 rounded-lg p-3">
+                              <div className="text-[10px] uppercase tracking-wider text-amber-400/80 mb-1">
+                                Your LP Shares
+                              </div>
+                              <div className="font-mono text-lg font-semibold text-white tabular-nums">
+                                {position.lpBalance}
+                              </div>
+                            </div>
+                            <div className="bg-zinc-950/80 border border-zinc-800 rounded-lg p-3">
+                              <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1">
+                                Pool WART
+                              </div>
+                              <div className="font-mono text-sm font-medium text-white tabular-nums">
+                                {position.poolWart}
+                              </div>
+                            </div>
+                            <div className="bg-zinc-950/80 border border-zinc-800 rounded-lg p-3">
+                              <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1">
+                                Pool {position.name}
+                              </div>
+                              <div className="font-mono text-sm font-medium text-white tabular-nums">
+                                {position.poolAsset}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="mt-3 pt-3 border-t border-zinc-800 flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDexPoolPrefill({
+                                  hash: position.hash,
+                                  name: position.name,
+                                });
+                                setCurrentTab('dex');
+                              }}
+                              className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1"
+                            >
+                              Manage in DEX
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="border border-zinc-800 rounded-xl p-6 text-center">
+                        <p className="text-zinc-300 font-medium text-sm">No liquidity positions found</p>
+                        <p className="text-xs text-zinc-500 mt-1 max-w-[280px] mx-auto">
+                          LP shares appear here for tracked assets after you deposit into a pool on the DEX.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+              {!overviewLiquidityExpanded && (
+                <p className="text-[11px] text-zinc-500 mt-3 text-center">
+                  {overviewLiquidityPositions
+                    ? 'Liquidity positions are loaded — tap View to show them again.'
+                    : 'Load LP share balances for your tracked assets from the connected node.'}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
 
       </div>
 

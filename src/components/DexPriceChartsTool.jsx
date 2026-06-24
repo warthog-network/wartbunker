@@ -2,15 +2,17 @@ import React, { useState } from 'react';
 import { useToast } from './Toast';
 import { createWarthogApi, getNodeData } from '../utils/warthogClient.js';
 import {
-  CHART_API_UNSUPPORTED_CODE,
   CHART_INTERVALS,
   buildCandlesPath,
+  buildPoolSpotChartPoint,
   buildPriceHistoryFromLatest,
   buildTradesPath,
+  computePoolSpotPrice,
   formatAssetPrice,
   normalizeChartAssetHash,
   parseCandleResponse,
   parseTradeResponse,
+  shouldUseChartFallback,
 } from '../utils/dexPrice.js';
 import AssetPriceChart from './AssetPriceChart.jsx';
 import { DEFAULT_NODE_URL } from '../utils/presetNodes.js';
@@ -57,18 +59,33 @@ const DexPriceChartsTool = ({ selectedNode: propSelectedNode }) => {
 
       let points = [];
       let usedFallback = false;
+      let usedPoolSpotOnly = false;
 
       if (result.code === 0) {
         points = chartMode === 'candles'
           ? parseCandleResponse(result.data)
           : parseTradeResponse(result.data);
-      } else if (result.code === CHART_API_UNSUPPORTED_CODE) {
+      } else if (!shouldUseChartFallback(result.code)) {
+        setResults((prev) => ({
+          ...prev,
+          [chartKey]: { error: result.error || 'Node returned an error' },
+        }));
+        return;
+      }
+
+      const marketRes = await getNodeData(api, `dex/market/${assetHash}`);
+      if (marketRes.code === 0) {
+        const name = marketRes.data?.baseAsset?.name;
+        if (name) setChartAssetName(name);
+      }
+
+      if (!points.length) {
         const latestRes = await getNodeData(api, 'transaction/latest');
         if (latestRes.code !== 0) {
           setResults((prev) => ({
             ...prev,
             [chartKey]: {
-              error: 'Chart API is not enabled on this node and recent trades could not be loaded.',
+              error: 'Chart history is unavailable for this asset and recent trades could not be loaded.',
             },
           }));
           return;
@@ -80,35 +97,35 @@ const DexPriceChartsTool = ({ selectedNode: propSelectedNode }) => {
           n,
         });
         usedFallback = true;
+      }
 
-        if (!points.length) {
+      if (!points.length) {
+        const poolSpot = marketRes.code === 0 ? computePoolSpotPrice(marketRes.data) : null;
+        const poolPoint = buildPoolSpotChartPoint(poolSpot);
+        if (poolPoint) {
+          points = [poolPoint];
+          usedFallback = true;
+          usedPoolSpotOnly = true;
+        } else {
           setResults((prev) => ({
             ...prev,
             [chartKey]: {
-              error: 'Chart API is not enabled on this node yet. No recent DEX matches were found for this asset in the latest blocks.',
+              error: 'No chart history, recent matches, or pool liquidity found for this asset.',
             },
           }));
           return;
         }
-      } else {
-        setResults((prev) => ({
-          ...prev,
-          [chartKey]: { error: result.error || 'Node returned an error' },
-        }));
-        return;
       }
 
       setResults((prev) => ({ ...prev, [chartKey]: { code: 0, data: points } }));
-      if (usedFallback) {
+      if (usedPoolSpotOnly) {
         setChartFallbackNote(
-          'Chart API unavailable on this node — showing DEX match trades from recent blocks (/transaction/latest).',
+          'Chart index has not synced this asset yet — showing current pool spot price from DEX reserves.',
         );
-      }
-
-      const marketRes = await getNodeData(api, `dex/market/${assetHash}`);
-      if (marketRes.code === 0) {
-        const name = marketRes.data?.baseAsset?.name;
-        if (name) setChartAssetName(name);
+      } else if (usedFallback) {
+        setChartFallbackNote(
+          'Chart history unavailable — showing DEX match trades from recent blocks (/transaction/latest).',
+        );
       }
     } catch (err) {
       setResults((prev) => ({
@@ -129,14 +146,12 @@ const DexPriceChartsTool = ({ selectedNode: propSelectedNode }) => {
   const intervalLabel = CHART_INTERVALS.find((i) => i.id === chartInterval)?.label || chartInterval;
 
   return (
-    <section className="border-2 border-violet-500 rounded-3xl p-8 bg-violet-50 dark:bg-violet-950 shadow-xl">
-      <h3 className="text-xl font-semibold mb-2 text-violet-700 dark:text-violet-300">
-        Asset Price History
-      </h3>
-      <p className="text-sm text-violet-600 dark:text-violet-400 mb-6">
-        Uses <code className="text-violet-300">/chart/candles/:asset/:interval</code> and{' '}
-        <code className="text-violet-300">/chart/trades/:asset</code> when the node supports them;
-        otherwise builds history from recent DEX matches in <code className="text-violet-300">/transaction/latest</code>.
+    <div className="bg-zinc-950 border border-zinc-700 rounded-2xl p-5">
+      <h3 className="text-base font-semibold text-white mb-1">Asset Price History</h3>
+      <p className="text-sm text-zinc-400 mb-4">
+        Uses <code className="text-zinc-300">/chart/candles/:asset/:interval</code> and{' '}
+        <code className="text-zinc-300">/chart/trades/:asset</code> when the node supports them;
+        otherwise builds history from recent DEX matches in <code className="text-zinc-300">/transaction/latest</code>.
         Prices are WART per asset token.
       </p>
 
@@ -159,18 +174,22 @@ const DexPriceChartsTool = ({ selectedNode: propSelectedNode }) => {
         <div className="flex flex-wrap gap-4 items-end">
           <div>
             <label className="block text-xs text-zinc-400 mb-1.5">Chart type</label>
-            <div className="flex gap-1 p-1 bg-zinc-900 border border-zinc-700 rounded-xl">
+            <div className="flex items-center gap-2 flex-wrap">
               <button
                 type="button"
                 onClick={() => setChartMode('candles')}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${chartMode === 'candles' ? 'bg-violet-600 text-white' : 'text-zinc-400 hover:text-white'}`}
+                className={`compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1${
+                  chartMode === 'candles' ? ' compact-btn--active' : ''
+                }`}
               >
                 Candles
               </button>
               <button
                 type="button"
                 onClick={() => setChartMode('trades')}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${chartMode === 'trades' ? 'bg-violet-600 text-white' : 'text-zinc-400 hover:text-white'}`}
+                className={`compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1${
+                  chartMode === 'trades' ? ' compact-btn--active' : ''
+                }`}
               >
                 Trades
               </button>
@@ -183,7 +202,7 @@ const DexPriceChartsTool = ({ selectedNode: propSelectedNode }) => {
               <select
                 value={chartInterval}
                 onChange={(e) => setChartInterval(e.target.value)}
-                className="bg-zinc-900 border border-zinc-700 text-white px-4 py-2.5 rounded-xl outline-none focus:border-violet-500"
+                className="input"
               >
                 {CHART_INTERVALS.map((opt) => (
                   <option key={opt.id} value={opt.id}>{opt.label}</option>
@@ -195,14 +214,14 @@ const DexPriceChartsTool = ({ selectedNode: propSelectedNode }) => {
           <button
             onClick={loadPriceChart}
             disabled={chartLoading}
-            className="px-8 py-2.5 bg-violet-600 hover:bg-violet-700 text-white font-semibold rounded-2xl transition-all disabled:bg-gray-400"
+            className="compact-btn hover:!text-[#FDB913] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
           >
             {chartLoading ? 'Loading…' : 'Load Price Chart'}
           </button>
         </div>
 
         {chartFallbackNote && (
-          <div className="p-3 bg-amber-950/40 border border-amber-700/60 rounded-xl text-xs text-amber-200">
+          <div className="p-3 bg-zinc-900/80 border border-zinc-700 rounded-xl text-xs text-yellow-400">
             {chartFallbackNote}
           </div>
         )}
@@ -212,13 +231,14 @@ const DexPriceChartsTool = ({ selectedNode: propSelectedNode }) => {
           mode={chartMode}
           assetName={chartAssetName}
           intervalLabel={chartMode === 'candles' ? intervalLabel : 'Recent trades'}
+          candleInterval={chartInterval}
           loading={chartLoading}
           error={chartError}
         />
 
         {chartMode === 'trades' && chartPoints?.length > 0 && (
           <details className="group">
-            <summary className="cursor-pointer text-sm text-violet-400 hover:text-violet-300 flex items-center gap-2 select-none">
+            <summary className="cursor-pointer text-sm text-zinc-400 hover:text-zinc-300 flex items-center gap-2 select-none">
               <span className="group-open:rotate-90 inline-block transition">▶</span>
               Recent trades table ({Math.min(chartPoints.length, 20)} shown)
             </summary>
@@ -242,7 +262,7 @@ const DexPriceChartsTool = ({ selectedNode: propSelectedNode }) => {
                       <td className="px-3 py-1.5 text-right">{t.height}</td>
                       <td className="px-3 py-1.5 text-right">{formatAssetPrice(t.base, 4)}</td>
                       <td className="px-3 py-1.5 text-right">{formatAssetPrice(t.quote, 4)}</td>
-                      <td className="px-3 py-1.5 text-right text-emerald-400">
+                      <td className="px-3 py-1.5 text-right text-[#FDB913]">
                         {formatAssetPrice(t.price)}
                       </td>
                     </tr>
@@ -253,7 +273,7 @@ const DexPriceChartsTool = ({ selectedNode: propSelectedNode }) => {
           </details>
         )}
       </div>
-    </section>
+    </div>
   );
 };
 

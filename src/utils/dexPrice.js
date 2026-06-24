@@ -3,6 +3,14 @@ import { getNodeData } from './warthogClient.js';
 /** Node error when chart endpoints are not registered (common on pre-release builds). */
 export const CHART_API_UNSUPPORTED_CODE = 324;
 
+/** Chart service exists but has not indexed this asset yet (newer pools). */
+export const CHART_ASSET_NOT_INDEXED_CODES = [185, 186];
+
+/** True when /chart/* cannot serve this asset and client-side fallbacks should run. */
+export function shouldUseChartFallback(code) {
+  return code === CHART_API_UNSUPPORTED_CODE || CHART_ASSET_NOT_INDEXED_CODES.includes(code);
+}
+
 /** Chart candle intervals supported by Warthog node v0.10.16. */
 export const CHART_INTERVALS = [
   { id: '5m', label: '5 minutes' },
@@ -166,6 +174,207 @@ export function toChartSeries(points, mode) {
     .filter(Boolean);
 }
 
+/** Default lookback for chart Δ (24 hours). */
+export const CHART_CHANGE_WINDOW_SEC = 86400;
+
+/**
+ * @typedef {'24h' | 'since_first' | 'unavailable'} ChartChangeWindow
+ */
+
+/**
+ * Compute chart stats with Δ over a fixed window when enough history exists.
+ * @param {{ x: number, y: number }[]} series - sorted chart series (from toChartSeries)
+ * @param {{ windowSec?: number }} [options]
+ * @returns {{
+ *   last: number,
+ *   min: number,
+ *   max: number,
+ *   change: number | null,
+ *   changeWindow: ChartChangeWindow,
+ *   changeLabel: string,
+ * } | null}
+ */
+export function computeChartPriceStats(series, { windowSec = CHART_CHANGE_WINDOW_SEC } = {}) {
+  if (!series.length) return null;
+
+  const prices = series.map((p) => p.y);
+  const last = prices[prices.length - 1];
+  const min = Math.min(...prices);
+  const max = Math.max(...prices);
+
+  if (series.length === 1) {
+    return {
+      last,
+      min,
+      max,
+      change: null,
+      changeWindow: 'unavailable',
+      changeLabel: 'Δ 24h',
+    };
+  }
+
+  const nowTs = series[series.length - 1].x;
+  const windowStart = nowTs - windowSec;
+
+  let refPoint = null;
+  for (const pt of series) {
+    if (pt.x <= windowStart) {
+      refPoint = pt;
+    } else {
+      break;
+    }
+  }
+
+  const lastIdx = series.length - 1;
+  const refIdx = refPoint ? series.indexOf(refPoint) : -1;
+
+  if (refPoint && refIdx >= 0 && refIdx < lastIdx && refPoint.y > 0) {
+    const change = ((last - refPoint.y) / refPoint.y) * 100;
+    return {
+      last,
+      min,
+      max,
+      change: Number.isFinite(change) ? change : null,
+      changeWindow: '24h',
+      changeLabel: 'Δ 24h',
+    };
+  }
+
+  const firstPrice = series[0].y;
+  if (!(firstPrice > 0)) {
+    return {
+      last,
+      min,
+      max,
+      change: null,
+      changeWindow: 'unavailable',
+      changeLabel: 'Δ 24h',
+    };
+  }
+
+  const change = ((last - firstPrice) / firstPrice) * 100;
+  return {
+    last,
+    min,
+    max,
+    change: Number.isFinite(change) ? change : null,
+    changeWindow: 'since_first',
+    changeLabel: 'Δ since first',
+  };
+}
+
+/** Format a chart Δ percent for display, or em dash when unavailable. */
+export function formatChartChangePercent(change) {
+  if (change == null || !Number.isFinite(change)) return '—';
+  const sign = change >= 0 ? '+' : '';
+  return `${sign}${change.toFixed(2)}%`;
+}
+
+function formatChartTimestamp(ts) {
+  const date = new Date(ts * 1000);
+  if (!Number.isFinite(date.getTime())) return null;
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function formatApproxDuration(seconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  if (seconds < 3600) {
+    const mins = Math.max(1, Math.round(seconds / 60));
+    return `${mins} min`;
+  }
+  if (seconds < 86400) {
+    const hours = Math.max(1, Math.round(seconds / 3600));
+    return `${hours} hr`;
+  }
+  const days = Math.max(1, Math.round(seconds / 86400));
+  return `${days} day${days !== 1 ? 's' : ''}`;
+}
+
+/**
+ * Human-readable span covered by visible chart points.
+ * @param {{ x: number }[]} series
+ * @param {{ mode?: 'candles' | 'trades', candleInterval?: string }} [options]
+ * @returns {string | null}
+ */
+export function formatChartDataSpan(series, { mode = 'candles', candleInterval = '1h' } = {}) {
+  if (!series.length) return null;
+
+  const startLabel = formatChartTimestamp(series[0].x);
+  if (!startLabel) return null;
+
+  const bucketSec = INTERVAL_SECONDS[candleInterval] || INTERVAL_SECONDS['1h'];
+  const endTs = mode === 'candles'
+    ? series[series.length - 1].x + bucketSec
+    : series[series.length - 1].x;
+  const endLabel = formatChartTimestamp(endTs);
+  if (!endLabel) return startLabel;
+
+  if (series.length === 1) {
+    if (mode === 'candles') {
+      const intervalLabel = CHART_INTERVALS.find((i) => i.id === candleInterval)?.label || candleInterval;
+      return `${startLabel} · single ${intervalLabel} candle`;
+    }
+    return startLabel;
+  }
+
+  const duration = formatApproxDuration(endTs - series[0].x);
+  return duration
+    ? `${startLabel} – ${endLabel} (~${duration})`
+    : `${startLabel} – ${endLabel}`;
+}
+
+/**
+ * Latest matched swap price + pool spot for asset card price strip.
+ * @param {import('warthog-js').WarthogApi} api
+ * @param {string} assetHash
+ * @returns {Promise<{ poolSpot: number | null, latestTradePrice: number | null }>}
+ */
+export async function fetchAssetLivePrices(api, assetHash) {
+  const normalized = normalizeChartAssetHash(assetHash);
+  if (!normalized) {
+    return { poolSpot: null, latestTradePrice: null };
+  }
+
+  const { hasLiquidity, poolSpot } = await getAssetMarketSnapshot(api, normalized);
+  let latestTradePrice = null;
+
+  try {
+    const tradesRes = await fetchChartNodeData(api, buildTradesPath(normalized, { n: 20 }));
+    if (tradesRes.code === 0) {
+      const trades = parseTradeResponse(tradesRes.data);
+      if (trades.length) {
+        latestTradePrice = trades[trades.length - 1].price ?? null;
+      }
+    }
+  } catch {
+    // fall through to /transaction/latest
+  }
+
+  if (latestTradePrice == null) {
+    try {
+      const latestRes = await getNodeData(api, 'transaction/latest');
+      if (latestRes.code === 0) {
+        const liveTrades = parseMatchTradesFromLatest(latestRes.data, normalized);
+        if (liveTrades.length) {
+          latestTradePrice = liveTrades[liveTrades.length - 1].price ?? null;
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return {
+    poolSpot: hasLiquidity ? poolSpot : null,
+    latestTradePrice,
+  };
+}
+
 /** Build node path for chart candles. */
 export function buildCandlesPath(assetHash, interval, { n = 200, from, to } = {}) {
   const params = new URLSearchParams();
@@ -295,6 +504,41 @@ export function buildPriceHistoryFromLatest(latestData, assetHash, { mode, inter
   return trades.slice(-n);
 }
 
+/** Single trade/candle point from current pool reserves when chart index has no history yet. */
+export function buildPoolSpotChartPoint(poolSpot, { height = 0, timestamp } = {}) {
+  if (poolSpot == null || !Number.isFinite(poolSpot)) return null;
+  const ts = Number.isFinite(timestamp) ? timestamp : Math.floor(Date.now() / 1000);
+  return {
+    timestamp: ts,
+    height,
+    base: 0,
+    quote: 0,
+    price: poolSpot,
+    open: poolSpot,
+    high: poolSpot,
+    low: poolSpot,
+    close: poolSpot,
+  };
+}
+
+async function loadChartFallbackFromLatest(api, normalized, { mode, interval, n }, fetcher = getNodeDataWithRetry) {
+  const latestRes = await fetcher(api, 'transaction/latest');
+  if (latestRes.code !== 0) {
+    return {
+      points: [],
+      error: 'Chart history is unavailable for this asset and recent trades could not be loaded.',
+      usedFallback: true,
+    };
+  }
+
+  const points = buildPriceHistoryFromLatest(latestRes.data, normalized, { mode, interval, n });
+  return {
+    points,
+    error: points.length ? null : 'No DEX trades found for this asset in recent blocks.',
+    usedFallback: true,
+  };
+}
+
 async function getNodeDataWithRetry(api, path, { retries = 1, delayMs = 250 } = {}) {
   let lastError;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
@@ -337,39 +581,41 @@ export async function loadAssetPriceChart(api, assetHash, {
     const points = mode === 'candles'
       ? parseCandleResponse(result.data)
       : parseTradeResponse(result.data);
-    return { points, error: null, usedFallback: false, mode, interval };
+    if (points.length) {
+      return { points, error: null, usedFallback: false, mode, interval };
+    }
+  } else if (!shouldUseChartFallback(result.code)) {
+    return {
+      points: [],
+      error: result.error || 'Node returned an error',
+      usedFallback: false,
+      mode,
+      interval,
+    };
   }
 
-  if (result.code === CHART_API_UNSUPPORTED_CODE) {
-    const latestRes = await getNodeDataWithRetry(api, 'transaction/latest');
-    if (latestRes.code !== 0) {
-      return {
-        points: [],
-        error: 'Chart API is not enabled on this node and recent trades could not be loaded.',
-        usedFallback: false,
-        mode,
-        interval,
-      };
-    }
+  const { hasLiquidity, poolSpot } = await getAssetMarketSnapshot(api, normalized);
+  const fallback = await loadChartFallbackFromLatest(api, normalized, { mode, interval, n });
+  if (fallback.points.length) {
+    return { ...fallback, mode, interval };
+  }
 
-    const points = buildPriceHistoryFromLatest(latestRes.data, normalized, { mode, interval, n });
-    if (!points.length) {
-      return {
-        points: [],
-        error: 'No DEX trades found for this asset in recent blocks.',
-        usedFallback: true,
-        mode,
-        interval,
-      };
-    }
-
-    return { points, error: null, usedFallback: true, mode, interval };
+  const poolPoint = hasLiquidity ? buildPoolSpotChartPoint(poolSpot) : null;
+  if (poolPoint) {
+    return {
+      points: [poolPoint],
+      error: null,
+      usedFallback: true,
+      mode: 'trades',
+      interval: 'pool',
+      poolSpotOnly: true,
+    };
   }
 
   return {
     points: [],
-    error: result.error || 'Node returned an error',
-    usedFallback: false,
+    error: fallback.error || result.error || 'Node returned an error',
+    usedFallback: fallback.usedFallback,
     mode,
     interval,
   };
@@ -443,6 +689,78 @@ function dedupeTrades(trades) {
   });
 }
 
+function resolveCandleInterval(result) {
+  const interval = result?.interval;
+  if (result?.mode === 'candles' && interval && interval !== 'trades' && interval !== 'pool') {
+    return interval;
+  }
+  return '1h';
+}
+
+/** Merge OHLC buckets; newer candles win on close and extend high/low. */
+function mergeCandleSeries(existingCandles, newCandles, maxN = 200) {
+  const byTs = new Map();
+  for (const candle of existingCandles) {
+    byTs.set(candle.timestamp, { ...candle });
+  }
+  for (const candle of newCandles) {
+    const prev = byTs.get(candle.timestamp);
+    if (!prev) {
+      byTs.set(candle.timestamp, { ...candle });
+      continue;
+    }
+    byTs.set(candle.timestamp, {
+      ...prev,
+      open: prev.open ?? candle.open,
+      high: Math.max(prev.high, candle.high),
+      low: Math.min(prev.low, candle.low),
+      close: candle.close,
+      height: Math.max(prev.height ?? 0, candle.height ?? 0),
+      baseVol: (prev.baseVol ?? 0) + (candle.baseVol ?? 0),
+      quoteVol: (prev.quoteVol ?? 0) + (candle.quoteVol ?? 0),
+    });
+  }
+  return [...byTs.values()]
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .slice(-maxN);
+}
+
+/** Update the active candle bucket (or append one) with current pool spot. */
+function applyPoolSpotToCandles(candles, poolSpot, interval, { height = 0, maxN = 200 } = {}) {
+  if (!candles.length) {
+    const point = buildPoolSpotChartPoint(poolSpot, { height });
+    return point ? [{ ...point, open: poolSpot, high: poolSpot, low: poolSpot, close: poolSpot }] : [];
+  }
+
+  const bucketSec = INTERVAL_SECONDS[interval] || INTERVAL_SECONDS['1h'];
+  const bucketStart = Math.floor(Date.now() / 1000 / bucketSec) * bucketSec;
+  const last = candles[candles.length - 1];
+
+  if (last.timestamp === bucketStart) {
+    const updated = [...candles];
+    updated[updated.length - 1] = {
+      ...last,
+      close: poolSpot,
+      high: Math.max(last.high, poolSpot),
+      low: Math.min(last.low, poolSpot),
+      height: Math.max(last.height ?? 0, height),
+    };
+    return updated.slice(-maxN);
+  }
+
+  return [
+    ...candles,
+    {
+      timestamp: bucketStart,
+      height,
+      open: poolSpot,
+      high: poolSpot,
+      low: poolSpot,
+      close: poolSpot,
+    },
+  ].slice(-maxN);
+}
+
 /**
  * Node /chart/* can lag behind real matches. Merge newer swaps from /transaction/latest
  * and append current pool spot so recent buys show on the chart.
@@ -477,6 +795,8 @@ async function augmentChartWithLiveData(api, normalized, result, { n, poolSpot }
   let mode = result.mode;
   let interval = result.interval;
   let liveAugment = false;
+  const preferCandles = result.mode === 'candles';
+  const candleInterval = resolveCandleInterval(result);
 
   if (hasNewerMatches) {
     let indexedTrades = result.mode === 'trades'
@@ -490,12 +810,26 @@ async function augmentChartWithLiveData(api, normalized, result, { n, poolSpot }
       }
     }
 
-    points = dedupeTrades([...indexedTrades, ...liveTrades])
-      .sort((a, b) => a.timestamp - b.timestamp || a.height - b.height)
-      .slice(-n);
-    mode = 'trades';
-    interval = 'trades';
-    liveAugment = true;
+    const mergedTrades = dedupeTrades([...indexedTrades, ...liveTrades])
+      .sort((a, b) => a.timestamp - b.timestamp || a.height - b.height);
+
+    if (preferCandles) {
+      const newerTrades = mergedTrades.filter(
+        (t) => t.height > chartMaxHeight || t.timestamp > chartMaxTs,
+      );
+      if (newerTrades.length) {
+        const newCandles = aggregateTradesToCandles(newerTrades, candleInterval, n);
+        points = mergeCandleSeries(result.points, newCandles, n);
+        mode = 'candles';
+        interval = candleInterval;
+        liveAugment = true;
+      }
+    } else {
+      points = mergedTrades.slice(-n);
+      mode = 'trades';
+      interval = 'trades';
+      liveAugment = true;
+    }
   }
 
   if (poolSpot != null && points.length) {
@@ -506,19 +840,19 @@ async function augmentChartWithLiveData(api, normalized, result, { n, poolSpot }
       && Number.isFinite(lastPrice)
       && Math.abs(poolSpot - lastPrice) / Math.max(lastPrice, 1e-12) > 0.005
     ) {
-      points = [
-        ...points,
-        {
-          timestamp: Math.max(last.timestamp ?? 0, Math.floor(Date.now() / 1000)),
-          height: liveMaxHeight,
-          base: 0,
-          quote: 0,
-          price: poolSpot,
-        },
-      ];
-      if (mode !== 'trades') {
-        mode = 'trades';
-        interval = 'trades';
+      if (mode === 'candles') {
+        points = applyPoolSpotToCandles(points, poolSpot, interval, { height: liveMaxHeight, maxN: n });
+      } else {
+        points = [
+          ...points,
+          {
+            timestamp: Math.max(last.timestamp ?? 0, Math.floor(Date.now() / 1000)),
+            height: liveMaxHeight,
+            base: 0,
+            quote: 0,
+            price: poolSpot,
+          },
+        ];
       }
       liveAugment = true;
     }
@@ -588,21 +922,16 @@ async function loadChartAttempt(api, normalized, attempt, { n }) {
         : parseTradeResponse(result.data);
     } else if (result.code === 404) {
       error = 'Chart gateway error';
-    } else if (result.code === CHART_API_UNSUPPORTED_CODE) {
-      const latestRes = await fetchChartNodeData(api, 'transaction/latest');
-      if (latestRes.code !== 0) {
-        error = 'Chart API is not enabled on this node and recent trades could not be loaded.';
-      } else {
-        points = buildPriceHistoryFromLatest(latestRes.data, normalized, {
-          mode: attempt.mode,
-          interval: candleInterval,
-          n,
-        });
-        usedFallback = true;
-        if (!points.length) {
-          error = 'No DEX trades found for this asset in recent blocks.';
-        }
-      }
+    } else if (shouldUseChartFallback(result.code)) {
+      const fallback = await loadChartFallbackFromLatest(
+        api,
+        normalized,
+        { mode: attempt.mode, interval: candleInterval, n },
+        fetchChartNodeData,
+      );
+      points = fallback.points;
+      usedFallback = fallback.usedFallback;
+      error = fallback.error;
     } else {
       error = result.error || 'Node returned an error';
     }
@@ -686,6 +1015,20 @@ async function loadDexStylePriceChartInner(api, assetHash, {
       return augmentChartWithLiveData(api, normalized, best, { n, poolSpot });
     }
     return { ...best, poolSpot, liveAugment: false };
+  }
+
+  const poolPoint = buildPoolSpotChartPoint(poolSpot);
+  if (poolPoint) {
+    return {
+      points: [poolPoint],
+      error: null,
+      usedFallback: true,
+      mode: 'trades',
+      interval: 'pool',
+      poolSpot,
+      liveAugment: false,
+      poolSpotOnly: true,
+    };
   }
 
   return {
