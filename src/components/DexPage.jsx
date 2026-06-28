@@ -942,7 +942,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
               <button
                 onClick={() => query('dexMarket', `dex/market/${encodeURIComponent(document.getElementById('market').value)}`)}
                 disabled={loading.dexMarket}
-                className="px-6 py-3 mx-2 my-1 bg-green-600 hover:bg-green-700 text-white font-medium rounded-2xl transition-colors"
+                className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
               >
                 {loading.dexMarket ? 'Querying...' : 'Query Market'}
               </button>
@@ -966,7 +966,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
               <button
                 onClick={() => query('openOrders', `account/${account}/open_orders`)}
                 disabled={loading.openOrders || !account}
-                className="px-6 py-3 mx-2 my-1 bg-orange-600 hover:bg-orange-700 text-white font-medium rounded-2xl transition-colors disabled:bg-gray-400"
+                className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
               >
                 {loading.openOrders ? 'Loading...' : 'View All Open Orders'}
               </button>
@@ -979,7 +979,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
               <button
                 onClick={() => query('openOrdersAsset', `account/${account}/open_orders/${encodeURIComponent(document.getElementById('assetForOrders').value)}`)}
                 disabled={!account}
-                className="px-6 py-3 mx-2 my-1 bg-orange-600 hover:bg-orange-700 text-white font-medium rounded-2xl transition-colors disabled:bg-gray-400"
+                className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
               >
                 Query Asset Orders
               </button>
@@ -1002,7 +1002,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
               <button
                 onClick={() => query('mempool', `account/${account}/mempool`)}
                 disabled={loading.mempool || !account}
-                className="px-6 py-3 mx-2 my-1 bg-purple-600 hover:bg-purple-700 text-white font-medium rounded-2xl transition-colors disabled:bg-gray-400"
+                className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
               >
                 {loading.mempool ? 'Loading...' : 'View Mempool'}
               </button>
@@ -1020,7 +1020,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
             <button
               type="button"
               onClick={() => setLiquidityMode('deposit')}
-              className={`compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1${
+              className={`compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1${
                 liquidityMode === 'deposit' ? ' compact-btn--active' : ''
               }`}
             >
@@ -1029,7 +1029,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
             <button
               type="button"
               onClick={() => setLiquidityMode('withdraw')}
-              className={`compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1${
+              className={`compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1${
                 liquidityMode === 'withdraw' ? ' compact-btn--active' : ''
               }`}
             >
@@ -1067,7 +1067,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                 <button
                   onClick={handleLiquidityDeposit}
                   disabled={loading.liquidityDeposit}
-                  className="w-full py-4 bg-cyan-600 hover:bg-cyan-700 text-white font-semibold rounded-2xl transition-all disabled:bg-gray-400"
+                  className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
                 >
                   {loading.liquidityDeposit ? 'Depositing Liquidity...' : 'Deposit Liquidity'}
                 </button>
@@ -1099,7 +1099,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                 <button
                   onClick={handleLiquidityWithdraw}
                   disabled={loading.liquidityWithdraw}
-                  className="w-full py-4 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-2xl transition-all disabled:bg-gray-400"
+                  className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
                 >
                   {loading.liquidityWithdraw ? 'Withdrawing Liquidity...' : 'Withdraw Liquidity'}
                 </button>
@@ -1132,7 +1132,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
               type="button"
               onClick={() => loadPoolAndPosition()}
               disabled={loading.poolMarket || loading.myAssetBalance || loading.myLiquidityBalance}
-              className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1 self-end whitespace-nowrap"
+              className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1 self-end whitespace-nowrap"
             >
               {loading.poolMarket || loading.myAssetBalance || loading.myLiquidityBalance ? 'Loading…' : 'Load Pool & My Position'}
             </button>
@@ -1148,7 +1148,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                 <button
                   type="button"
                   onClick={() => setPositionPoolMode('deposit')}
-                  className={`compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1${
+                  className={`compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1${
                     positionPoolMode === 'deposit' ? ' compact-btn--active' : ''
                   }`}
                 >
@@ -1157,7 +1157,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                 <button
                   type="button"
                   onClick={() => setPositionPoolMode('withdraw')}
-                  className={`compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1${
+                  className={`compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1${
                     positionPoolMode === 'withdraw' ? ' compact-btn--active' : ''
                   }`}
                 >
@@ -1198,7 +1198,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                     type="button"
                     onClick={handlePositionPoolDeposit}
                     disabled={loading.liquidityDeposit}
-                    className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-2xl transition-all disabled:bg-gray-400"
+                    className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
                   >
                     {loading.liquidityDeposit ? 'Depositing Liquidity…' : 'Deposit Liquidity'}
                   </button>
@@ -1220,7 +1220,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                     <button
                       type="button"
                       onClick={fillWithdrawSharesFromBalance}
-                      className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1 self-end whitespace-nowrap"
+                      className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1 self-end whitespace-nowrap"
                     >
                       Use my full balance
                     </button>
@@ -1235,7 +1235,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                     type="button"
                     onClick={handleLiquidityWithdraw}
                     disabled={loading.liquidityWithdraw}
-                    className="w-full py-3 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-2xl transition-all disabled:bg-gray-400"
+                    className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
                   >
                     {loading.liquidityWithdraw ? 'Withdrawing…' : 'Withdraw Liquidity'}
                   </button>
@@ -1261,7 +1261,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
             <button
               type="button"
               onClick={() => setLimitOrderMode('buy')}
-              className={`compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1${
+              className={`compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1${
                 limitOrderMode === 'buy' ? ' compact-btn--active' : ''
               }`}
             >
@@ -1270,7 +1270,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
             <button
               type="button"
               onClick={() => setLimitOrderMode('sell')}
-              className={`compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1${
+              className={`compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1${
                 limitOrderMode === 'sell' ? ' compact-btn--active' : ''
               }`}
             >
@@ -1323,7 +1323,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                     <button
                       type="button"
                       onClick={encodeLimitPrice}
-                      className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1 self-end whitespace-nowrap"
+                      className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1 self-end whitespace-nowrap"
                     >
                       Encode
                     </button>
@@ -1345,7 +1345,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                 <button
                   onClick={handleLimitSwap}
                   disabled={loading.limitSwap}
-                  className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-2xl transition-all disabled:bg-gray-400"
+                  className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
                 >
                   {loading.limitSwap ? 'Submitting Buy Order…' : 'Submit Buy Limit Order'}
                 </button>
@@ -1398,7 +1398,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                     <button
                       type="button"
                       onClick={encodeLimitPrice}
-                      className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1 self-end whitespace-nowrap"
+                      className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1 self-end whitespace-nowrap"
                     >
                       Encode
                     </button>
@@ -1420,7 +1420,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                 <button
                   onClick={handleLimitSwap}
                   disabled={loading.limitSwap}
-                  className="w-full py-4 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-2xl transition-all disabled:bg-gray-400"
+                  className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
                 >
                   {loading.limitSwap ? 'Submitting Sell Order…' : 'Submit Sell Limit Order'}
                 </button>

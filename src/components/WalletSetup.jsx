@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
 import { encryptWallet, decryptWallet } from '../utils/warthogWalletUtils';
+import WarthogBrandHeader from './WarthogBrandHeader.jsx';
 
 const WalletSetup = () => {
   const { setCurrentTab, activateWalletSession } = useWallet();
@@ -168,7 +169,7 @@ const WalletSetup = () => {
 
   return (
     <div className="container">
-      <h1>Warthog Network Defi</h1>
+      <WarthogBrandHeader className="mb-5" />
 
       <section>
         <h2>Login to Existing Wallet</h2>
@@ -264,7 +265,7 @@ const WalletSetup = () => {
               <div
                 className={`rounded-xl border border-dashed p-5 text-center transition-colors ${
                   walletFileDragActive
-                    ? 'border-[#FDB913] bg-[#FDB913]/10'
+                    ? 'border-[#E79300] bg-[#E79300]/10'
                     : 'border-zinc-600 bg-zinc-900/40'
                 }`}
                 onDragEnter={(e) => { e.preventDefault(); setWalletFileDragActive(true); }}
@@ -282,14 +283,14 @@ const WalletSetup = () => {
                 {uploadedFile ? (
                   <div className="space-y-2">
                     <p className="text-sm text-[#FDB913] font-medium break-all">{uploadedFile.name}</p>
-                    <label htmlFor="wallet-file-input" className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1 cursor-pointer inline-block">
+                    <label htmlFor="wallet-file-input" className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1 cursor-pointer inline-block">
                       Choose a different file
                     </label>
                   </div>
                 ) : (
                   <div className="space-y-2">
                     <p className="text-sm text-zinc-300">Drag your encrypted wallet file here</p>
-                    <label htmlFor="wallet-file-input" className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1 cursor-pointer inline-block">
+                    <label htmlFor="wallet-file-input" className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1 cursor-pointer inline-block">
                       Browse for file
                     </label>
                   </div>

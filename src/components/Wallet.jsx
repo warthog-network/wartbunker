@@ -13,6 +13,7 @@ import DexPage from './DexPage';
 import GatedPage from './GatedPage';
 import { isDefiNode } from '../utils/presetNodes.js';
 import { clearWalletSession } from '../utils/sessionWallet.js';
+import WarthogBrandHeader from './WarthogBrandHeader.jsx';
 
 const WalletContent = () => {
   const {
@@ -219,10 +220,7 @@ const WalletContent = () => {
 
       {/* Header */}
       <div className="flex items-start justify-between px-1 py-4 mb-2 gap-3">
-        <div>
-          <div className="text-[22px] font-semibold tracking-[-0.4px] text-[#FDB913]">Warthog</div>
-          <div className="text-[10px] text-zinc-500 -mt-0.5 font-mono">NETWORK DEFI</div>
-        </div>
+        <WarthogBrandHeader />
         <div className="flex items-center gap-2 flex-shrink-0">
           {isLoggedIn && isSigningUnlocked && (
             <button
@@ -316,11 +314,7 @@ const WalletContent = () => {
               <button
                 key={tab.key}
                 onClick={() => handleTabChange(tab.key)}
-                className={`wallet-nav-btn w-full py-3 px-4 text-left text-lg font-semibold rounded-xl transition-all duration-300 min-h-[42px] shadow-sm ${
-                  currentTab === tab.key
-                    ? 'bg-orange-500 text-white shadow-orange-500/25'
-                    : 'text-gray-200 hover:bg-zinc-700 hover:text-white active:bg-zinc-600'
-                }`}
+                className={`wallet-nav-btn${currentTab === tab.key ? ' wallet-nav-btn--active' : ''}`}
               >
                 {tab.label}
               </button>
@@ -335,14 +329,14 @@ const WalletContent = () => {
                 setIsMobileMenuOpen(false);
                 setShowUnlockPrompt(true);
               }}
-              className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-semibold transition-all min-h-[48px]"
+              className="w-full text-xs px-3 py-2 rounded-xl border border-emerald-700/60 hover:bg-emerald-900/30 text-emerald-400 hover:text-emerald-300 transition-colors font-medium"
             >
               Unlock &quot;{currentWalletName}&quot;
             </button>
           )}
           <button
             onClick={handleLogout}
-            className="w-full py-5 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white rounded-xl font-semibold transition-all duration-200 min-h-[56px] shadow-lg shadow-red-600/25"
+            className="wallet-action-btn w-full py-5 font-semibold min-h-[56px] !m-0"
           >
             Logout
           </button>
@@ -431,9 +425,13 @@ const WalletContent = () => {
               />
             </div>
 
-            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
-              <button onClick={handleUnlockWallet} style={{ flex: 1 }}>Unlock</button>
-              <button onClick={handleCancelUnlock} style={{ flex: 1, background: '#3f3f46' }}>Cancel</button>
+            <div className="flex gap-2 mt-4">
+              <button type="button" onClick={handleUnlockWallet} className="wallet-action-btn flex-1 !mx-0 !mb-0">
+                Unlock
+              </button>
+              <button type="button" onClick={handleCancelUnlock} className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1 flex-1">
+                Cancel
+              </button>
             </div>
           </div>
         </div>

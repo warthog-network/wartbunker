@@ -564,7 +564,7 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
                     period.setTimeoutId(id);
                   }}
                 >
-                  <span className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1 cursor-default">
+                  <span className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1 cursor-default">
                     {period.label} · <span className="font-semibold tabular-nums">{period.count}</span>
                   </span>
                   {period.show && period.count > 0 && (
@@ -577,7 +577,7 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
                             return (
                               <li
                                 key={id}
-                                className="break-all cursor-pointer hover:text-[#FDB913] hover:underline font-mono"
+                                className="break-all cursor-pointer hover:text-[#E79300] hover:underline font-mono"
                                 onClick={() => copyToClipboard(id)}
                                 onKeyDown={(e) => {
                                   if (e.key === 'Enter' || e.key === ' ') {

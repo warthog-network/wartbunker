@@ -316,7 +316,7 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
               type="button"
               onClick={handleMaxAmount}
               disabled={!balance || balance === '0.00000000'}
-              className="compact-btn hover:!text-[#FDB913] disabled:opacity-40 !mx-2 !my-1 !px-3 !py-1"
+              className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-2 !my-1 !px-3 !py-1"
             >
               MAX
             </button>
@@ -385,7 +385,7 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
         <button
           type="button"
           onClick={() => setCurrentTab?.('history')}
-          className="mt-3 w-full text-xs text-zinc-500 hover:text-[#FDB913] transition-colors py-2"
+          className="mt-3 w-full text-xs text-zinc-500 hover:text-[#E79300] transition-colors py-2"
         >
           View in transaction history →
         </button>

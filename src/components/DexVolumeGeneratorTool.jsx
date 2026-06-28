@@ -364,7 +364,7 @@ const DexVolumeGeneratorTool = ({ selectedNode: propSelectedNode, wallet: propWa
             <button
               type="button"
               onClick={applyPoolSpotPrice}
-              className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1"
+              className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1"
             >
               Use pool spot price
             </button>
@@ -372,7 +372,7 @@ const DexVolumeGeneratorTool = ({ selectedNode: propSelectedNode, wallet: propWa
               type="button"
               onClick={previewVolumePlan}
               disabled={loading.volumePreview || !account}
-              className="compact-btn hover:!text-[#FDB913] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
+              className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
             >
               {loading.volumePreview ? 'Loading…' : 'Preview plan'}
             </button>
@@ -380,7 +380,7 @@ const DexVolumeGeneratorTool = ({ selectedNode: propSelectedNode, wallet: propWa
               type="button"
               onClick={requestVolumeRun}
               disabled={loading.volumeRun || loading.volumeConfirm || !account}
-              className="compact-btn hover:!text-[#FDB913] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
+              className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
             >
               {loading.volumeRun
                 ? 'Submitting orders…'

@@ -530,7 +530,7 @@ const WalletOverview = ({ onLogout }) => {
               </button>
               <div className="min-w-0 flex-1 flex justify-center overflow-hidden">
                 <span
-                  className="max-w-full truncate whitespace-nowrap font-mono text-[11px] text-zinc-400 hover:text-[#FDB913] cursor-pointer transition-colors text-center"
+                  className="max-w-full truncate whitespace-nowrap font-mono text-[11px] text-zinc-400 hover:text-[#E79300] cursor-pointer transition-colors text-center"
                   title={`${wallet.address} — click to copy`}
                   onClick={() => copyToClipboard(wallet.address)}
                   role="button"
@@ -612,7 +612,7 @@ const WalletOverview = ({ onLogout }) => {
                       {orderedAssets.length > 1 && (
                         <button
                           type="button"
-                          className="asset-drag-handle compact-btn compact-btn--square hover:!text-[#FDB913] !mx-0 !my-0 cursor-grab active:cursor-grabbing"
+                          className="asset-drag-handle compact-btn compact-btn--square hover:!text-[#E79300] !mx-0 !my-0 cursor-grab active:cursor-grabbing"
                           aria-label={`Press and hold to reorder ${asset.name}`}
                           onMouseDown={(e) => e.stopPropagation()}
                         >
@@ -666,7 +666,7 @@ const WalletOverview = ({ onLogout }) => {
                               });
                               setCurrentTab('send');
                             }}
-                            className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1 whitespace-nowrap"
+                            className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1 whitespace-nowrap"
                           >
                             Send Asset
                           </button>
@@ -674,7 +674,7 @@ const WalletOverview = ({ onLogout }) => {
                         <button
                           onClick={() => removeWatchedAsset(asset.hash)}
                           onMouseDown={(e) => e.stopPropagation()}
-                          className="remove-token-btn flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-lg text-sm leading-none text-red-400/50 hover:bg-red-950/60 hover:text-red-400 transition-all"
+                          className="remove-token-btn flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-lg text-sm leading-none transition-all"
                           title="Remove from wallet"
                         >
                           ×
@@ -703,7 +703,7 @@ const WalletOverview = ({ onLogout }) => {
                 type="button"
                 onClick={handleFetchManualAsset}
                 disabled={isFetching || !manualAssetHash}
-                className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1 w-full sm:w-auto flex-shrink-0"
+                className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1 w-full sm:w-auto flex-shrink-0"
               >
                 {isFetching ? 'Adding…' : '+ Add Token'}
               </button>
@@ -737,7 +737,7 @@ const WalletOverview = ({ onLogout }) => {
                 type="button"
                 onClick={openOrdersExpanded ? () => fetchOpenOrders() : handleOpenOrdersToggle}
                 disabled={loadingOpenOrders}
-                className={`compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1${
+                className={`compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1${
                   openOrdersExpanded ? ' compact-btn--active' : ''
                 }`}
               >
@@ -753,7 +753,7 @@ const WalletOverview = ({ onLogout }) => {
                 <button
                   type="button"
                   onClick={() => setOpenOrdersExpanded(false)}
-                  className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1"
+                  className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1"
                 >
                   Close
                 </button>
@@ -769,14 +769,14 @@ const WalletOverview = ({ onLogout }) => {
                         <button
                           type="button"
                           onClick={expandAllAssetGroups}
-                          className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1"
+                          className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1"
                         >
                           Show all assets
                         </button>
                         <button
                           type="button"
                           onClick={() => collapseAllAssetGroups(openOrders.data)}
-                          className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1"
+                          className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1"
                         >
                           Hide all assets
                         </button>
@@ -843,14 +843,14 @@ const WalletOverview = ({ onLogout }) => {
                                 type="button"
                                 onClick={() => copyToClipboard(asset.hash)}
                                 title={`Copy asset hash: ${asset.hash}`}
-                                className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1 font-mono tabular-nums max-w-[calc(100%-4.5rem)] sm:max-w-none truncate"
+                                className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1 font-mono tabular-nums max-w-[calc(100%-4.5rem)] sm:max-w-none truncate"
                               >
                                 {asset.hash?.slice(0, 8)}…{asset.hash?.slice(-6)}
                               </button>
                               <button
                                 type="button"
                                 onClick={() => toggleAssetGroup(asset)}
-                                className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1 flex-shrink-0"
+                                className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1 flex-shrink-0"
                               >
                                 {isGroupCollapsed ? 'Show' : 'Hide'}
                               </button>
@@ -963,7 +963,7 @@ const WalletOverview = ({ onLogout }) => {
                     type="button"
                     onClick={overviewLiquidityExpanded ? () => fetchLiquidityPositions() : handleLiquidityToggle}
                     disabled={loadingLiquidityPositions}
-                    className={`compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1${
+                    className={`compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1${
                       overviewLiquidityExpanded ? ' compact-btn--active' : ''
                     }`}
                   >
@@ -979,7 +979,7 @@ const WalletOverview = ({ onLogout }) => {
                     <button
                       type="button"
                       onClick={() => setOverviewLiquidityExpanded(false)}
-                      className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1"
+                      className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1"
                     >
                       Close
                     </button>
@@ -1013,7 +1013,7 @@ const WalletOverview = ({ onLogout }) => {
                               type="button"
                               onClick={() => copyToClipboard(position.hash)}
                               title={`Copy asset hash: ${position.hash}`}
-                              className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1 font-mono tabular-nums flex-shrink-0"
+                              className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1 font-mono tabular-nums flex-shrink-0"
                             >
                               {position.hash?.slice(0, 8)}…{position.hash?.slice(-6)}
                             </button>
@@ -1056,7 +1056,7 @@ const WalletOverview = ({ onLogout }) => {
                                 });
                                 setCurrentTab('dex');
                               }}
-                              className="compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1"
+                              className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1"
                             >
                               Manage in DEX
                             </button>
@@ -1087,12 +1087,14 @@ const WalletOverview = ({ onLogout }) => {
 
       </div>
 
-      <button
-        onClick={onLogout}
-        className="px-4 py-2 text-sm font-medium text-red-400 border border-red-700/60 rounded-lg hover:bg-red-950/40 transition-colors mt-4"
-      >
-        Logout
-      </button>
+      <div className="mt-10 pt-2">
+        <button
+          onClick={onLogout}
+          className="wallet-action-btn !mx-0 !mb-0 py-3 px-5 font-semibold"
+        >
+          Logout
+        </button>
+      </div>
 
       <ConfirmDialog
         open={Boolean(cancelConfirm)}

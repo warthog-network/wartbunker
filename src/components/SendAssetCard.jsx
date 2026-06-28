@@ -216,7 +216,7 @@ const SendAssetCard = ({
             type="button"
             onClick={handleMaxAmount}
             disabled={!assetBalance || assetBalance === '0'}
-            className="compact-btn hover:!text-[#FDB913] disabled:opacity-40 !mx-2 !my-1 !px-3 !py-1"
+            className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-2 !my-1 !px-3 !py-1"
           >
             MAX
           </button>

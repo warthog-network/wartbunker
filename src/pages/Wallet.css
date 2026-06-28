@@ -79,8 +79,8 @@
 }
 
 .container button {
-  background: linear-gradient(45deg, #FFC107, #FFECB3);
-  color: #1C2526;
+  background: #E79300;
+  color: #fff;
   font-family: 'Montserrat';
   font-weight: 700;
   padding: 10px 20px;
@@ -95,7 +95,8 @@
 
 .container button:hover {
   transform: scale(1.05);
-  box-shadow: 0 0 10px #FFC107;
+  background: #c47d00;
+  box-shadow: 0 0 10px #E79300;
 }
 
 .container button:active {
@@ -206,8 +207,8 @@
   min-width: 7rem !important;
   line-height: 1.5 !important;
   text-align: center !important;
-  background: linear-gradient(45deg, #FFC107, #FFECB3) !important;
-  color: #1C2526 !important;
+  background: #E79300 !important;
+  color: #fff !important;
   border: 2px solid #1C2526 !important;
   border-radius: 4px !important;
   margin-right: 0 !important;

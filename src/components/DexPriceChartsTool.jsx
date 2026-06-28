@@ -178,7 +178,7 @@ const DexPriceChartsTool = ({ selectedNode: propSelectedNode }) => {
               <button
                 type="button"
                 onClick={() => setChartMode('candles')}
-                className={`compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1${
+                className={`compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1${
                   chartMode === 'candles' ? ' compact-btn--active' : ''
                 }`}
               >
@@ -187,7 +187,7 @@ const DexPriceChartsTool = ({ selectedNode: propSelectedNode }) => {
               <button
                 type="button"
                 onClick={() => setChartMode('trades')}
-                className={`compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1${
+                className={`compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1${
                   chartMode === 'trades' ? ' compact-btn--active' : ''
                 }`}
               >
@@ -214,7 +214,7 @@ const DexPriceChartsTool = ({ selectedNode: propSelectedNode }) => {
           <button
             onClick={loadPriceChart}
             disabled={chartLoading}
-            className="compact-btn hover:!text-[#FDB913] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
+            className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
           >
             {chartLoading ? 'Loading…' : 'Load Price Chart'}
           </button>

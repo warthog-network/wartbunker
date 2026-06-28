@@ -147,7 +147,7 @@ const NodeSelectionPage = ({ onNodeChange }) => {
                 <button
                   type="button"
                   onClick={useTestnet}
-                  className="network-node-btn network-node-btn--brand"
+                  className="wallet-action-btn !m-0 py-3 px-5 font-semibold whitespace-nowrap"
                 >
                   Use DeFi Testnet
                 </button>

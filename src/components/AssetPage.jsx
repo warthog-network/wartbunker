@@ -19,6 +19,8 @@ import AssetPriceChart from './AssetPriceChart.jsx';
 import { DEFAULT_NODE_URL } from '../utils/presetNodes.js';
 
 const AssetCardWithChart = ({ asset, isCompact, selectedNode, onCopyHash, chartPriority = false }) => {
+  const { wallet, watchedAssets, addWatchedAsset } = useWallet();
+  const toast = useToast();
   const chartSectionRef = useRef(null);
   const [chartVisible, setChartVisible] = useState(chartPriority);
   const [chartLoading, setChartLoading] = useState(false);
@@ -171,6 +173,17 @@ const AssetCardWithChart = ({ asset, isCompact, selectedNode, onCopyHash, chartP
 
   const supply = asset.totalSupply?.str || '0';
   const hash = asset.hash || '';
+  const isTracked = watchedAssets.some((w) => w.hash.toLowerCase() === hash.toLowerCase());
+
+  const handleTrackAsset = () => {
+    if (!wallet?.address) {
+      toast.error('Connect a wallet to track tokens');
+      return;
+    }
+    if (isTracked) return;
+    addWatchedAsset(hash, asset.name || '');
+    toast.success(`${asset.name || 'Token'} added to your wallet`);
+  };
 
   return (
     <div className="w-full bg-zinc-950 border border-zinc-700 rounded-2xl overflow-hidden">
@@ -227,15 +240,36 @@ const AssetCardWithChart = ({ asset, isCompact, selectedNode, onCopyHash, chartP
           )}
         </div>
 
-        <div className="mt-4 pt-3 border-t border-zinc-700 text-xs text-zinc-400 flex items-center justify-between gap-2">
+        <div className="mt-4 pt-3 border-t border-zinc-700 text-xs text-zinc-400 flex items-center justify-between gap-2 flex-wrap">
           <span>Created on-chain</span>
-          <button
-            type="button"
-            onClick={() => onCopyHash(hash)}
-            className="compact-btn text-blue-400 hover:!text-blue-300"
-          >
-            Copy Full Hash
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleTrackAsset}
+              disabled={isTracked}
+              className={`compact-btn !mx-0 !my-0 !px-3 !py-1 whitespace-nowrap ${
+                isTracked
+                  ? 'text-emerald-400 cursor-default opacity-80'
+                  : 'hover:!text-[#E79300]'
+              }`}
+              title={
+                isTracked
+                  ? 'Already in your wallet'
+                  : wallet?.address
+                    ? 'Add to tracked tokens'
+                    : 'Log in to track this token'
+              }
+            >
+              {isTracked ? '✓ Tracked' : '+ Track in Wallet'}
+            </button>
+            <button
+              type="button"
+              onClick={() => onCopyHash(hash)}
+              className="compact-btn text-blue-400 hover:!text-blue-300"
+            >
+              Copy Full Hash
+            </button>
+          </div>
         </div>
       </div>
 
@@ -503,7 +537,7 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
             key={tab.id}
             type="button"
             onClick={() => setActiveTab(tab.id)}
-            className={`compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1 whitespace-nowrap${
+            className={`compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1 whitespace-nowrap${
               activeTab === tab.id ? ' compact-btn--active' : ''
             }`}
           >
@@ -539,7 +573,7 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
               <button
                 onClick={handleCreateAsset}
                 disabled={loading.createAsset}
-                className="compact-btn hover:!text-[#FDB913] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
+                className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
               >
                 {loading.createAsset ? 'Creating Asset...' : 'Create Asset'}
               </button>
@@ -575,7 +609,7 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                       assetLookup: mode.id !== 'lookup' ? undefined : prev.assetLookup,
                     }));
                   }}
-                  className={`compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1 whitespace-nowrap${
+                  className={`compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1 whitespace-nowrap${
                     searchLookupMode === mode.id ? ' compact-btn--active' : ''
                   }`}
                 >
@@ -604,7 +638,7 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                     query('assetComplete', path);
                   }}
                   disabled={loading.assetComplete}
-                  className="compact-btn hover:!text-[#FDB913] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
+                  className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
                 >
                   {loading.assetComplete ? 'Querying…' : 'Query'}
                 </button>
@@ -643,7 +677,7 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                     query('assetComplete', path);
                   }}
                   disabled={loading.assetComplete}
-                  className="compact-btn hover:!text-[#FDB913] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
+                  className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
                 >
                   {loading.assetComplete ? 'Querying…' : 'Query'}
                 </button>
@@ -682,7 +716,7 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                     query('assetLookup', `asset/lookup/${encodeURIComponent(clean)}`);
                   }}
                   disabled={loading.assetLookup}
-                  className="compact-btn hover:!text-[#FDB913] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
+                  className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
                 >
                   {loading.assetLookup ? 'Querying…' : 'Query'}
                 </button>

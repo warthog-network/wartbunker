@@ -87,7 +87,7 @@ const ToolsPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
             key={tool.id}
             type="button"
             onClick={() => setActiveTool(tool.id)}
-            className={`compact-btn hover:!text-[#FDB913] !mx-0 !my-0 !px-3 !py-1${
+            className={`compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1${
               resolvedTool === tool.id ? ' compact-btn--active' : ''
             }`}
           >
@@ -116,7 +116,7 @@ const ToolsPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
           <button
             onClick={handleValidateAddress}
             disabled={isValidating || !address}
-            className="compact-btn hover:!text-[#FDB913] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
+            className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
           >
             {isValidating ? 'Validating…' : 'Validate Address'}
           </button>
@@ -165,7 +165,7 @@ const ToolsPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
           <button
             onClick={handleMineNow}
             disabled={!isFakeMineAllowed(selectedNode) || isMiningNow}
-            className="compact-btn hover:!text-[#FDB913] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
+            className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
           >
             {isMiningNow ? 'Mining...' : '⛏️ Mine Now'}
           </button>

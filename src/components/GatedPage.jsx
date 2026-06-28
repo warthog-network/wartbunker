@@ -119,7 +119,7 @@ const GatedPage = () => {
           <button
             onClick={fetchServerSecret}
             disabled={serverLoading || !wallet?.address || !isSigningUnlocked}
-            className="px-6 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold"
+            className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
           >
             {serverLoading ? 'Verifying with server...' : 'Unlock Protected Content (sign & verify)'}
           </button>
