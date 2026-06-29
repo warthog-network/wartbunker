@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { WalletProvider, useWallet } from './WalletContext';
 import { ToastProvider, useToast } from './Toast';
+import { NumberDisplayProvider } from './NumberDisplayContext.jsx';
 import WalletOverview from './WalletOverview';
 import WalletSetup from './WalletSetup';
 import SendTransactionPage from './SendTransactionPage';
@@ -443,9 +444,11 @@ const WalletContent = () => {
 const Wallet = () => {
   return (
     <WalletProvider>
-      <ToastProvider>
-        <WalletContent />
-      </ToastProvider>
+      <NumberDisplayProvider>
+        <ToastProvider>
+          <WalletContent />
+        </ToastProvider>
+      </NumberDisplayProvider>
     </WalletProvider>
   );
 };

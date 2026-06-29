@@ -5,6 +5,7 @@ import { validateWarthogAddressInput } from '../utils/warthogFormat.js';
 import { DEFAULT_NODE_URL, isDefiNode } from '../utils/presetNodes.js';
 import DexPriceChartsTool from './DexPriceChartsTool.jsx';
 import DexVolumeGeneratorTool from './DexVolumeGeneratorTool.jsx';
+import NumberDisplaySettings from './NumberDisplaySettings.jsx';
 
 const ToolsPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const { performFakeMine, isFakeMineAllowed, wallet: contextWallet } = useWallet();
@@ -32,6 +33,7 @@ const ToolsPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     const options = [
       { id: 'validate', label: 'Validate Address' },
       { id: 'mine', label: 'Mine Block' },
+      { id: 'numbers', label: 'Number Display' },
     ];
     if (isDefi) {
       options.push(
@@ -78,7 +80,7 @@ const ToolsPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     <section>
       <h2>Tools</h2>
       <p className="text-sm text-zinc-400 mb-4">
-        Utility helpers for address checks, dev mining, and DEX tooling.
+        Utility helpers for address checks, display preferences, dev mining, and DEX tooling.
       </p>
 
       <div className="flex items-center gap-2 mb-6 flex-wrap">
@@ -154,6 +156,10 @@ const ToolsPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
             </div>
           )}
         </div>
+      )}
+
+      {resolvedTool === 'numbers' && (
+        <NumberDisplaySettings />
       )}
 
       {resolvedTool === 'mine' && (

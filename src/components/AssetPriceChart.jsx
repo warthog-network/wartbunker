@@ -1,11 +1,12 @@
 import React, { useId, useMemo, useState } from 'react';
 import {
   computeChartPriceStats,
-  formatAssetPrice,
   formatChartChangePercent,
   formatChartDataSpan,
   toChartSeries,
 } from '../utils/dexPrice.js';
+import FormattedNumber from './FormattedNumber.jsx';
+import { useNumberDisplay } from './NumberDisplayContext.jsx';
 
 const CHART_WIDTH = 640;
 const CHART_HEIGHT = 280;
@@ -47,6 +48,7 @@ const AssetPriceChart = ({
   poolSpot = null,
   candleInterval = '1h',
 }) => {
+  const { formatNumber } = useNumberDisplay();
   const [hoverIdx, setHoverIdx] = useState(null);
   const areaGradientId = useId();
   const shellClass = embedded
@@ -139,9 +141,9 @@ const AssetPriceChart = ({
           <div className="text-xs uppercase tracking-[0.12em] text-purple-400 mb-0.5">
             {mode === 'candles' ? 'OHLC Close' : 'Trade Price'} • {intervalLabel || 'History'}
           </div>
-          <div className={`font-mono font-semibold text-white tabular-nums ${embedded ? 'text-xl' : 'text-2xl'}`}>
-            {formatAssetPrice(stats?.last)}
-            <span className="text-sm text-zinc-500 font-normal ml-2">WART/{assetName}</span>
+          <div className={`font-semibold ${embedded ? 'text-xl' : 'text-2xl'}`}>
+            <FormattedNumber value={stats?.last} className="font-semibold" />
+            <span className="text-sm text-zinc-500 font-normal ml-2 font-sans">WART/{assetName}</span>
           </div>
           {mode === 'trades' && (
             <div className="text-[10px] text-zinc-500 mt-0.5">
@@ -153,14 +155,14 @@ const AssetPriceChart = ({
               {tradePrice != null && Number.isFinite(tradePrice) && (
                 <span className="text-zinc-500">
                   Last trade{' '}
-                  <span className="text-[#FDB913]">{formatAssetPrice(tradePrice)}</span>
+                  <FormattedNumber value={tradePrice} />
                   <span className="text-zinc-600 ml-1">WART/{assetName}</span>
                 </span>
               )}
               {poolSpot != null && Number.isFinite(poolSpot) && (
                 <span className="text-zinc-500">
                   Pool spot{' '}
-                  <span className="text-blue-400">{formatAssetPrice(poolSpot)}</span>
+                  <FormattedNumber value={poolSpot} />
                   <span className="text-zinc-600 ml-1">WART/{assetName}</span>
                 </span>
               )}
@@ -170,11 +172,11 @@ const AssetPriceChart = ({
         <div className="flex gap-4 text-xs font-mono">
           <div>
             <span className="text-zinc-500">Low </span>
-            <span className="text-zinc-300">{formatAssetPrice(stats?.min)}</span>
+            <FormattedNumber value={stats?.min} />
           </div>
           <div>
             <span className="text-zinc-500">High </span>
-            <span className="text-zinc-300">{formatAssetPrice(stats?.max)}</span>
+            <FormattedNumber value={stats?.max} />
           </div>
           <div>
             <span className="text-zinc-500">{stats?.changeLabel ?? 'Δ 24h'} </span>
@@ -233,7 +235,7 @@ const AssetPriceChart = ({
                 fontSize="10"
                 fontFamily="ui-monospace, monospace"
               >
-                {formatAssetPrice(tick.val, 6)}
+                {formatNumber(tick.val, { maxDecimals: 6 })}
               </text>
             </g>
           ))}

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
+import FormattedNumber from './FormattedNumber.jsx';
 import { isValidAssetHash } from '../utils/warthogFormat';
 import {
   createWarthogApi,
@@ -19,6 +20,7 @@ import AssetPriceChart from './AssetPriceChart.jsx';
 import { DEFAULT_NODE_URL } from '../utils/presetNodes.js';
 
 const AssetCardWithChart = ({ asset, isCompact, selectedNode, onCopyHash, chartPriority = false }) => {
+
   const { wallet, watchedAssets, addWatchedAsset } = useWallet();
   const toast = useToast();
   const chartSectionRef = useRef(null);
@@ -171,7 +173,7 @@ const AssetCardWithChart = ({ asset, isCompact, selectedNode, onCopyHash, chartP
 
   if (!asset) return null;
 
-  const supply = asset.totalSupply?.str || '0';
+
   const hash = asset.hash || '';
   const isTracked = watchedAssets.some((w) => w.hash.toLowerCase() === hash.toLowerCase());
 
@@ -220,7 +222,7 @@ const AssetCardWithChart = ({ asset, isCompact, selectedNode, onCopyHash, chartP
           </div>
           <div>
             <div className="text-xs text-zinc-400 mb-0.5">Total Supply</div>
-            <div className="font-mono font-medium text-emerald-400 tabular-nums">{supply}</div>
+            <FormattedNumber value={asset.totalSupply?.str || '0'} variant="balance" className="font-medium" />
           </div>
           <div>
             <div className="text-xs text-zinc-400 mb-0.5">Owner Account</div>

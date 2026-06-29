@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState, Fragment } from 'react';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
+import { useNumberDisplay } from './NumberDisplayContext.jsx';
+import FormattedNumber from './FormattedNumber.jsx';
 import ConfirmDialog from './ConfirmDialog';
 import { isValidAssetHash } from '../utils/warthogFormat';
 import { createWarthogApi, getNodeData } from '../utils/warthogClient.js';
@@ -11,6 +13,12 @@ import {
 } from '../utils/cancelLimitOrder.js';
 
 const WalletOverview = ({ onLogout }) => {
+  const {
+    formatBalance,
+    limitOrderBuyClasses,
+    limitOrderSellClasses,
+    liquidityPoolClasses,
+  } = useNumberDisplay();
   const {
     wallet,
     balance,
@@ -68,12 +76,6 @@ const WalletOverview = ({ onLogout }) => {
   const [loadingLiquidityPositions, setLoadingLiquidityPositions] = useState(false);
   const [cancellingOrderHash, setCancellingOrderHash] = useState(null);
   const [cancelConfirm, setCancelConfirm] = useState(null);
-
-  const trimBalanceDisplay = (value) => {
-    const s = value == null ? '0' : String(value);
-    if (!s.includes('.')) return s;
-    return s.replace(/(\.\d*?[1-9])0+$|\.0+$/, '$1') || '0';
-  };
 
   const hasPositiveBalance = (balanceInfo) => {
     if (!balanceInfo) return false;
@@ -258,7 +260,7 @@ const WalletOverview = ({ onLogout }) => {
             if (!hasPositiveBalance(balanceInfo)) return null;
 
             const decimals = tokenInfo.decimals ?? 8;
-            const lpBalance = trimBalanceDisplay(await formatTokenBalance(balanceInfo, decimals));
+            const lpBalance = await formatTokenBalance(balanceInfo, decimals);
 
             const market = marketRes.code === 0 ? marketRes.data : null;
             const baseAsset = market?.baseAsset || market?.asset || orderedAssets.find(
@@ -267,9 +269,9 @@ const WalletOverview = ({ onLogout }) => {
             const pool = market?.liquidityPool || market?.liquidity || {};
             const assetName = baseAsset.name || tokenInfo.name || 'Asset';
 
-            const formatReserve = (reserve) => {
-              if (reserve?.str) return trimBalanceDisplay(reserve.str);
-              return trimBalanceDisplay(reserve ?? '0');
+            const reserveValue = (reserve) => {
+              if (reserve?.str != null) return reserve.str;
+              return reserve ?? '0';
             };
 
             return {
@@ -278,8 +280,8 @@ const WalletOverview = ({ onLogout }) => {
               assetId: baseAsset.id,
               decimals,
               lpBalance,
-              poolWart: formatReserve(pool.wart || pool.WART),
-              poolAsset: formatReserve(pool.asset || pool[assetName]),
+              poolWart: reserveValue(pool.wart || pool.WART),
+              poolAsset: reserveValue(pool.asset || pool[assetName]),
             };
           } catch {
             return null;
@@ -368,14 +370,12 @@ const WalletOverview = ({ onLogout }) => {
   // ==================== STYLIZED ORDER CARD RENDERER ====================
   const renderOrderCard = (order, direction, assetName, onCopy) => {
     const isBuy = direction === 'buy';
-    const amountStr = order.amount?.str || '0';
-    const filledStr = order.filled?.str || '0';
-    const formattedPrice = order.formattedLimitPrice
-      ?? (order.limit?.doubleAdjusted != null
-        ? Number(order.limit.doubleAdjusted).toFixed(8)
-        : '0.00000000');
-    const amountNum = parseFloat(amountStr);
-    const filledNum = parseFloat(filledStr);
+    const orderClasses = isBuy ? limitOrderBuyClasses : limitOrderSellClasses;
+    const amountRaw = order.amount?.str || order.amount || '0';
+    const filledRaw = order.filled?.str || order.filled || '0';
+    const limitValue = order.limit?.doubleAdjusted ?? order.limit ?? '0';
+    const amountNum = parseFloat(String(amountRaw));
+    const filledNum = parseFloat(String(filledRaw));
     const fillPct = amountNum > 0 ? Math.min(100, Math.floor((filledNum / amountNum) * 100)) : 0;
     const isFullyFilled = fillPct >= 100;
     const isCancelling = cancellingOrderHash === order.txHash;
@@ -384,14 +384,15 @@ const WalletOverview = ({ onLogout }) => {
       <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-3 text-sm">
         <div className="flex justify-between items-start mb-2">
           <div>
-            <span className={`inline-block text-[10px] font-mono px-2 py-px rounded ${isBuy ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
+            <span className={`inline-block text-[10px] font-mono px-2 py-px rounded ${orderClasses.bgMuted} ${orderClasses.text}`}>
               {isBuy ? 'BUY' : 'SELL'}
             </span>
           </div>
           <div className="text-right">
             <span className="text-xs text-zinc-400">Limit Price</span>
-            <div className="font-mono font-semibold text-white tabular-nums">
-              {formattedPrice} <span className="text-xs text-zinc-400 font-normal">WART/{assetName}</span>
+            <div className="font-semibold">
+              <FormattedNumber value={limitValue} />{' '}
+              <span className="text-xs text-zinc-400 font-normal font-sans">WART/{assetName}</span>
             </div>
           </div>
         </div>
@@ -399,11 +400,17 @@ const WalletOverview = ({ onLogout }) => {
         <div className="grid grid-cols-2 gap-3 text-xs mb-2">
           <div>
             <span className="text-zinc-400">Amount</span>
-            <div className="font-mono text-white font-medium tabular-nums">{amountStr} <span className="text-zinc-400">{assetName}</span></div>
+            <div className="font-medium">
+              <FormattedNumber value={amountRaw} variant="balance" />{' '}
+              <span className="text-zinc-400 font-sans">{assetName}</span>
+            </div>
           </div>
           <div className="text-right">
             <span className="text-zinc-400">Filled</span>
-            <div className="font-mono text-white font-medium tabular-nums">{filledStr} <span className="text-zinc-400">{assetName}</span></div>
+            <div className="font-medium">
+              <FormattedNumber value={filledRaw} variant="balance" />{' '}
+              <span className="text-zinc-400 font-sans">{assetName}</span>
+            </div>
           </div>
         </div>
 
@@ -415,7 +422,7 @@ const WalletOverview = ({ onLogout }) => {
           </div>
           <div className="h-1.5 w-full bg-zinc-800 rounded-full overflow-hidden">
             <div 
-              className={`h-full rounded-full transition-all duration-300 ${isBuy ? 'bg-emerald-500' : 'bg-rose-500'}`}
+              className={`h-full rounded-full transition-all duration-300 ${orderClasses.bgSolid}`}
               style={{ width: `${fillPct}%` }}
             />
           </div>
@@ -502,13 +509,15 @@ const WalletOverview = ({ onLogout }) => {
                   Refresh
                 </button>
               </div>
-              <div className="flex items-baseline gap-2 min-w-0 flex-wrap">
+              <div className="flex items-baseline gap-2 min-w-0 flex-wrap text-white">
                 {balanceLoading ? (
                   <div className="h-9 w-36 bg-zinc-800/80 rounded-lg animate-pulse" />
                 ) : (
-                  <span className="text-3xl font-semibold text-white tabular-nums tracking-tight break-all">
-                    {balance}
-                  </span>
+                  <FormattedNumber
+                    value={balance}
+                    variant="balance"
+                    className="text-3xl font-semibold tracking-tight break-all"
+                  />
                 )}
                 <span className="text-sm font-medium text-[#FDB913]">WART</span>
               </div>
@@ -648,9 +657,9 @@ const WalletOverview = ({ onLogout }) => {
                     <div className="flex items-center justify-between gap-2 min-w-0 w-full sm:w-auto sm:flex-shrink-0 sm:max-w-[55%]">
                       <div
                         className="min-w-0 flex-1 font-mono text-xs sm:text-sm text-white tabular-nums truncate text-left sm:text-right"
-                        title={`${asset.balance} ${asset.name}`}
+                        title={`${formatBalance(asset.balance)} ${asset.name}`}
                       >
-                        {asset.balance}
+                        <FormattedNumber value={asset.balance} variant="balance" />
                         <span className="text-[10px] text-zinc-400 ml-1">{asset.name}</span>
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
@@ -862,11 +871,11 @@ const WalletOverview = ({ onLogout }) => {
                             {buyOrders.length > 0 && (
                               <div>
                                 <div className="flex items-center gap-2 mb-2 px-1">
-                                  <span className="inline-block w-2 h-2 rounded-full bg-emerald-400" />
-                                  <span className="uppercase tracking-[1.5px] text-xs font-semibold text-emerald-400">
+                                  <span className={`inline-block w-2 h-2 rounded-full ${limitOrderBuyClasses.bgSolid}`} />
+                                  <span className={`uppercase tracking-[1.5px] text-xs font-semibold ${limitOrderBuyClasses.text}`}>
                                     Buy Orders
                                   </span>
-                                  <span className="text-xs text-emerald-400/50">({buyOrders.length})</span>
+                                  <span className={`text-xs ${limitOrderBuyClasses.textDim}`}>({buyOrders.length})</span>
                                 </div>
                                 <div className="space-y-2">
                                   {buyOrders.map((order, oIdx) => (
@@ -881,11 +890,11 @@ const WalletOverview = ({ onLogout }) => {
                             {sellOrders.length > 0 && (
                               <div>
                                 <div className="flex items-center gap-2 mb-2 px-1">
-                                  <span className="inline-block w-2 h-2 rounded-full bg-rose-400" />
-                                  <span className="uppercase tracking-[1.5px] text-xs font-semibold text-rose-400">
+                                  <span className={`inline-block w-2 h-2 rounded-full ${limitOrderSellClasses.bgSolid}`} />
+                                  <span className={`uppercase tracking-[1.5px] text-xs font-semibold ${limitOrderSellClasses.text}`}>
                                     Sell Orders
                                   </span>
-                                  <span className="text-xs text-rose-400/50">({sellOrders.length})</span>
+                                  <span className={`text-xs ${limitOrderSellClasses.textDim}`}>({sellOrders.length})</span>
                                 </div>
                                 <div className="space-y-2">
                                   {sellOrders.map((order, oIdx) => (
@@ -941,11 +950,11 @@ const WalletOverview = ({ onLogout }) => {
           <div className="bg-zinc-950 border border-zinc-700 rounded-2xl overflow-hidden">
             <div className="px-4 py-3 bg-zinc-900/80 border-b border-zinc-700 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold uppercase tracking-[0.12em] text-amber-400">
+                <span className={`text-xs font-semibold uppercase tracking-[0.12em] ${liquidityPoolClasses.text}`}>
                   My Liquidity Positions
                 </span>
                 {overviewLiquidityPositions && (
-                  <span className="text-[10px] px-2 py-0.5 bg-amber-500/15 text-amber-300 rounded-full font-mono border border-amber-500/20">
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono border ${liquidityPoolClasses.bgMuted} ${liquidityPoolClasses.text} ${liquidityPoolClasses.borderMuted}`}>
                     {overviewLiquidityPositions.length} pool{overviewLiquidityPositions.length !== 1 ? 's' : ''}
                   </span>
                 )}
@@ -1001,7 +1010,7 @@ const WalletOverview = ({ onLogout }) => {
                               </div>
                               <div className="min-w-0">
                                 <div className="font-bold text-lg tracking-tight text-white truncate">
-                                  {position.name} <span className="text-amber-400/70 font-normal text-sm">LP</span>
+                                  {position.name} <span className={`font-normal text-sm ${liquidityPoolClasses.textMuted}`}>LP</span>
                                 </div>
                                 <div className="text-[10px] text-zinc-500 font-mono">
                                   {position.assetId != null ? `ID ${position.assetId} · ` : ''}
@@ -1020,28 +1029,28 @@ const WalletOverview = ({ onLogout }) => {
                           </div>
 
                           <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-                            <div className="bg-zinc-950/80 border border-amber-800/40 rounded-lg p-3">
-                              <div className="text-[10px] uppercase tracking-wider text-amber-400/80 mb-1">
+                            <div className={`bg-zinc-950/80 border rounded-lg p-3 ${liquidityPoolClasses.borderMuted}`}>
+                              <div className={`text-[10px] uppercase tracking-wider mb-1 ${liquidityPoolClasses.textMuted}`}>
                                 Your LP Shares
                               </div>
-                              <div className="font-mono text-lg font-semibold text-white tabular-nums">
-                                {position.lpBalance}
+                              <div className="text-lg font-semibold">
+                                <FormattedNumber value={position.lpBalance} variant="balance" />
                               </div>
                             </div>
                             <div className="bg-zinc-950/80 border border-zinc-800 rounded-lg p-3">
                               <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1">
                                 Pool WART
                               </div>
-                              <div className="font-mono text-sm font-medium text-white tabular-nums">
-                                {position.poolWart}
+                              <div className="text-sm font-medium">
+                                <FormattedNumber value={position.poolWart} variant="balance" />
                               </div>
                             </div>
                             <div className="bg-zinc-950/80 border border-zinc-800 rounded-lg p-3">
                               <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1">
                                 Pool {position.name}
                               </div>
-                              <div className="font-mono text-sm font-medium text-white tabular-nums">
-                                {position.poolAsset}
+                              <div className="text-sm font-medium">
+                                <FormattedNumber value={position.poolAsset} variant="balance" />
                               </div>
                             </div>
                           </div>

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useToast } from './Toast';
+import FormattedNumber from './FormattedNumber.jsx';
 import { createWarthogApi, getNodeData } from '../utils/warthogClient.js';
 import {
   CHART_INTERVALS,
@@ -8,7 +9,6 @@ import {
   buildPriceHistoryFromLatest,
   buildTradesPath,
   computePoolSpotPrice,
-  formatAssetPrice,
   normalizeChartAssetHash,
   parseCandleResponse,
   parseTradeResponse,
@@ -260,10 +260,14 @@ const DexPriceChartsTool = ({ selectedNode: propSelectedNode }) => {
                         {new Date(t.timestamp * 1000).toLocaleString()}
                       </td>
                       <td className="px-3 py-1.5 text-right">{t.height}</td>
-                      <td className="px-3 py-1.5 text-right">{formatAssetPrice(t.base, 4)}</td>
-                      <td className="px-3 py-1.5 text-right">{formatAssetPrice(t.quote, 4)}</td>
-                      <td className="px-3 py-1.5 text-right text-[#FDB913]">
-                        {formatAssetPrice(t.price)}
+                      <td className="px-3 py-1.5 text-right">
+                        <FormattedNumber value={t.base} overrides={{ maxDecimals: 4 }} />
+                      </td>
+                      <td className="px-3 py-1.5 text-right">
+                        <FormattedNumber value={t.quote} overrides={{ maxDecimals: 4 }} />
+                      </td>
+                      <td className="px-3 py-1.5 text-right">
+                        <FormattedNumber value={t.price} />
                       </td>
                     </tr>
                   ))}

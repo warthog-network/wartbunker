@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
+import FormattedNumber from './FormattedNumber.jsx';
+import { useNumberDisplay } from './NumberDisplayContext.jsx';
 import {
   createWarthogApi,
   formatSubmitError,
@@ -8,10 +10,7 @@ import {
   getNodeData,
   signAndSubmitTransaction,
 } from '../utils/warthogClient.js';
-import {
-  computePoolSpotPrice,
-  formatAssetPrice,
-} from '../utils/dexPrice.js';
+import { computePoolSpotPrice } from '../utils/dexPrice.js';
 import { DEFAULT_NODE_URL } from '../utils/presetNodes.js';
 import { readPublicSession } from '../utils/sessionWallet.js';
 
@@ -29,6 +28,11 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const wallet = propWallet || readPublicSession();
 
   const toast = useToast();
+  const {
+    limitOrderBuyClasses,
+    limitOrderSellClasses,
+    liquidityPoolClasses,
+  } = useNumberDisplay();
 
   const [results, setResults] = useState({});
   const [loading, setLoading] = useState({});
@@ -61,13 +65,6 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     if (v == null) return fallback;
     if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return v;
     return fallback;
-  };
-
-  const formatBalance = (v) => {
-    let s = safeStr(v, '0');
-    if (typeof s !== 'string') s = String(s || '0');
-    if (!s.includes('.')) return s;
-    return s.replace(/(\.\d*?[1-9])0+$|\.0+$/, '$1') || '0';
   };
 
   // ==================== SMART NONCE HANDLING ====================
@@ -191,29 +188,29 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       const asset = d.asset || d.baseAsset || d.market?.asset || {};
       const liquidity = d.liquidityPool || d.liquidity || d.reserves || d.poolReserves || d.pool || {};
       
-      const wartReserve = safeStr(liquidity.wart || liquidity.WART, '0');
-      const assetReserve = safeStr(liquidity.asset || liquidity[asset.name] || liquidity.assetE8, '0');
-      
+      const wartReserve = liquidity.wart || liquidity.WART || '0';
+      const assetReserve = liquidity.asset || liquidity[asset.name] || liquidity.assetE8 || '0';
+
       const spotPrice = computePoolSpotPrice(d);
-      let price = spotPrice != null ? formatAssetPrice(spotPrice) : '—';
-      if (price === '—') {
-        const priceRaw = d.price || d.spotPrice || d.doubleAdjustedPrice || d.marketPrice;
-        price = safeStr(priceRaw, '—');
-        if (price === '—' && priceRaw && typeof priceRaw === 'object') {
-          price = priceRaw.doubleAdjusted != null ? String(priceRaw.doubleAdjusted) : price;
-        }
-      }
+      const priceRaw = d.price || d.spotPrice || d.doubleAdjustedPrice || d.marketPrice;
+      const priceDisplayValue = spotPrice ?? (
+        priceRaw != null
+          ? (typeof priceRaw === 'object' && priceRaw.doubleAdjusted != null
+            ? priceRaw.doubleAdjusted
+            : priceRaw)
+          : null
+      );
       
       return (
-        <div className="mt-6 bg-zinc-950 border border-emerald-700/60 rounded-3xl overflow-hidden shadow-xl">
+        <div className={`mt-6 bg-zinc-950 border rounded-3xl overflow-hidden shadow-xl ${liquidityPoolClasses.borderPanel}`}>
           <div className="px-6 py-5 bg-zinc-900 flex items-center justify-between border-b border-zinc-800">
             <div className="flex items-center gap-4">
-              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-emerald-400 via-teal-500 to-cyan-500 flex items-center justify-center text-white text-3xl font-bold shadow-inner ring-1 ring-white/20">
+              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-white text-3xl font-bold shadow-inner ring-1 ring-white/20 ${liquidityPoolClasses.bgSolid}`}>
                 {asset.name?.[0] || 'P'}
               </div>
               <div>
                 <div className="text-3xl font-semibold tracking-[-1.5px] text-white">
-                  {asset.name} <span className="text-emerald-400/60">/ WART</span>
+                  {asset.name} <span className={liquidityPoolClasses.textFaint}>/ WART</span>
                 </div>
                 <div className="font-mono text-[10px] text-zinc-500 -mt-1">
                   POOL • {asset.decimals || 8} decimals • Asset ID {asset.id || '—'}
@@ -226,10 +223,10 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                 onClick={() => copyToClipboard(asset.hash)}
                 className="text-right cursor-pointer group"
               >
-                <div className="font-mono text-xs text-zinc-400 group-hover:text-emerald-400 transition-colors">
+                <div className={`font-mono text-xs text-zinc-400 transition-colors ${liquidityPoolClasses.groupHoverText}`}>
                   {asset.hash.slice(0, 10)}…{asset.hash.slice(-8)}
                 </div>
-                <div className="text-[10px] text-emerald-500/70 group-hover:text-emerald-400">Copy Asset Hash</div>
+                <div className={`text-[10px] ${liquidityPoolClasses.textMuted} ${liquidityPoolClasses.groupHoverText}`}>Copy Asset Hash</div>
               </div>
             )}
           </div>
@@ -237,24 +234,28 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
           <div className="p-6">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
               <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-3">
-                <div className="flex items-center gap-1.5 text-[9px] uppercase tracking-[1px] text-amber-400 mb-0.5">
-                  <div className="w-1 h-1 rounded-full bg-amber-400"></div>
+                <div className={`flex items-center gap-1.5 text-[9px] uppercase tracking-[1px] mb-0.5 ${liquidityPoolClasses.text}`}>
+                  <div className={`w-1 h-1 rounded-full ${liquidityPoolClasses.bgSolid}`}></div>
                   WART RESERVE
                 </div>
-                <div className="font-mono text-2xl sm:text-3xl md:text-[26px] leading-none font-semibold text-white tabular-nums tracking-[-1.5px]">
-                  {formatBalance(wartReserve)}
-                </div>
+                <FormattedNumber
+                  value={wartReserve}
+                  variant="balance"
+                  className="text-2xl sm:text-3xl md:text-[26px] leading-none font-semibold tracking-[-1.5px]"
+                />
                 <div className="text-[10px] text-zinc-500 mt-0.5">WART</div>
               </div>
 
               <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-3">
-                <div className="flex items-center gap-1.5 text-[9px] uppercase tracking-[1px] text-emerald-400 mb-0.5">
-                  <div className="w-1 h-1 rounded-full bg-emerald-400"></div>
+                <div className={`flex items-center gap-1.5 text-[9px] uppercase tracking-[1px] mb-0.5 ${liquidityPoolClasses.text}`}>
+                  <div className={`w-1 h-1 rounded-full ${liquidityPoolClasses.bgSolid}`}></div>
                   {asset.name || 'ASSET'} RESERVE
                 </div>
-                <div className="font-mono text-2xl sm:text-3xl md:text-[26px] leading-none font-semibold text-white tabular-nums tracking-[-1.5px]">
-                  {formatBalance(assetReserve)}
-                </div>
+                <FormattedNumber
+                  value={assetReserve}
+                  variant="balance"
+                  className="text-2xl sm:text-3xl md:text-[26px] leading-none font-semibold tracking-[-1.5px]"
+                />
                 <div className="text-[10px] text-zinc-500 mt-0.5">{asset.name || 'Asset'}</div>
               </div>
 
@@ -263,9 +264,11 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                   <div className="w-1 h-1 rounded-full bg-violet-400"></div>
                   SPOT PRICE
                 </div>
-                <div className="font-mono text-2xl sm:text-3xl md:text-[26px] leading-none font-semibold text-white tabular-nums tracking-[-1.5px] mt-auto">
-                  {price}
-                </div>
+                <FormattedNumber
+                  value={priceDisplayValue}
+                  overrides={{ maxDecimals: 8 }}
+                  className="text-2xl sm:text-3xl md:text-[26px] leading-none font-semibold tracking-[-1.5px] mt-auto block"
+                />
                 <div className="text-[10px] text-zinc-500 mt-0.5">WART per {asset.name || 'asset'}</div>
               </div>
             </div>
@@ -273,33 +276,37 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
             <div className="mt-3 flex flex-wrap gap-x-6 gap-y-0.5 px-1 text-sm">
               {liquidity.shares && (
                 <div>
-                  <span className="text-emerald-400">Shares:</span>{" "}
-                  <span className="font-mono text-white">{safeStr(liquidity.shares, '')}</span>
+                  <span className={liquidityPoolClasses.text}>Shares:</span>{" "}
+                  <FormattedNumber value={liquidity.shares} variant="balance" />
                 </div>
               )}
               <div>
-                <span className="text-emerald-400">Buy orders:</span>{" "}
+                <span className={limitOrderBuyClasses.text}>Buy orders:</span>{" "}
                 <span className="font-mono text-white">{d.wartToAssetSwaps?.length || 0}</span>
               </div>
               <div>
-                <span className="text-rose-400">Sell orders:</span>{" "}
+                <span className={limitOrderSellClasses.text}>Sell orders:</span>{" "}
                 <span className="font-mono text-white">{d.assetToWartSwaps?.length || 0}</span>
               </div>
             </div>
 
             {(d.wartToAssetSwaps?.length > 0 || d.assetToWartSwaps?.length > 0) && (
               <details className="mt-3 group">
-                <summary className="cursor-pointer text-sm text-emerald-400 hover:text-emerald-300 flex items-center gap-2 px-1 select-none">
+                <summary className={`cursor-pointer text-sm flex items-center gap-2 px-1 select-none ${limitOrderBuyClasses.text}`}>
                   <span className="group-open:rotate-90 inline-block transition">▶</span> 
                   View open orders ({(d.wartToAssetSwaps?.length || 0) + (d.assetToWartSwaps?.length || 0)})
                 </summary>
                 <div className="mt-2 space-y-2 text-xs">
                   {d.wartToAssetSwaps?.length > 0 && (
                     <div>
-                      <div className="text-emerald-400 mb-1 px-1">Buy (WART → {asset.name})</div>
+                      <div className={`mb-1 px-1 ${limitOrderBuyClasses.text}`}>Buy (WART → {asset.name})</div>
                       {d.wartToAssetSwaps.slice(0, 2).map((order, idx) => (
                         <div key={idx} className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 flex items-center justify-between font-mono">
-                          <span className="text-white">Limit {safeStr(order.limit?.doubleAdjusted || order.limit, '—')} • {order.amount?.str || '0'} (filled {order.filled?.str || '0'})</span>
+                          <span>
+                            Limit <FormattedNumber value={order.limit?.doubleAdjusted || order.limit} overrides={{ maxDecimals: 8 }} /> •{' '}
+                            <FormattedNumber value={order.amount?.str || order.amount || '0'} variant="balance" /> (filled{' '}
+                            <FormattedNumber value={order.filled?.str || order.filled || '0'} variant="balance" />)
+                          </span>
                           <span onClick={() => copyToClipboard(order.txHash)} className="text-purple-400 hover:text-purple-300 cursor-pointer text-[10px]">
                             {order.txHash?.slice(0,8)}…{order.txHash?.slice(-6)}
                           </span>
@@ -309,10 +316,14 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                   )}
                   {d.assetToWartSwaps?.length > 0 && (
                     <div>
-                      <div className="text-rose-400 mb-1 px-1">Sell ({asset.name} → WART)</div>
+                      <div className={`mb-1 px-1 ${limitOrderSellClasses.text}`}>Sell ({asset.name} → WART)</div>
                       {d.assetToWartSwaps.slice(0, 2).map((order, idx) => (
                         <div key={idx} className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 flex items-center justify-between font-mono">
-                          <span className="text-white">Limit {safeStr(order.limit?.doubleAdjusted || order.limit, '—')} • {order.amount?.str || '0'} (filled {order.filled?.str || '0'})</span>
+                          <span>
+                            Limit <FormattedNumber value={order.limit?.doubleAdjusted || order.limit} overrides={{ maxDecimals: 8 }} /> •{' '}
+                            <FormattedNumber value={order.amount?.str || order.amount || '0'} variant="balance" /> (filled{' '}
+                            <FormattedNumber value={order.filled?.str || order.filled || '0'} variant="balance" />)
+                          </span>
                           <span onClick={() => copyToClipboard(order.txHash)} className="text-purple-400 hover:text-purple-300 cursor-pointer text-[10px]">
                             {order.txHash?.slice(0,8)}…{order.txHash?.slice(-6)}
                           </span>
@@ -362,20 +373,22 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       const assetName = assetInfo.name || 'Pool';
 
       return (
-        <div className="mt-6 bg-amber-950/25 border border-amber-700 rounded-3xl p-6">
+        <div className={`mt-6 border rounded-3xl p-6 ${liquidityPoolClasses.bgPanel} ${liquidityPoolClasses.border}`}>
           <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between mb-4 gap-1 sm:gap-4">
             <div className="min-w-0 flex-1">
-              <div className="text-amber-400 text-xs tracking-[2px] font-medium">YOUR LP SHARES</div>
-              <div className="text-4xl sm:text-5xl font-semibold tabular-nums tracking-[-1.5px] text-white font-mono mt-1 break-all sm:break-normal">
-                {formatBalance(balanceInfo)}
-              </div>
+              <div className={`text-xs tracking-[2px] font-medium ${liquidityPoolClasses.text}`}>YOUR LP SHARES</div>
+              <FormattedNumber
+                value={balanceInfo}
+                variant="balance"
+                className="text-4xl sm:text-5xl font-semibold tracking-[-1.5px] mt-1 break-all sm:break-normal block"
+              />
             </div>
             <div className="text-left sm:text-right mt-0.5 sm:mt-0 flex-shrink-0">
-              <div className="text-xs text-amber-400/70">Redeemable in</div>
+              <div className={`text-xs ${liquidityPoolClasses.textMuted}`}>Redeemable in</div>
               <div className="font-semibold text-lg text-white">{assetName} pool</div>
             </div>
           </div>
-          <div className="text-[10px] text-amber-500/70 border-t border-amber-800 pt-3">
+          <div className={`text-[10px] border-t pt-3 ${liquidityPoolClasses.textMuted} ${liquidityPoolClasses.borderMuted}`}>
             LP shares represent your pool ownership. Withdraw below to receive underlying asset + WART.
           </div>
         </div>
@@ -408,27 +421,29 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       const assetName = assetInfo.name || balData.asset?.name || 'Asset';
 
       return (
-        <div className="mt-6 bg-emerald-950/30 border border-emerald-700 rounded-3xl p-6">
+        <div className={`mt-6 border rounded-3xl p-6 ${liquidityPoolClasses.bgPanel} ${liquidityPoolClasses.border}`}>
           <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between mb-4 gap-1 sm:gap-4">
             <div className="min-w-0 flex-1">
-              <div className="text-emerald-400 text-xs tracking-[2px] font-medium">YOUR LIQUIDITY POSITION</div>
-              <div className="text-4xl sm:text-5xl font-semibold tabular-nums tracking-[-1.5px] text-white font-mono mt-1 break-all sm:break-normal">
-                {formatBalance(balanceInfo)}
-              </div>
+              <div className={`text-xs tracking-[2px] font-medium ${liquidityPoolClasses.text}`}>YOUR LIQUIDITY POSITION</div>
+              <FormattedNumber
+                value={balanceInfo}
+                variant="balance"
+                className="text-4xl sm:text-5xl font-semibold tracking-[-1.5px] mt-1 break-all sm:break-normal block"
+              />
             </div>
             <div className="text-left sm:text-right mt-0.5 sm:mt-0 flex-shrink-0">
-              <div className="text-xs text-emerald-400/70">Current holding in</div>
+              <div className={`text-xs ${liquidityPoolClasses.textMuted}`}>Current holding in</div>
               <div className="font-semibold text-lg text-white">{assetName}</div>
             </div>
           </div>
           
-          <div className="text-[10px] text-emerald-500/70 border-t border-emerald-800 pt-3">
+          <div className={`text-[10px] border-t pt-3 ${liquidityPoolClasses.textMuted} ${liquidityPoolClasses.borderMuted}`}>
             This reflects your share of the pool after confirmed deposits. Larger positions = higher fee share.
           </div>
 
           <details className="mt-4">
-            <summary className="cursor-pointer text-xs text-emerald-400/60 hover:text-emerald-400">View raw balance JSON</summary>
-            <pre className="mt-2 text-[10px] bg-black/40 p-3 rounded-xl text-emerald-300/80 overflow-auto">{JSON.stringify(result, null, 2)}</pre>
+            <summary className={`cursor-pointer text-xs ${liquidityPoolClasses.textFaint} ${liquidityPoolClasses.groupHoverText}`}>View raw balance JSON</summary>
+            <pre className={`mt-2 text-[10px] bg-black/40 p-3 rounded-xl overflow-auto ${liquidityPoolClasses.textMuted}`}>{JSON.stringify(result, null, 2)}</pre>
           </details>
         </div>
       );
@@ -528,16 +543,21 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
               <div className="p-4 space-y-4">
                 {buyOrders.length > 0 && (
                   <div>
-                    <div className="uppercase text-emerald-400 text-xs tracking-widest mb-2 px-1 flex items-center gap-2">
-                      <span className="inline-block w-2 h-2 bg-emerald-400 rounded-full"></span> 
+                    <div className={`uppercase text-xs tracking-widest mb-2 px-1 flex items-center gap-2 ${limitOrderBuyClasses.text}`}>
+                      <span className={`inline-block w-2 h-2 rounded-full ${limitOrderBuyClasses.bgSolid}`}></span> 
                       BUY ORDERS ({buyOrders.length})
                     </div>
                     <div className="space-y-2">
                       {buyOrders.slice(0, 5).map((order, oIdx) => (
                         <div key={oIdx} className="bg-zinc-900 border border-zinc-700 rounded-xl p-3 text-sm">
                           <div className="flex justify-between text-xs mb-1">
-                            <span className="text-emerald-400">Limit: {safeStr(order.limit?.doubleAdjusted || order.limit, '—')}</span>
-                            <span className="text-zinc-400">Filled: {order.filled?.str || '0'} / {order.amount?.str || '0'}</span>
+                            <span className={limitOrderBuyClasses.text}>
+                              Limit: <FormattedNumber value={order.limit?.doubleAdjusted || order.limit} overrides={{ maxDecimals: 8 }} />
+                            </span>
+                            <span className="text-zinc-400">
+                              Filled: <FormattedNumber value={order.filled?.str || order.filled || '0'} variant="balance" /> /{' '}
+                              <FormattedNumber value={order.amount?.str || order.amount || '0'} variant="balance" />
+                            </span>
                           </div>
                           <div onClick={() => copyToClipboard(order.txHash)} className="font-mono text-purple-400 text-xs cursor-pointer hover:underline">
                             {order.txHash?.slice(0,10)}…{order.txHash?.slice(-6)}
@@ -550,16 +570,21 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
 
                 {sellOrders.length > 0 && (
                   <div>
-                    <div className="uppercase text-rose-400 text-xs tracking-widest mb-2 px-1 flex items-center gap-2">
-                      <span className="inline-block w-2 h-2 bg-rose-400 rounded-full"></span> 
+                    <div className={`uppercase text-xs tracking-widest mb-2 px-1 flex items-center gap-2 ${limitOrderSellClasses.text}`}>
+                      <span className={`inline-block w-2 h-2 rounded-full ${limitOrderSellClasses.bgSolid}`}></span> 
                       SELL ORDERS ({sellOrders.length})
                     </div>
                     <div className="space-y-2">
                       {sellOrders.slice(0, 5).map((order, oIdx) => (
                         <div key={oIdx} className="bg-zinc-900 border border-zinc-700 rounded-xl p-3 text-sm">
                           <div className="flex justify-between text-xs mb-1">
-                            <span className="text-rose-400">Limit: {safeStr(order.limit?.doubleAdjusted || order.limit, '—')}</span>
-                            <span className="text-zinc-400">Filled: {order.filled?.str || '0'} / {order.amount?.str || '0'}</span>
+                            <span className={limitOrderSellClasses.text}>
+                              Limit: <FormattedNumber value={order.limit?.doubleAdjusted || order.limit} overrides={{ maxDecimals: 8 }} />
+                            </span>
+                            <span className="text-zinc-400">
+                              Filled: <FormattedNumber value={order.filled?.str || order.filled || '0'} variant="balance" /> /{' '}
+                              <FormattedNumber value={order.amount?.str || order.amount || '0'} variant="balance" />
+                            </span>
                           </div>
                           <div onClick={() => copyToClipboard(order.txHash)} className="font-mono text-purple-400 text-xs cursor-pointer hover:underline">
                             {order.txHash?.slice(0,10)}…{order.txHash?.slice(-6)}

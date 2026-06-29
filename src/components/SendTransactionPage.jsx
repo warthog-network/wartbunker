@@ -1,6 +1,7 @@
 import React, { useCallback, useState, useEffect } from 'react';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
+import FormattedNumber from './FormattedNumber.jsx';
 import SendAssetCard from './SendAssetCard.jsx';
 import {
   createWarthogApi,
@@ -191,7 +192,8 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
             <div>
               <div className="text-[10px] text-zinc-400 mb-0.5">Amount</div>
               <div className="font-semibold text-white">
-                {fullDetails.data?.amount?.str || amount} <span className="text-xs text-zinc-400">WART</span>
+                <FormattedNumber value={fullDetails.data?.amount?.str || amount} variant="balance" />{' '}
+                <span className="text-xs text-zinc-400 font-sans">WART</span>
               </div>
             </div>
 
@@ -199,7 +201,8 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
             <div>
               <div className="text-[10px] text-zinc-400 mb-0.5">Fee</div>
               <div className="font-semibold text-white">
-                {signed.fee?.str || '0.00000001'} <span className="text-xs text-zinc-400">WART</span>
+                <FormattedNumber value={signed.fee?.str || '0.00000001'} variant="balance" />{' '}
+                <span className="text-xs text-zinc-400 font-sans">WART</span>
               </div>
             </div>
 
@@ -292,7 +295,8 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
         <div className="flex items-center justify-between text-xs">
           <span className="text-zinc-500">Available balance</span>
           <span className="font-mono text-white tabular-nums">
-            {balance ?? '…'} <span className="text-[#FDB913]">WART</span>
+            {balance != null ? <FormattedNumber value={balance} variant="balance" /> : '…'}{' '}
+            <span className="text-[#FDB913] font-sans">WART</span>
           </span>
         </div>
 

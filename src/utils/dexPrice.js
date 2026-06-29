@@ -1,4 +1,5 @@
 import { getNodeData } from './warthogClient.js';
+import { formatDisplayNumber } from './numberDisplay.js';
 
 /** Node error when chart endpoints are not registered (common on pre-release builds). */
 export const CHART_API_UNSUPPORTED_CODE = 324;
@@ -73,12 +74,11 @@ export function computePoolSpotPrice(marketData) {
 }
 
 /** Format a WART-per-asset price for display. */
-export function formatAssetPrice(price, maxDecimals = 8) {
-  if (price == null || !Number.isFinite(price)) return '—';
-  if (price === 0) return '0';
-  if (price < 1e-8) return price.toExponential(4);
-  const fixed = price.toFixed(maxDecimals);
-  return fixed.replace(/(\.\d*?[1-9])0+$|\.0+$/, '$1') || '0';
+export function formatAssetPrice(price, maxDecimals = 8, prefs = null) {
+  return formatDisplayNumber(price, prefs ?? undefined, {
+    fallback: '—',
+    maxDecimals: maxDecimals ?? undefined,
+  });
 }
 
 /** Normalize a 64-char asset hash (no 0x). */

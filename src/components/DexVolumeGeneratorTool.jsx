@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
+import FormattedNumber from './FormattedNumber.jsx';
+import { useNumberDisplay } from './NumberDisplayContext.jsx';
 import { createWarthogApi } from '../utils/warthogClient.js';
-import { formatAssetPrice, normalizeChartAssetHash } from '../utils/dexPrice.js';
+import { normalizeChartAssetHash } from '../utils/dexPrice.js';
 import ConfirmDialog from './ConfirmDialog.jsx';
 import { DEFAULT_NODE_URL } from '../utils/presetNodes.js';
 import { readPublicSession } from '../utils/sessionWallet.js';
@@ -16,11 +18,13 @@ import {
 } from '../utils/dexVolume.js';
 
 const DexVolumeGeneratorTool = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
+
   const {
     nextNonce: contextNextNonce,
     isSigningUnlocked,
     isSessionLocked,
   } = useWallet();
+  const { limitOrderBuyClasses, limitOrderSellClasses } = useNumberDisplay();
   const selectedNode = propSelectedNode || (() => {
     try {
       return localStorage.getItem('selectedNode') || DEFAULT_NODE_URL;
@@ -56,13 +60,6 @@ const DexVolumeGeneratorTool = ({ selectedNode: propSelectedNode, wallet: propWa
       if (v.u64 !== undefined) return String(v.u64);
     }
     return fallback;
-  };
-
-  const formatBalance = (v) => {
-    let s = safeStr(v, '0');
-    if (typeof s !== 'string') s = String(s || '0');
-    if (!s.includes('.')) return s;
-    return s.replace(/(\.\d*?[1-9])0+$|\.0+$/, '$1') || '0';
   };
 
   const getSmartNonce = () => {
@@ -394,12 +391,13 @@ const DexVolumeGeneratorTool = ({ selectedNode: propSelectedNode, wallet: propWa
             <div className="p-4 bg-zinc-900/60 border border-zinc-700 rounded-2xl text-sm space-y-1">
               <div className="font-semibold text-white">{volumeContext.assetName} market snapshot</div>
               <div className="text-zinc-300">
-                Your balance: <span className="font-mono text-white">{formatBalance(volumeContext.balances.wart)}</span> WART
+                Your balance: <FormattedNumber value={volumeContext.balances.wart} variant="balance" /> WART
                 {' · '}
-                <span className="font-mono text-white">{formatBalance(volumeContext.balances.asset)}</span> {volumeContext.assetName}
+                <FormattedNumber value={volumeContext.balances.asset} variant="balance" /> {volumeContext.assetName}
               </div>
               <div className="text-zinc-400">
-                Pool: {formatBalance(volumeContext.pool.wart)} WART / {formatBalance(volumeContext.pool.asset)} {volumeContext.assetName}
+                Pool: <FormattedNumber value={volumeContext.pool.wart} variant="balance" /> WART /{' '}
+                <FormattedNumber value={volumeContext.pool.asset} variant="balance" /> {volumeContext.assetName}
                 {volumeContext.spotPriceLabel && (
                   <span> · Spot {volumeContext.spotPriceLabel} WART/{volumeContext.assetName}</span>
                 )}
@@ -435,11 +433,13 @@ const DexVolumeGeneratorTool = ({ selectedNode: propSelectedNode, wallet: propWa
                     {volumePlan.map((step, idx) => (
                       <tr key={idx} className="border-t border-zinc-800 text-zinc-300">
                         <td className="px-3 py-1.5">{step.round}</td>
-                        <td className={`px-3 py-1.5 ${step.side === 'buy' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        <td className={`px-3 py-1.5 ${step.side === 'buy' ? limitOrderBuyClasses.text : limitOrderSellClasses.text}`}>
                           {step.side}
                         </td>
                         <td className="px-3 py-1.5 text-right">{step.amount}</td>
-                        <td className="px-3 py-1.5 text-right">{formatAssetPrice(step.price)}</td>
+                        <td className="px-3 py-1.5 text-right">
+                          <FormattedNumber value={step.price} />
+                        </td>
                         <td className="px-3 py-1.5 text-right text-zinc-500">{step.limitHex}</td>
                       </tr>
                     ))}
@@ -466,7 +466,7 @@ const DexVolumeGeneratorTool = ({ selectedNode: propSelectedNode, wallet: propWa
                   >
                     {log.status === 'ok' ? '✓' : log.status === 'skipped' ? '○' : '✗'}
                     {' '}
-                    {log.side} #{log.round} @ {formatAssetPrice(log.price)}
+                    {log.side} #{log.round} @ <FormattedNumber value={log.price} />
                     {log.message ? ` — ${log.message}` : ''}
                   </li>
                 ))}

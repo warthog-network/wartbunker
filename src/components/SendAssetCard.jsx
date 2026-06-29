@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
+import FormattedNumber from './FormattedNumber.jsx';
 import { isValidAssetHash } from '../utils/warthogFormat';
 import {
   createWarthogApi,
@@ -157,7 +158,8 @@ const SendAssetCard = ({
         <div className="flex items-center justify-between text-xs">
           <span className="text-zinc-500">Selected asset</span>
           <span className="font-mono text-white tabular-nums">
-            {assetBalance || '…'} <span className="text-[#FDB913]">{assetName}</span>
+            {assetBalance ? <FormattedNumber value={assetBalance} variant="balance" /> : '…'}{' '}
+            <span className="text-[#FDB913] font-sans">{assetName}</span>
           </span>
         </div>
       )}
