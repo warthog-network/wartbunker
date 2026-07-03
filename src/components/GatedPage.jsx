@@ -55,7 +55,13 @@ const GatedPage = () => {
 
     try {
       const message = `Unlock server-gated secret for asset ${EXAMPLE_ASSET_HASH} as ${wallet.address} at ${Date.now()}`;
-      const signature = await signMessageInWorker(message);
+      let signature;
+      try {
+        signature = await signMessageInWorker(message);
+      } catch (signErr) {
+        setServerError(`Signing failed: ${signErr.message}`);
+        return;
+      }
 
       const res = await fetch('/api/verify-token-gate', {
         method: 'POST',
@@ -77,7 +83,7 @@ const GatedPage = () => {
         setServerError(data.error || 'Access denied by server');
       }
     } catch (e) {
-      setServerError(`Failed to contact server: ${e.message}`);
+      setServerError(`Request failed: ${e.message}`);
     } finally {
       setServerLoading(false);
     }

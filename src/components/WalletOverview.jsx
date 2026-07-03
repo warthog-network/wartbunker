@@ -381,7 +381,7 @@ const WalletOverview = ({ onLogout }) => {
     const isCancelling = cancellingOrderHash === order.txHash;
 
     return (
-      <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-3 text-sm">
+      <div className="limit-order-card bg-zinc-900 border border-zinc-700 rounded-xl p-3 text-sm">
         <div className="flex justify-between items-start mb-2">
           <div>
             <span className={`inline-block text-[10px] font-mono px-2 py-px rounded ${orderClasses.bgMuted} ${orderClasses.text}`}>
@@ -811,11 +811,11 @@ const WalletOverview = ({ onLogout }) => {
                             <button
                               type="button"
                               onClick={() => toggleAssetGroup(asset)}
-                              className="group flex items-start sm:items-center gap-3 min-w-0 w-full text-left !m-0 !p-0 !bg-transparent !border-0 hover:!bg-transparent hover:!transform-none hover:!shadow-none"
+                              className="open-orders-group-btn group flex items-start sm:items-center gap-3 min-w-0 w-full text-left"
                               aria-expanded={!isGroupCollapsed}
                             >
                               <span
-                                className="text-zinc-500 group-hover:text-zinc-400 text-xs w-3 flex-shrink-0 transition-colors mt-1 sm:mt-0"
+                                className="text-zinc-500 text-xs w-3 flex-shrink-0 mt-1 sm:mt-0"
                                 aria-hidden="true"
                               >
                                 {isGroupCollapsed ? '▸' : '▾'}
@@ -824,18 +824,18 @@ const WalletOverview = ({ onLogout }) => {
                                 {asset.name?.[0] || '?'}
                               </div>
                               <div className="min-w-0 flex-1">
-                                <div className="font-bold text-base sm:text-lg tracking-tight text-white group-hover:text-zinc-100 truncate transition-colors">
+                                <div className="font-bold text-base sm:text-lg tracking-tight text-white truncate">
                                   {asset.name}
                                 </div>
                                 <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-zinc-900/80 border border-zinc-700/60 text-[10px] text-zinc-400 font-mono tabular-nums group-hover:text-zinc-300 transition-colors">
+                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-zinc-900/80 border border-zinc-700/60 text-[10px] text-zinc-400 font-mono tabular-nums">
                                     ID {asset.id}
                                   </span>
-                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-zinc-900/80 border border-zinc-700/60 text-[10px] text-zinc-400 font-mono tabular-nums group-hover:text-zinc-300 transition-colors">
+                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-zinc-900/80 border border-zinc-700/60 text-[10px] text-zinc-400 font-mono tabular-nums">
                                     {asset.decimals} decimals
                                   </span>
                                   {totalOrders > 0 && (
-                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-purple-500/10 border border-purple-500/20 text-[10px] text-purple-300 font-mono tabular-nums group-hover:text-purple-200 transition-colors">
+                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-purple-500/10 border border-purple-500/20 text-[10px] text-purple-300 font-mono tabular-nums">
                                       {totalOrders} order{totalOrders !== 1 ? 's' : ''}
                                       {buyOrders.length > 0 && sellOrders.length > 0
                                         ? ` · ${buyOrders.length}B / ${sellOrders.length}S`

@@ -35,7 +35,9 @@ export async function ensureWorkerCrypto() {
   await ensureBuffer();
   if (cryptoReady) return;
 
-  const { createHash } = await import('crypto');
+  // Use crypto-browserify directly — dynamic import('crypto') breaks in Vite dev
+  // (pre-bundled node_modules/.vite/deps/crypto.js fails to load in the browser).
+  const { createHash } = await import('crypto-browserify');
   createHash('sha256').update(globalThis.Buffer.alloc(0)).digest();
   cryptoReady = true;
 }

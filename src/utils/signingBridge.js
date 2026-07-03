@@ -124,8 +124,8 @@ export async function signMessageInWorker(message) {
   }
 
   const wallet = await exportWalletFromWorker();
-  const { ensureWorkerCrypto } = await import('./ensureBuffer.js');
-  await ensureWorkerCrypto();
+  const { ensureBuffer } = await import('./ensureBuffer.js');
+  await ensureBuffer();
   const { ethers } = await import('ethers');
   const key = wallet.privateKey.startsWith('0x') ? wallet.privateKey : `0x${wallet.privateKey}`;
   return new ethers.Wallet(key).signMessage(message);

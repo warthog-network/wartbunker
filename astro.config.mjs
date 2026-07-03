@@ -72,6 +72,11 @@ export default defineConfig({
     },
     optimizeDeps: {
       include: ['buffer', 'warthog-js', 'crypto-browserify', 'elliptic', 'ethers'],
+      esbuildOptions: {
+        define: {
+          global: 'globalThis',
+        },
+      },
     },
     ssr: {
       external: ['warthog-js', 'buffer', 'elliptic', 'crypto-browserify'],

@@ -293,22 +293,22 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
             {(d.wartToAssetSwaps?.length > 0 || d.assetToWartSwaps?.length > 0) && (
               <details className="mt-3 group">
                 <summary className={`cursor-pointer text-sm flex items-center gap-2 px-1 select-none ${limitOrderBuyClasses.text}`}>
-                  <span className="group-open:rotate-90 inline-block transition">▶</span> 
+                  <span className="group-open:rotate-90 inline-block transition">▶</span>
                   View open orders ({(d.wartToAssetSwaps?.length || 0) + (d.assetToWartSwaps?.length || 0)})
                 </summary>
                 <div className="mt-2 space-y-2 text-xs">
                   {d.wartToAssetSwaps?.length > 0 && (
                     <div>
                       <div className={`mb-1 px-1 ${limitOrderBuyClasses.text}`}>Buy (WART → {asset.name})</div>
-                      {d.wartToAssetSwaps.slice(0, 2).map((order, idx) => (
-                        <div key={idx} className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 flex items-center justify-between font-mono">
+                      {d.wartToAssetSwaps.map((order, idx) => (
+                        <div key={idx} className="limit-order-card bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 flex items-center justify-between font-mono">
                           <span>
                             Limit <FormattedNumber value={order.limit?.doubleAdjusted || order.limit} overrides={{ maxDecimals: 8 }} /> •{' '}
                             <FormattedNumber value={order.amount?.str || order.amount || '0'} variant="balance" /> (filled{' '}
                             <FormattedNumber value={order.filled?.str || order.filled || '0'} variant="balance" />)
                           </span>
                           <span onClick={() => copyToClipboard(order.txHash)} className="text-purple-400 hover:text-purple-300 cursor-pointer text-[10px]">
-                            {order.txHash?.slice(0,8)}…{order.txHash?.slice(-6)}
+                            {order.txHash?.slice(0, 8)}…{order.txHash?.slice(-6)}
                           </span>
                         </div>
                       ))}
@@ -317,15 +317,15 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                   {d.assetToWartSwaps?.length > 0 && (
                     <div>
                       <div className={`mb-1 px-1 ${limitOrderSellClasses.text}`}>Sell ({asset.name} → WART)</div>
-                      {d.assetToWartSwaps.slice(0, 2).map((order, idx) => (
-                        <div key={idx} className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 flex items-center justify-between font-mono">
+                      {d.assetToWartSwaps.map((order, idx) => (
+                        <div key={idx} className="limit-order-card bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 flex items-center justify-between font-mono">
                           <span>
                             Limit <FormattedNumber value={order.limit?.doubleAdjusted || order.limit} overrides={{ maxDecimals: 8 }} /> •{' '}
                             <FormattedNumber value={order.amount?.str || order.amount || '0'} variant="balance" /> (filled{' '}
                             <FormattedNumber value={order.filled?.str || order.filled || '0'} variant="balance" />)
                           </span>
                           <span onClick={() => copyToClipboard(order.txHash)} className="text-purple-400 hover:text-purple-300 cursor-pointer text-[10px]">
-                            {order.txHash?.slice(0,8)}…{order.txHash?.slice(-6)}
+                            {order.txHash?.slice(0, 8)}…{order.txHash?.slice(-6)}
                           </span>
                         </div>
                       ))}
@@ -549,7 +549,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                     </div>
                     <div className="space-y-2">
                       {buyOrders.slice(0, 5).map((order, oIdx) => (
-                        <div key={oIdx} className="bg-zinc-900 border border-zinc-700 rounded-xl p-3 text-sm">
+                        <div key={oIdx} className="limit-order-card bg-zinc-900 border border-zinc-700 rounded-xl p-3 text-sm">
                           <div className="flex justify-between text-xs mb-1">
                             <span className={limitOrderBuyClasses.text}>
                               Limit: <FormattedNumber value={order.limit?.doubleAdjusted || order.limit} overrides={{ maxDecimals: 8 }} />
@@ -576,7 +576,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                     </div>
                     <div className="space-y-2">
                       {sellOrders.slice(0, 5).map((order, oIdx) => (
-                        <div key={oIdx} className="bg-zinc-900 border border-zinc-700 rounded-xl p-3 text-sm">
+                        <div key={oIdx} className="limit-order-card bg-zinc-900 border border-zinc-700 rounded-xl p-3 text-sm">
                           <div className="flex justify-between text-xs mb-1">
                             <span className={limitOrderSellClasses.text}>
                               Limit: <FormattedNumber value={order.limit?.doubleAdjusted || order.limit} overrides={{ maxDecimals: 8 }} />

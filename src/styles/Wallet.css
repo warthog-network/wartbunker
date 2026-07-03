@@ -476,7 +476,7 @@
     box-sizing: border-box;
   }
 
-  .container button:not(.mobile-hamburger):not(.remove-token-btn):not(.refresh-balance-btn):not(.compact-btn):not(.saved-wallet-card):not(.dex-tab-btn):not(.wallet-tab-btn):not(.wallet-nav-btn):not(.wallet-action-btn):not(.network-node-btn) {
+  .container button:not(.mobile-hamburger):not(.remove-token-btn):not(.refresh-balance-btn):not(.compact-btn):not(.saved-wallet-card):not(.dex-tab-btn):not(.wallet-tab-btn):not(.wallet-nav-btn):not(.wallet-action-btn):not(.network-node-btn):not(.open-orders-group-btn) {
     font-size: 1rem;
     width: 100%;
     margin-right: 0;
@@ -636,6 +636,44 @@
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
+}
+
+/* Open limit order asset group headers — no primary-button shine sweep */
+.container button.open-orders-group-btn {
+  background: transparent !important;
+  color: inherit !important;
+  border: none !important;
+  box-shadow: none !important;
+  transform: none !important;
+  overflow: visible !important;
+  position: static !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  min-height: 0 !important;
+  border-radius: 0.5rem !important;
+  transition: background-color 0.2s ease !important;
+}
+
+.container button.open-orders-group-btn::before {
+  display: none !important;
+}
+
+.container button.open-orders-group-btn:hover {
+  background: rgba(39, 39, 42, 0.45) !important;
+  color: inherit !important;
+  border: none !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+/* Limit order rows/cards — understated hover instead of button shine */
+.limit-order-card {
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.limit-order-card:hover {
+  background-color: rgba(39, 39, 42, 0.92);
+  border-color: rgba(113, 113, 122, 0.45);
 }
 
 /* Saved wallet picker cards on login — override .container button orange primary */
