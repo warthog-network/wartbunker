@@ -4,6 +4,8 @@ import { useToast } from './Toast';
 import { useNumberDisplay } from './NumberDisplayContext.jsx';
 import FormattedNumber from './FormattedNumber.jsx';
 import ConfirmDialog from './ConfirmDialog';
+import AddressQrModal from './AddressQrModal';
+import WalletQrExportModal from './WalletQrExportModal';
 import { isValidAssetHash } from '../utils/warthogFormat';
 import { createWarthogApi, getNodeData } from '../utils/warthogClient.js';
 import {
@@ -78,6 +80,8 @@ const WalletOverview = ({ onLogout }) => {
   const [cancellingOrderHash, setCancellingOrderHash] = useState(null);
   const [cancelConfirm, setCancelConfirm] = useState(null);
   const [cancelSpeedUp, setCancelSpeedUp] = useState(false);
+  const [showAddressQr, setShowAddressQr] = useState(false);
+  const [showWalletExportQr, setShowWalletExportQr] = useState(false);
 
   const hasPositiveBalance = (balanceInfo) => {
     if (!balanceInfo) return false;
@@ -545,6 +549,29 @@ const WalletOverview = ({ onLogout }) => {
                 className="flex-shrink-0 py-3 px-5 wallet-action-btn !m-0 font-semibold whitespace-nowrap"
               >
                 Send WART
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowAddressQr(true)}
+                className="icon-square-btn"
+                title="Show address QR code"
+                aria-label="Show address QR code"
+              >
+                <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 4h6v6H4V4zm10 0h6v6h-6V4zM4 14h6v6H4v-6zm10 3h2m2 0h2m-6 3h2m2 0h2" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowWalletExportQr(true)}
+                disabled={!isSigningUnlocked}
+                className="icon-square-btn"
+                title={isSigningUnlocked ? 'Export wallet to mobile app (QR)' : 'Unlock wallet to export to mobile'}
+                aria-label="Export wallet to mobile app"
+              >
+                <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 18h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                </svg>
               </button>
               <div className="min-w-0 flex-1 flex justify-center overflow-hidden">
                 <span
@@ -1149,6 +1176,20 @@ const WalletOverview = ({ onLogout }) => {
           }
         }}
         onCancel={closeCancelDialog}
+      />
+
+      <AddressQrModal
+        open={showAddressQr}
+        address={wallet?.address}
+        onClose={() => setShowAddressQr(false)}
+        onCopy={(addr) => copyToClipboard(addr)}
+      />
+
+      <WalletQrExportModal
+        open={showWalletExportQr}
+        wallet={wallet}
+        isSigningUnlocked={isSigningUnlocked}
+        onClose={() => setShowWalletExportQr(false)}
       />
     </section>
   );

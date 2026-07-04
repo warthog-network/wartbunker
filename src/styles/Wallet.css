@@ -476,7 +476,7 @@
     box-sizing: border-box;
   }
 
-  .container button:not(.mobile-hamburger):not(.remove-token-btn):not(.refresh-balance-btn):not(.compact-btn):not(.saved-wallet-card):not(.dex-tab-btn):not(.wallet-tab-btn):not(.wallet-nav-btn):not(.wallet-action-btn):not(.network-node-btn):not(.open-orders-group-btn) {
+  .container button:not(.mobile-hamburger):not(.remove-token-btn):not(.refresh-balance-btn):not(.icon-square-btn):not(.compact-btn):not(.saved-wallet-card):not(.dex-tab-btn):not(.wallet-tab-btn):not(.wallet-nav-btn):not(.wallet-action-btn):not(.network-node-btn):not(.open-orders-group-btn) {
     font-size: 1rem;
     width: 100%;
     margin-right: 0;
@@ -570,7 +570,7 @@
 
 /* Enhanced touch targets for mobile */
 @media (max-width: 767px) {
-  button:not(.remove-token-btn):not(.refresh-balance-btn):not(.compact-btn):not(.saved-wallet-card):not(.dex-tab-btn):not(.wallet-tab-btn):not(.wallet-nav-btn):not(.wallet-action-btn):not(.network-node-btn) {
+  button:not(.remove-token-btn):not(.refresh-balance-btn):not(.icon-square-btn):not(.compact-btn):not(.saved-wallet-card):not(.dex-tab-btn):not(.wallet-tab-btn):not(.wallet-nav-btn):not(.wallet-action-btn):not(.network-node-btn) {
     min-height: 48px;
     touch-action: manipulation;
   }
@@ -784,6 +784,44 @@
   border-color: rgba(82, 82, 91, 0.5) !important;
   transform: none !important;
   box-shadow: none !important;
+}
+
+/* Compact square icon buttons (QR, mobile export, etc.) */
+.icon-square-btn {
+  width: 2.5rem !important;
+  height: 2.5rem !important;
+  min-width: 2.5rem !important;
+  min-height: 2.5rem !important;
+  max-width: 2.5rem !important;
+  flex-shrink: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 0.75rem !important;
+  background: rgba(39, 39, 42, 0.8) !important;
+  color: #a1a1aa !important;
+  border: 1px solid rgba(82, 82, 91, 0.5) !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+.icon-square-btn::before {
+  display: none !important;
+}
+
+.icon-square-btn:hover:not(:disabled) {
+  background: #3f3f46 !important;
+  color: #E79300 !important;
+  border-color: rgba(82, 82, 91, 0.7) !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+.icon-square-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 /* Network tab — compact node action buttons (override .container button orange/full-width) */

@@ -6,9 +6,10 @@ import { DEFAULT_NODE_URL, isDefiNode } from '../utils/presetNodes.js';
 import DexPriceChartsTool from './DexPriceChartsTool.jsx';
 import DexVolumeGeneratorTool from './DexVolumeGeneratorTool.jsx';
 import NumberDisplaySettings from './NumberDisplaySettings.jsx';
+import WalletQrExportModal from './WalletQrExportModal.jsx';
 
 const ToolsPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
-  const { performFakeMine, isFakeMineAllowed, wallet: contextWallet } = useWallet();
+  const { performFakeMine, isFakeMineAllowed, wallet: contextWallet, isSigningUnlocked } = useWallet();
   const wallet = propWallet || contextWallet;
   const toast = useToast();
 
@@ -17,6 +18,7 @@ const ToolsPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const [isValidating, setIsValidating] = useState(false);
   const [isMiningNow, setIsMiningNow] = useState(false);
   const [activeTool, setActiveTool] = useState('validate');
+  const [showWalletExportQr, setShowWalletExportQr] = useState(false);
 
   const selectedNode = propSelectedNode || (() => {
     try {
@@ -35,6 +37,9 @@ const ToolsPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       { id: 'mine', label: 'Mine Block' },
       { id: 'numbers', label: 'Number Display' },
     ];
+    if (wallet) {
+      options.push({ id: 'mobile', label: 'Mobile Transfer' });
+    }
     if (isDefi) {
       options.push(
         { id: 'charts', label: 'Price Charts' },
@@ -42,7 +47,7 @@ const ToolsPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       );
     }
     return options;
-  }, [isDefi]);
+  }, [isDefi, wallet]);
 
   const resolvedTool = toolOptions.some((t) => t.id === activeTool)
     ? activeTool
@@ -158,6 +163,29 @@ const ToolsPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
         </div>
       )}
 
+      {resolvedTool === 'mobile' && wallet && (
+        <div className="bg-zinc-950 border border-zinc-700 rounded-2xl p-5">
+          <h3 className="text-base font-semibold text-white mb-1">Transfer to Mobile App</h3>
+          <p className="text-sm text-zinc-400 mb-4 leading-relaxed">
+            Generate a password-encrypted QR code on this device, then scan it with the Warthog mobile
+            wallet to import your keys. Your wallet must be unlocked.
+          </p>
+          <button
+            type="button"
+            onClick={() => setShowWalletExportQr(true)}
+            disabled={!isSigningUnlocked}
+            className="wallet-action-btn !m-0 font-semibold disabled:opacity-40"
+          >
+            {isSigningUnlocked ? 'Open Export QR' : 'Unlock Wallet First'}
+          </button>
+          {!isSigningUnlocked ? (
+            <p className="mt-2 text-xs text-zinc-500">
+              Use the Unlock button in the header if your wallet is locked.
+            </p>
+          ) : null}
+        </div>
+      )}
+
       {resolvedTool === 'numbers' && (
         <NumberDisplaySettings />
       )}
@@ -190,6 +218,13 @@ const ToolsPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       {resolvedTool === 'volume' && isDefi && (
         <DexVolumeGeneratorTool selectedNode={selectedNode} wallet={wallet} />
       )}
+
+      <WalletQrExportModal
+        open={showWalletExportQr}
+        wallet={wallet}
+        isSigningUnlocked={isSigningUnlocked}
+        onClose={() => setShowWalletExportQr(false)}
+      />
     </section>
   );
 };
