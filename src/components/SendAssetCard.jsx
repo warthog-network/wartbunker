@@ -5,6 +5,7 @@ import FormattedNumber from './FormattedNumber.jsx';
 import { isValidAssetHash } from '../utils/warthogFormat';
 import {
   createWarthogApi,
+  DEFAULT_TX_FEE,
   formatSubmitError,
   formatSubmitResult,
   signAndSubmitTransaction,
@@ -37,6 +38,7 @@ const SendAssetCard = ({
   const [recipient, setRecipient] = useState('');
   const [amount, setAmount] = useState('');
   const [isLiquidity, setIsLiquidity] = useState(false);
+  const [feeInput, setFeeInput] = useState(DEFAULT_TX_FEE);
   const [nonceOverride, setNonceOverride] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState(null);
@@ -96,6 +98,7 @@ const SendAssetCard = ({
       const api = await createWarthogApi(selectedNode);
       const { nonce, data } = await signAndSubmitTransaction(api, {
         nonceId,
+        fee: feeInput,
         buildSpec: {
           type: 'ASSET_TRANSFER',
           assetHash: assetIdRaw,
@@ -235,9 +238,19 @@ const SendAssetCard = ({
       <details className="group">
         <summary className="text-xs text-zinc-500 cursor-pointer hover:text-zinc-300 transition-colors list-none flex items-center gap-1">
           <span className="group-open:rotate-90 transition-transform inline-block">▸</span>
-          Advanced options (nonce override)
+          Advanced options (nonce, fee)
         </summary>
-        <div className="mt-3 pt-3 border-t border-zinc-800">
+        <div className="grid grid-cols-2 gap-4 mt-3 pt-3 border-t border-zinc-800">
+          <div className="form-group !mb-0">
+            <label className="text-sm">Fee</label>
+            <input
+              type="text"
+              value={feeInput}
+              onChange={(e) => setFeeInput(e.target.value)}
+              placeholder={DEFAULT_TX_FEE}
+              className="input text-sm"
+            />
+          </div>
           <div className="form-group !mb-0">
             <label className="text-sm">Nonce override</label>
             <input
@@ -248,8 +261,8 @@ const SendAssetCard = ({
               className="input text-sm"
             />
           </div>
-          <p className="text-[10px] text-zinc-600 mt-2">
-            Only use if you get a duplicate nonce error.
+          <p className="col-span-2 text-[10px] text-zinc-600">
+            Only override nonce if you get a duplicate nonce error.
           </p>
         </div>
       </details>

@@ -1,5 +1,7 @@
 import { encodeLimitPriceHex } from './encodeLimitPrice.js';
-import { signAndSubmitTransaction } from './warthogClient.js';
+import { DEFAULT_TX_FEE, signAndSubmitTransaction } from './warthogClient.js';
+
+const DEFAULT_FEE_PER_TX = Number(DEFAULT_TX_FEE);
 import { computePoolSpotPrice, formatAssetPrice, normalizeChartAssetHash } from './dexPrice.js';
 
 const DEFAULT_DELAY_MS = 1500;
@@ -167,6 +169,7 @@ export async function executeVolumePlan({
   delayMs = DEFAULT_DELAY_MS,
   skipSellsWithoutAsset = true,
   assetBalance = 0,
+  fee = DEFAULT_TX_FEE,
   onProgress,
 }) {
   let nonce = Math.max(Number(startNonce) || 0, 0);
@@ -190,6 +193,7 @@ export async function executeVolumePlan({
     try {
       const { nonce: usedNonce } = await signAndSubmitTransaction(api, {
         nonceId: nonce,
+        fee,
         buildSpec: {
           type: 'LIMIT_SWAP',
           assetHash,
@@ -228,7 +232,7 @@ export async function executeVolumePlan({
 }
 
 /** Estimate WART needed for a buy-only or both-sides plan (rough, excludes fees). */
-export function estimateWartRequired(plan, feePerTx = 0.02) {
+export function estimateWartRequired(plan, feePerTx = DEFAULT_FEE_PER_TX) {
   const buySteps = plan.filter((s) => s.side === 'buy');
   const buyTotal = buySteps.reduce((sum, s) => sum + (Number(s.amount) || 0), 0);
   const feeTotal = plan.length * feePerTx;
@@ -240,7 +244,7 @@ export function estimateWartRequired(plan, feePerTx = 0.02) {
  * @param {VolumePlanStep[]} plan
  * @param {{ assetBalance?: number, assetName?: string, feePerTx?: number }} [options]
  */
-export function summarizeVolumePlan(plan, { assetBalance = 0, assetName = 'ASSET', feePerTx = 0.02 } = {}) {
+export function summarizeVolumePlan(plan, { assetBalance = 0, assetName = 'ASSET', feePerTx = DEFAULT_FEE_PER_TX } = {}) {
   const buySteps = plan.filter((s) => s.side === 'buy');
   const sellSteps = plan.filter((s) => s.side === 'sell');
   const hasAsset = Number(assetBalance) > 0;

@@ -20,6 +20,10 @@ import {
 
 const WalletContext = createContext();
 
+// useLayoutEffect warns during SSR; use useEffect on the server, useLayoutEffect on the client.
+const useIsomorphicLayoutEffect =
+  typeof window !== 'undefined' ? useLayoutEffect : useEffect;
+
 export const useWallet = () => {
   const context = useContext(WalletContext);
   if (!context) {
@@ -30,7 +34,7 @@ export const useWallet = () => {
 
 export const WalletProvider = ({ children }) => {
   // Always start with safe defaults. This ensures the first render (server HTML + client hydrate)
-  // produces identical output. Storage restore happens in useLayoutEffect after hydration.
+  // produces identical output. Storage restore happens after hydration (client-only layout effect).
   const [wallet, setWallet] = useState(null);
   const [balance, setBalance] = useState(null);
   const [usdBalance, setUsdBalance] = useState(null);
@@ -62,11 +66,9 @@ export const WalletProvider = ({ children }) => {
 
   const isTestnetNode = (node) => isDefiNode(node);
 
-  // Client-only restore from storage. Using useLayoutEffect so state updates happen
-  // synchronously before the browser paints. This guarantees the *first* render
-  // (server + hydrate) always matches, avoiding hydration mismatch, while still
-  // restoring the logged-in named wallet state immediately after.
-  useLayoutEffect(() => {
+  // Client-only restore from storage. On the client, runs before paint so the logged-in
+  // state is restored immediately after hydration without a visible flash.
+  useIsomorphicLayoutEffect(() => {
     clearLegacyAutoMinePrefs();
 
     // Restore preferred node
@@ -427,7 +429,7 @@ export const WalletProvider = ({ children }) => {
       setWatchedAssets([]);
       // Note: we do NOT clear currentWalletName here. It is only nulled explicitly
       // on logout paths or "use without naming". Clearing it here was causing the
-      // restored name (from useLayoutEffect) to be wiped during the mount/restore
+      // restored name (from session restore) to be wiped during the mount/restore
       // phase after hydration.
     }
   }, [isLoggedIn, wallet]);

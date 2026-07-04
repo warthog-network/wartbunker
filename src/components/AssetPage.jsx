@@ -5,6 +5,7 @@ import FormattedNumber from './FormattedNumber.jsx';
 import { isValidAssetHash } from '../utils/warthogFormat';
 import {
   createWarthogApi,
+  DEFAULT_TX_FEE,
   formatSubmitError,
   formatSubmitResult,
   getNodeData,
@@ -334,6 +335,11 @@ const AssetCardWithChart = ({ asset, isCompact, selectedNode, onCopyHash, chartP
   );
 };
 
+const readFormFee = (elementId) => {
+  const raw = document.getElementById(elementId)?.value?.trim();
+  return raw || DEFAULT_TX_FEE;
+};
+
 const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const {
     wallet: contextWallet,
@@ -492,6 +498,7 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       const api = await createWarthogApi(selectedNode);
       const { nonce, data } = await signAndSubmitTransaction(api, {
         nonceId,
+        fee: readFormFee('createAssetFee'),
         buildSpec: {
           type: 'ASSET_CREATE',
           name: nameInput,
@@ -561,6 +568,9 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
 
               <label className="block text-sm font-medium mb-2">Decimals</label>
               <input id="assetDecimals" type="number" defaultValue="8" className="input mb-6" />
+
+              <label className="block text-sm font-medium mb-2">Fee (WART)</label>
+              <input id="createAssetFee" type="text" defaultValue={DEFAULT_TX_FEE} className="input mb-4" />
 
               <label className="block text-sm font-medium mb-2 text-amber-400">
                 Nonce Override (only use if you get "Duplicate nonce")

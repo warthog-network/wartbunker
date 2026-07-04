@@ -69,23 +69,46 @@ export function normalizeAssetHash(raw) {
   return raw.trim().replace(/^0x/i, '').toLowerCase();
 }
 
+/** Default transaction fee — high enough for miners to pick up txs. */
+export const DEFAULT_TX_FEE = '0.0001';
+
+/**
+ * Parse and validate a fee against the node minimum.
+ * @param {string} [feeInput]
+ * @param {{ E8: string | number | bigint, str?: string }} minFeeData
+ */
+export async function resolveTxFee(feeInput, minFeeData) {
+  const { Wart } = await import('warthog-js');
+  const feeStr = String(feeInput ?? '').trim() || DEFAULT_TX_FEE;
+  const wartFee = Wart.parse(feeStr);
+  if (!wartFee) {
+    throw new Error('Invalid fee amount');
+  }
+
+  const fee = wartFee.roundedFee(true);
+  const minFeeE8 = BigInt(minFeeData.E8);
+  if (fee.E8 < minFeeE8) {
+    const minStr = minFeeData.str || 'node minimum';
+    throw new Error(`Fee must be at least ${minStr}`);
+  }
+
+  return { fee, feeE8: String(fee.E8) };
+}
+
 /**
  * Fetch fee + chain pin, sign a tx, and submit via WarthogApi.
  * Prefer `buildSpec` (signing worker). `privateKey` + `buildTx` remain as legacy fallback.
  * @returns {{ nonce: number, data: unknown }}
  */
-export async function signAndSubmitTransaction(api, { privateKey, nonceId, buildTx, buildSpec }) {
-  const { Account, NonceId, RoundedFee, normalizeChainPin } = await import('warthog-js');
+export async function signAndSubmitTransaction(api, { privateKey, nonceId, buildTx, buildSpec, fee: feeInput }) {
+  const { Account, NonceId, normalizeChainPin } = await import('warthog-js');
 
   const feeRes = await api.getMinFee();
   if (!feeRes.success) {
     throw new Error(feeRes.error || 'Could not fetch minimum fee');
   }
 
-  const fee = RoundedFee.fromE8(BigInt(feeRes.data.minFee.E8), true);
-  if (!fee) {
-    throw new Error('Invalid fee from node');
-  }
+  const { fee, feeE8 } = await resolveTxFee(feeInput, feeRes.data.minFee);
 
   const nonce = NonceId.fromNumber(nonceId);
   if (!nonce) {
@@ -104,7 +127,7 @@ export async function signAndSubmitTransaction(api, { privateKey, nonceId, build
       {
         pinHash,
         pinHeight,
-        feeE8: String(feeRes.data.minFee.E8),
+        feeE8,
         nonceId,
       },
       buildSpec,

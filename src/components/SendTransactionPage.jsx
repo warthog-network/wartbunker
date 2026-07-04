@@ -5,6 +5,7 @@ import FormattedNumber from './FormattedNumber.jsx';
 import SendAssetCard from './SendAssetCard.jsx';
 import {
   createWarthogApi,
+  DEFAULT_TX_FEE,
   formatSubmitResult,
   parseRecipientAddress,
   signAndSubmitTransaction,
@@ -34,7 +35,7 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
 
   const [toAddress, setToAddress] = useState('');
   const [amount, setAmount] = useState('0.00100000');
-  const [feeInput, setFeeInput] = useState('0.0001');
+  const [feeInput, setFeeInput] = useState(DEFAULT_TX_FEE);
   const [originId, setOriginId] = useState(0);
   const [nonceInput, setNonceInput] = useState('0');
   const [isLoading, setIsLoading] = useState(false);
@@ -126,6 +127,7 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
 
       const { nonce, data } = await signAndSubmitTransaction(api, {
         nonceId: parseInt(nonceInput, 10) || 0,
+        fee: feeInput,
         buildSpec: {
           type: 'TRANSFER_WART',
           recipientHex: recipient.hex,

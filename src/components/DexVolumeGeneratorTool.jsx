@@ -3,7 +3,7 @@ import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
 import FormattedNumber from './FormattedNumber.jsx';
 import { useNumberDisplay } from './NumberDisplayContext.jsx';
-import { createWarthogApi } from '../utils/warthogClient.js';
+import { createWarthogApi, DEFAULT_TX_FEE } from '../utils/warthogClient.js';
 import { normalizeChartAssetHash } from '../utils/dexPrice.js';
 import ConfirmDialog from './ConfirmDialog.jsx';
 import { DEFAULT_NODE_URL } from '../utils/presetNodes.js';
@@ -87,6 +87,7 @@ const DexVolumeGeneratorTool = ({ selectedNode: propSelectedNode, wallet: propWa
       basePrice: parseFloat(document.getElementById('volumeBasePrice')?.value || '0'),
       priceStep: parseFloat(document.getElementById('volumePriceStep')?.value || '0'),
       delayMs: Math.max(0, parseInt(document.getElementById('volumeDelayMs')?.value || '1500', 10) || 0),
+      fee: document.getElementById('volumeTxFee')?.value?.trim() || DEFAULT_TX_FEE,
     };
   };
 
@@ -186,9 +187,11 @@ const DexVolumeGeneratorTool = ({ selectedNode: propSelectedNode, wallet: propWa
   };
 
   const buildVolumeConfirmMessage = (ctx, plan, form) => {
+    const feePerTx = Number(form.fee) || Number(DEFAULT_TX_FEE);
     const summary = summarizeVolumePlan(plan, {
       assetBalance: Number(ctx.balances.asset) || 0,
       assetName: ctx.assetName,
+      feePerTx,
     });
 
     const lines = [
@@ -266,6 +269,7 @@ const DexVolumeGeneratorTool = ({ selectedNode: propSelectedNode, wallet: propWa
         decimals: ctx.decimals,
         startNonce: nonce,
         delayMs: form.delayMs,
+        fee: form.fee,
         assetBalance: Number(ctx.balances.asset) || 0,
         onProgress: (entry) => {
           logs.push(entry);
@@ -354,6 +358,10 @@ const DexVolumeGeneratorTool = ({ selectedNode: propSelectedNode, wallet: propWa
             <div>
               <label className="block text-sm font-medium mb-2">Delay between orders (ms)</label>
               <input id="volumeDelayMs" type="number" min="0" step="100" defaultValue="1500" className="input" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-2">Fee per order (WART)</label>
+              <input id="volumeTxFee" type="text" defaultValue={DEFAULT_TX_FEE} className="input" />
             </div>
           </div>
 

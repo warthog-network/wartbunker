@@ -5,6 +5,7 @@ import FormattedNumber from './FormattedNumber.jsx';
 import { useNumberDisplay } from './NumberDisplayContext.jsx';
 import {
   createWarthogApi,
+  DEFAULT_TX_FEE,
   formatSubmitError,
   formatSubmitResult,
   getNodeData,
@@ -13,6 +14,11 @@ import {
 import { computePoolSpotPrice } from '../utils/dexPrice.js';
 import { DEFAULT_NODE_URL } from '../utils/presetNodes.js';
 import { readPublicSession } from '../utils/sessionWallet.js';
+
+const readFormFee = (elementId) => {
+  const raw = document.getElementById(elementId)?.value?.trim();
+  return raw || DEFAULT_TX_FEE;
+};
 
 const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const {
@@ -638,6 +644,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       const api = await createWarthogApi(selectedNode);
       const { nonce, data } = await signAndSubmitTransaction(api, {
         nonceId,
+        fee: readFormFee('liquidityDepositFee'),
         buildSpec: {
           type: 'LIQUIDITY_DEPOSIT',
           assetHash: assetHashRaw,
@@ -693,6 +700,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       const api = await createWarthogApi(selectedNode);
       const { nonce, data } = await signAndSubmitTransaction(api, {
         nonceId,
+        fee: readFormFee('positionPoolDepositFee'),
         buildSpec: {
           type: 'LIQUIDITY_DEPOSIT',
           assetHash: assetHashRaw,
@@ -753,6 +761,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       const api = await createWarthogApi(selectedNode);
       const { nonce, data } = await signAndSubmitTransaction(api, {
         nonceId,
+        fee: readFormFee('liquidityWithdrawFee'),
         buildSpec: {
           type: 'LIQUIDITY_WITHDRAW',
           assetHash: assetHashRaw,
@@ -870,6 +879,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       const api = await createWarthogApi(selectedNode);
       const { nonce, data } = await signAndSubmitTransaction(api, {
         nonceId,
+        fee: readFormFee('limitOrderFee'),
         buildSpec: {
           type: 'LIMIT_SWAP',
           assetHash: assetHashRaw,
@@ -1084,6 +1094,9 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                 <label className="block text-sm font-medium mb-2">WART Amount to Deposit</label>
                 <input id="liquidityWartAmount" type="number" step="any" placeholder="e.g. 10.0" className="input mb-3" />
 
+                <label className="block text-sm font-medium mb-2">Fee (WART)</label>
+                <input id="liquidityDepositFee" type="text" defaultValue={DEFAULT_TX_FEE} className="input mb-3" />
+
                 <label className="block text-sm font-medium mb-2 text-amber-400">
                   Nonce Override (only if duplicate nonce error)
                 </label>
@@ -1115,6 +1128,9 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
 
                 <label className="block text-sm font-medium mb-2">LP Shares to Redeem</label>
                 <input id="liquidityWithdrawShares" type="number" step="any" placeholder="e.g. 1.5" className="input mb-3" />
+
+                <label className="block text-sm font-medium mb-2">Fee (WART)</label>
+                <input id="liquidityWithdrawFee" type="text" defaultValue={DEFAULT_TX_FEE} className="input mb-3" />
 
                 <label className="block text-sm font-medium mb-2 text-amber-400">
                   Nonce Override (only if duplicate nonce error)
@@ -1214,6 +1230,9 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                   <label className="block text-sm font-medium mb-2">WART Amount to Deposit</label>
                   <input id="positionPoolWartAmount" type="number" step="any" placeholder="e.g. 10.0" className="input mb-3" />
 
+                  <label className="block text-sm font-medium mb-2">Fee (WART)</label>
+                  <input id="positionPoolDepositFee" type="text" defaultValue={DEFAULT_TX_FEE} className="input mb-3" />
+
                   <label className="block text-sm font-medium mb-2 text-amber-400">
                     Nonce Override (only if duplicate nonce error)
                   </label>
@@ -1250,6 +1269,9 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                       Use my full balance
                     </button>
                   </div>
+
+                  <label className="block text-sm font-medium mb-2">Fee (WART)</label>
+                  <input id="liquidityWithdrawFee" type="text" defaultValue={DEFAULT_TX_FEE} className="input mb-3" />
 
                   <label className="block text-sm font-medium mb-2 text-amber-400">
                     Nonce Override (only if duplicate nonce error)
@@ -1362,6 +1384,9 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                 <label className="block text-sm font-medium mb-2">Encoded Limit (exactly 6 hex characters)</label>
                 <input id="limitEncoded" placeholder="e.g. c0e74d" maxLength={6} className="input mb-3 font-mono" />
 
+                <label className="block text-sm font-medium mb-2">Fee (WART)</label>
+                <input id="limitOrderFee" type="text" defaultValue={DEFAULT_TX_FEE} className="input mb-3" />
+
                 <label className="block text-sm font-medium mb-2 text-amber-400">
                   Nonce Override (only if duplicate nonce error)
                 </label>
@@ -1436,6 +1461,9 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
 
                 <label className="block text-sm font-medium mb-2">Encoded Limit (exactly 6 hex characters)</label>
                 <input id="limitEncoded" placeholder="e.g. c0e74d" maxLength={6} className="input mb-3 font-mono" />
+
+                <label className="block text-sm font-medium mb-2">Fee (WART)</label>
+                <input id="limitOrderFee" type="text" defaultValue={DEFAULT_TX_FEE} className="input mb-3" />
 
                 <label className="block text-sm font-medium mb-2 text-amber-400">
                   Nonce Override (only if duplicate nonce error)
