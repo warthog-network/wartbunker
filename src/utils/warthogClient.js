@@ -70,7 +70,7 @@ export function normalizeAssetHash(raw) {
 }
 
 /** Default transaction fee — high enough for miners to pick up txs. */
-export const DEFAULT_TX_FEE = '0.0001';
+export const DEFAULT_TX_FEE = '0.01';
 
 /**
  * Parse and validate a fee against the node minimum.

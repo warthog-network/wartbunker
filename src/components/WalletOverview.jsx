@@ -9,6 +9,7 @@ import { createWarthogApi, getNodeData } from '../utils/warthogClient.js';
 import {
   bumpNonceAfterSuccess,
   cancelLimitOrder,
+  CANCEL_ORDER_SPEEDUP_FEE,
   getSmartNonce,
 } from '../utils/cancelLimitOrder.js';
 
@@ -76,6 +77,7 @@ const WalletOverview = ({ onLogout }) => {
   const [loadingLiquidityPositions, setLoadingLiquidityPositions] = useState(false);
   const [cancellingOrderHash, setCancellingOrderHash] = useState(null);
   const [cancelConfirm, setCancelConfirm] = useState(null);
+  const [cancelSpeedUp, setCancelSpeedUp] = useState(false);
 
   const hasPositiveBalance = (balanceInfo) => {
     if (!balanceInfo) return false;
@@ -320,7 +322,12 @@ const WalletOverview = ({ onLogout }) => {
     }
     fetchLiquidityPositions();
   };
-  const handleCancelOrder = async (order, direction, assetName) => {
+  const closeCancelDialog = () => {
+    setCancelConfirm(null);
+    setCancelSpeedUp(false);
+  };
+
+  const handleCancelOrder = async (order, direction, assetName, speedUp = false) => {
     if (!isSigningUnlocked) {
       toast.error(isSessionLocked ? 'Unlock your wallet to cancel orders' : 'Wallet not loaded. Please log in again.');
       return;
@@ -339,6 +346,7 @@ const WalletOverview = ({ onLogout }) => {
         txHash: order.txHash,
         accountAddress: wallet.address,
         nonceId,
+        fee: speedUp ? CANCEL_ORDER_SPEEDUP_FEE : undefined,
       });
       bumpNonceAfterSuccess(wallet.address, nonce, nextNonce);
       toast.success(`${direction === 'buy' ? 'Buy' : 'Sell'} limit order cancel submitted`);
@@ -348,7 +356,7 @@ const WalletOverview = ({ onLogout }) => {
       toast.error(err.message || 'Failed to cancel order');
     } finally {
       setCancellingOrderHash(null);
-      setCancelConfirm(null);
+      closeCancelDialog();
     }
   };
 
@@ -357,6 +365,7 @@ const WalletOverview = ({ onLogout }) => {
       toast.error(isSessionLocked ? 'Unlock your wallet to cancel orders' : 'Wallet not loaded. Please log in again.');
       return;
     }
+    setCancelSpeedUp(false);
     setCancelConfirm({
       txHash: order.txHash,
       direction,
@@ -1113,15 +1122,33 @@ const WalletOverview = ({ onLogout }) => {
             ? `Cancel this ${cancelConfirm.direction === 'buy' ? 'buy' : 'sell'} limit order for ${cancelConfirm.assetName}?\n\nThis submits a cancelation transaction to the node. Unconfirmed orders may need a block mined before the cancel clears.`
             : ''
         }
+        extra={
+          cancelConfirm ? (
+            <label className="mt-4 flex items-center gap-2.5 cursor-pointer text-sm text-zinc-400 hover:text-zinc-300 transition-colors">
+              <input
+                type="checkbox"
+                checked={cancelSpeedUp}
+                onChange={(e) => setCancelSpeedUp(e.target.checked)}
+                className="h-4 w-4 accent-[#FDB913]"
+              />
+              <span>Speed up ({CANCEL_ORDER_SPEEDUP_FEE} WART fee)</span>
+            </label>
+          ) : null
+        }
         confirmText="Cancel Order"
         cancelText="Keep Order"
         confirmVariant="danger"
         onConfirm={() => {
           if (cancelConfirm) {
-            handleCancelOrder(cancelConfirm.order, cancelConfirm.direction, cancelConfirm.assetName);
+            handleCancelOrder(
+              cancelConfirm.order,
+              cancelConfirm.direction,
+              cancelConfirm.assetName,
+              cancelSpeedUp,
+            );
           }
         }}
-        onCancel={() => setCancelConfirm(null)}
+        onCancel={closeCancelDialog}
       />
     </section>
   );

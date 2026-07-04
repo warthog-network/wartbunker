@@ -8,6 +8,7 @@ export default function ConfirmDialog({
   open,
   title = 'Confirm Action',
   message,
+  extra,
   confirmText = 'Confirm',
   cancelText = 'Cancel',
   confirmVariant = 'danger', // 'danger' | 'primary'
@@ -38,6 +39,7 @@ export default function ConfirmDialog({
               {message}
             </div>
           )}
+          {extra}
         </div>
 
         <div className="flex gap-3 p-4 border-t border-zinc-800 bg-zinc-900">

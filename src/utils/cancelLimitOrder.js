@@ -1,4 +1,10 @@
-import { signAndSubmitTransaction } from './warthogClient.js';
+import { DEFAULT_TX_FEE, signAndSubmitTransaction } from './warthogClient.js';
+
+/** Default cancel fee — same as other transactions. */
+export const CANCEL_ORDER_FEE = DEFAULT_TX_FEE;
+
+/** Higher fee for cancel txs that need faster mempool pickup. */
+export const CANCEL_ORDER_SPEEDUP_FEE = '0.0175';
 
 /** Next nonce for signing — mirrors DEX page persistent nonce tracking. */
 export function getSmartNonce(walletAddress, contextNextNonce) {
@@ -77,11 +83,13 @@ export async function cancelLimitOrder({
   txHash,
   accountAddress,
   nonceId,
+  fee = CANCEL_ORDER_FEE,
 }) {
   const target = await resolveOrderCancelTarget(api, txHash, accountAddress);
 
   const { nonce, data } = await signAndSubmitTransaction(api, {
     nonceId,
+    fee,
     buildSpec: {
       type: 'CANCEL_TX',
       cancelHeight: target.cancelHeight,
