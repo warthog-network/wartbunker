@@ -1,8 +1,20 @@
 import { rejectFakeMineIfRemote, rejectLocalNodeInProxy } from '../../utils/proxyGuards.js';
 
+const PROXY_TIMEOUT_MS = 10000;
+
+function jsonError(status, error) {
+  return new Response(JSON.stringify({ code: 1, error }), {
+    status,
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache',
+    },
+  });
+}
+
 async function forwardToNode({ nodeBase, nodePath, method = 'GET', body = null }) {
   if (!nodePath || !nodeBase) {
-    return new Response('Missing params', { status: 400 });
+    return jsonError(400, 'Missing nodeBase or nodePath');
   }
 
   const localNodeRejection = rejectLocalNodeInProxy(nodeBase);
@@ -23,7 +35,7 @@ async function forwardToNode({ nodeBase, nodePath, method = 'GET', body = null }
 
   const targetUrl = nodeBase.replace(/\/$/, '') + '/' + nodePath.replace(/^\//, '');
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 10000);
+  const timeoutId = setTimeout(() => controller.abort(), PROXY_TIMEOUT_MS);
 
   const fetchOptions = {
     method,
@@ -48,9 +60,16 @@ async function forwardToNode({ nodeBase, nodePath, method = 'GET', body = null }
   } catch (error) {
     clearTimeout(timeoutId);
     if (error.name === 'AbortError') {
-      return new Response('Request timeout', { status: 408 });
+      return jsonError(
+        408,
+        `Node request timed out after ${PROXY_TIMEOUT_MS / 1000}s (${nodeBase}). `
+          + 'The node may be offline or unreachable from the server proxy — try another node.',
+      );
     }
-    return new Response('Upstream fetch failed', { status: 502 });
+    return jsonError(
+      502,
+      `Upstream fetch failed (${nodeBase}): ${error.message || 'network error'}`,
+    );
   }
 }
 

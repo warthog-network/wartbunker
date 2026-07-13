@@ -7,15 +7,15 @@ import { executeBuildSpec } from './txBuildHandlers.js';
 import { encodeLimitPriceHex } from './encodeLimitPrice.js';
 import { computePoolSpotPrice, formatAssetPrice, normalizeChartAssetHash } from './dexPrice.js';
 import { parseWartBalance, parseAssetBalance } from './dexVolume.js';
+import { DEFI_TESTNET_URL, PRESET_NODES } from './presetNodes.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WALLET_PATH = join(__dirname, '../../scripts/.volume-wallet.json');
 
+/** Prefer official, then remaining presets (same order as the wallet UI). */
 export const DEFAULT_NODES = [
-  'http://104.251.219.14:3001',
-  'http://209.127.34.202:3001',
-  'https://warthog-defitestnet.duckdns.org',
-  'http://65.87.7.86:3002',
+  DEFI_TESTNET_URL,
+  ...PRESET_NODES.map((n) => n.url).filter((url) => url !== DEFI_TESTNET_URL),
 ];
 
 /** Create a direct WarthogApi client (CLI / bot — no browser proxy). */

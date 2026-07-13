@@ -38,7 +38,7 @@ export const isLocalNode = (node) => {
 /**
  * Whether browser requests should go through /api/proxy (matches warthog.network website).
  * Only loopback nodes on an HTTP page connect directly; all other hosts use the proxy so
- * HTTPS deployments can reach plain-HTTP nodes (e.g. http://65.87.7.86:3002).
+ * HTTPS deployments can reach plain-HTTP nodes (e.g. http://104.251.219.14:3001).
  */
 export const shouldUseNodeProxy = (node) => {
   if (!isLoopbackNode(node)) return true;

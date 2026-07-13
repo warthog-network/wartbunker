@@ -1,16 +1,21 @@
 import { normalizeNodeUrl } from './warthogClient.js';
 
-/** Preset DeFi testnet nodes shown in the Node Selection dropdown. */
+/** Official Warthog DeFi testnet — used when no node is chosen / stored. */
+export const DEFI_TESTNET_URL = 'https://warthog-defitestnet.duckdns.org';
+
+export const DEFAULT_NODE_URL = DEFI_TESTNET_URL;
+
+/**
+ * Preset DeFi testnet nodes (dropdown + failover pool).
+ * Official is first: default selection and first failover target after the user's pick.
+ */
 export const PRESET_NODES = [
-  { url: 'http://65.87.7.86:3002', name: 'Testnet 1' },
+  { url: DEFI_TESTNET_URL, name: 'Official' },
   { url: 'http://104.251.219.14:3001', name: 'Testnet 2' },
+  { url: 'http://65.87.7.86:3002', name: 'Testnet 1' },
   { url: 'http://85.56.145.106:3001', name: 'Testnet 3' },
   { url: 'http://209.127.34.202:3001', name: 'Testnet 4' },
 ];
-
-export const DEFAULT_NODE_URL = PRESET_NODES[0].url;
-
-export const DEFI_TESTNET_URL = 'https://warthog-defitestnet.duckdns.org';
 
 export const PRESET_NODE_URLS = PRESET_NODES.map((n) => normalizeNodeUrl(n.url));
 
@@ -34,3 +39,31 @@ export const isDefiNode = (node) => {
  * None of the preset nodes are mainnet.
  */
 export const isMainnetNode = (node) => !isDefiNode(node);
+
+/** Normalize a stored node URL, falling back to the default when empty/invalid. */
+export function resolveSavedNodeUrl(raw) {
+  return normalizeNodeUrl(raw || '') || DEFAULT_NODE_URL;
+}
+
+/**
+ * Ordered candidates for live-node failover.
+ * Always tries `preferred` first. For DeFi/testnet nodes, continues through presets.
+ * Mainnet / non-DeFi custom nodes are not auto-switched to testnet presets.
+ */
+export function buildFailoverCandidates(preferred) {
+  const preferredNorm = resolveSavedNodeUrl(preferred);
+  const candidates = [preferredNorm];
+
+  // Do not bounce a mainnet (or other non-DeFi) selection onto testnet presets.
+  if (!isDefiNode(preferredNorm)) {
+    return candidates;
+  }
+
+  for (const { url } of PRESET_NODES) {
+    const normalized = normalizeNodeUrl(url);
+    if (normalized && !candidates.includes(normalized)) {
+      candidates.push(normalized);
+    }
+  }
+  return candidates;
+}

@@ -15,12 +15,12 @@ import {
   shouldUseChartFallback,
 } from '../utils/dexPrice.js';
 import AssetPriceChart from './AssetPriceChart.jsx';
-import { DEFAULT_NODE_URL } from '../utils/presetNodes.js';
+import { DEFAULT_NODE_URL, resolveSavedNodeUrl } from '../utils/presetNodes.js';
 
 const DexPriceChartsTool = ({ selectedNode: propSelectedNode }) => {
   const selectedNode = propSelectedNode || (() => {
     try {
-      return localStorage.getItem('selectedNode') || DEFAULT_NODE_URL;
+      return resolveSavedNodeUrl(localStorage.getItem('selectedNode'));
     } catch {
       return DEFAULT_NODE_URL;
     }

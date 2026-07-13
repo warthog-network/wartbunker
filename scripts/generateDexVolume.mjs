@@ -19,7 +19,7 @@ import {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const DEFAULT_NODE = 'http://65.87.7.86:3002';
+const DEFAULT_NODE = process.env.WART_NODE || 'https://warthog-defitestnet.duckdns.org';
 const DEFAULT_ASSET = '67be5795d4fc42b1f58784e4c0ffe4d338a6ae23a816ea5fb21b6b3b1d9ea57a';
 
 function parseArgs(argv) {

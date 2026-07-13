@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useWallet } from './WalletContext';
 import TransactionHistory from './TransactionHistory';
-import { DEFAULT_NODE_URL } from '../utils/presetNodes.js';
+import { DEFAULT_NODE_URL, resolveSavedNodeUrl } from '../utils/presetNodes.js';
 import { readPublicSession } from '../utils/sessionWallet.js';
 
 const TransactionHistoryPage = ({ wallet: propWallet, selectedNode: propSelectedNode }) => {
@@ -9,7 +9,7 @@ const TransactionHistoryPage = ({ wallet: propWallet, selectedNode: propSelected
   const wallet = propWallet || contextWallet || readPublicSession();
   const selectedNode = propSelectedNode || contextSelectedNode || (() => {
     try {
-      return localStorage.getItem('selectedNode') || DEFAULT_NODE_URL;
+      return resolveSavedNodeUrl(localStorage.getItem('selectedNode'));
     } catch {
       return DEFAULT_NODE_URL;
     }

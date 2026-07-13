@@ -3,7 +3,8 @@ import axios from 'axios';
 import { encryptWallet, decryptWallet, normalizeDecryptedWallet } from '../utils/warthogWalletUtils';
 import { clearLegacyAutoMinePrefs, isFakeMineAllowed } from '../utils/nodeAccess';
 import { createWarthogApi, normalizeAssetHash } from '../utils/warthogClient.js';
-import { DEFAULT_NODE_URL, isDefiNode, isMainnetNode } from '../utils/presetNodes.js';
+import { DEFAULT_NODE_URL, isDefiNode, isMainnetNode, resolveSavedNodeUrl } from '../utils/presetNodes.js';
+import { persistSelectedNode, resolveLiveNode } from '../utils/nodeFailover.js';
 import {
   getAutoLockMs,
   lockSigningWorker,
@@ -76,9 +77,8 @@ export const WalletProvider = ({ children }) => {
   useIsomorphicLayoutEffect(() => {
     clearLegacyAutoMinePrefs();
 
-    // Restore preferred node
-    const savedNode = localStorage.getItem('selectedNode') || DEFAULT_NODE_URL;
-    setSelectedNode(savedNode);
+    // Restore preferred node (kept as-is; live failover runs when connecting)
+    setSelectedNode(resolveSavedNodeUrl(localStorage.getItem('selectedNode')));
 
     // Restore public wallet session only — private keys live in the signing worker after unlock.
     try {
@@ -190,18 +190,26 @@ export const WalletProvider = ({ children }) => {
     setPinHash(null);
 
     try {
-      const api = await createWarthogApi(selectedNode);
+      // Prefer the selected node; only hop to the next preset when it is dead/bad.
+      const live = await resolveLiveNode(selectedNode);
+      if (live.switched) {
+        persistSelectedNode(live.node);
+        setSelectedNode(live.node);
+        console.info(
+          `[node failover] ${live.fromNode} unreachable — switched to ${live.node}`,
+          live.attempts,
+        );
+      }
+
+      const api = live.api;
+      const activeNode = live.node;
       const { normalizeChainPin } = await import('warthog-js');
 
-      const headRes = await api.getChainHead();
-      if (!headRes.success) {
-        throw new Error(headRes.error || 'Failed to fetch chain head');
-      }
-      const { pinHash, pinHeight } = normalizeChainPin(headRes.data);
+      const { pinHash, pinHeight } = normalizeChainPin(live.head);
       setPinHeight(pinHeight);
       setPinHash(pinHash);
 
-      const balRes = isMainnetNode(selectedNode)
+      const balRes = isMainnetNode(activeNode)
         ? await api.getAccountBalance(address)
         : await api.getAccountWartBalance(address);
       if (!balRes.success) {
@@ -211,7 +219,7 @@ export const WalletProvider = ({ children }) => {
 
       const { formatWartBalance, getNextNonceFromAccount } = await import('../utils/warthogFormat.js');
 
-      const wartBalanceObj = isMainnetNode(selectedNode)
+      const wartBalanceObj = isMainnetNode(activeNode)
         ? data?.balance?.total
         : data?.wart?.total;
 
@@ -227,7 +235,7 @@ export const WalletProvider = ({ children }) => {
         setUsdBalance('N/A');
       }
 
-      if (isMainnetNode(selectedNode)) {
+      if (isMainnetNode(activeNode)) {
         setNextNonce(await getNextNonceFromAccount(data));
       } else {
         setNextNonce(0);

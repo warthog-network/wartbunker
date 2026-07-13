@@ -1,13 +1,28 @@
 const PROXY_URL = '/api/proxy';
 
-function parseNodeResponse(text) {
+function parseNodeResponse(text, { status, viaProxy } = {}) {
   try {
     return JSON.parse(text);
   } catch {
     const preview = text.trim().slice(0, 120).replace(/\s+/g, ' ');
+    if (status === 408 || /^request timeout/i.test(preview)) {
+      throw new Error(
+        'Node request timed out. The node may be offline or unreachable'
+          + (viaProxy ? ' from the server proxy' : '')
+          + ' — try another node in Network settings.',
+      );
+    }
+    if (status === 502 || /^upstream fetch failed/i.test(preview)) {
+      throw new Error(
+        'Could not reach the node'
+          + (viaProxy ? ' via the server proxy' : '')
+          + (preview ? `: ${preview}` : '')
+          + '. Check the node URL or try another node.',
+      );
+    }
     const hint = preview.startsWith('<') || preview.startsWith('<!')
       ? 'Node returned HTML instead of JSON. Check the node URL and port (API paths like /chain/head should return JSON). HTTP nodes on the live HTTPS site are reached via the server proxy.'
-      : `Node returned non-JSON: ${preview}`;
+      : `Node returned non-JSON${status ? ` (HTTP ${status})` : ''}: ${preview || '(empty body)'}`;
     throw new Error(hint);
   }
 }
@@ -65,13 +80,16 @@ export function createBrowserWarthogApi(WarthogApi, baseUrl, { useProxy = false 
       }
 
       const text = await response.text();
-      const json = parseNodeResponse(text);
+      const json = parseNodeResponse(text, {
+        status: response.status,
+        viaProxy: this._useProxy,
+      });
 
       if (json.code !== 0) {
         return {
           success: false,
           code: json.code,
-          error: json.error || 'Unknown error',
+          error: json.error || `Node error (HTTP ${response.status})`,
         };
       }
 

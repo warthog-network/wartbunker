@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
 import { validateWarthogAddressInput } from '../utils/warthogFormat.js';
-import { DEFAULT_NODE_URL, isDefiNode } from '../utils/presetNodes.js';
+import { DEFAULT_NODE_URL, isDefiNode, resolveSavedNodeUrl } from '../utils/presetNodes.js';
 import DexPriceChartsTool from './DexPriceChartsTool.jsx';
 import DexVolumeGeneratorTool from './DexVolumeGeneratorTool.jsx';
 import NumberDisplaySettings from './NumberDisplaySettings.jsx';
@@ -23,7 +23,7 @@ const ToolsPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const selectedNode = propSelectedNode || (() => {
     try {
       if (typeof localStorage === 'undefined') return DEFAULT_NODE_URL;
-      return localStorage.getItem('selectedNode') || DEFAULT_NODE_URL;
+      return resolveSavedNodeUrl(localStorage.getItem('selectedNode'));
     } catch {
       return DEFAULT_NODE_URL;
     }

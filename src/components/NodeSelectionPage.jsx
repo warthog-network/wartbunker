@@ -8,6 +8,7 @@ import {
   DEFI_TESTNET_URL,
   isPresetNodeUrl,
   isDefiNode,
+  resolveSavedNodeUrl,
 } from '../utils/presetNodes.js';
 
 const NodeSelectionPage = ({ onNodeChange }) => {
@@ -22,7 +23,7 @@ const NodeSelectionPage = ({ onNodeChange }) => {
   const [customNode, setCustomNode] = useState('');
 
   useEffect(() => {
-    const savedNode = localStorage.getItem('selectedNode') || DEFAULT_NODE_URL;
+    const savedNode = resolveSavedNodeUrl(localStorage.getItem('selectedNode'));
     setSelectedNode(savedNode);
     setCustomNode(savedNode);
   }, []);
@@ -149,7 +150,7 @@ const NodeSelectionPage = ({ onNodeChange }) => {
                   onClick={useTestnet}
                   className="wallet-action-btn !m-0 py-3 px-5 font-semibold whitespace-nowrap"
                 >
-                  Use DeFi Testnet
+                  Use Official Node
                 </button>
               </div>
             </div>
@@ -169,6 +170,10 @@ const NodeSelectionPage = ({ onNodeChange }) => {
                 HTTP node: requests go through this site&apos;s server proxy (required on HTTPS).
               </p>
             )}
+            <p className="text-zinc-500 text-xs leading-relaxed">
+              If the selected DeFi node is offline or returns bad data, the wallet automatically
+              tries the next preset until one responds. A recovered node stays selectable here.
+            </p>
           </div>
         </div>
       </div>

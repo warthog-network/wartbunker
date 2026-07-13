@@ -6,7 +6,7 @@ import { useNumberDisplay } from './NumberDisplayContext.jsx';
 import { createWarthogApi } from '../utils/warthogClient.js';
 import { normalizeChartAssetHash } from '../utils/dexPrice.js';
 import ConfirmDialog from './ConfirmDialog.jsx';
-import { DEFAULT_NODE_URL } from '../utils/presetNodes.js';
+import { DEFAULT_NODE_URL, resolveSavedNodeUrl } from '../utils/presetNodes.js';
 import { readPublicSession } from '../utils/sessionWallet.js';
 import {
   buildVolumePlan,
@@ -28,7 +28,7 @@ const DexVolumeGeneratorTool = ({ selectedNode: propSelectedNode, wallet: propWa
   const { limitOrderBuyClasses, limitOrderSellClasses } = useNumberDisplay();
   const selectedNode = propSelectedNode || (() => {
     try {
-      return localStorage.getItem('selectedNode') || DEFAULT_NODE_URL;
+      return resolveSavedNodeUrl(localStorage.getItem('selectedNode'));
     } catch {
       return DEFAULT_NODE_URL;
     }
