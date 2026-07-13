@@ -1,23 +1,167 @@
-// TransactionHistory.jsx - DeFi-aware full implementation.
-// Supports all Warthog v0.10+ node tx types from /account/:addr/history (Block.body):
-// reward, wartTransfer, tokenTransfer, limitSwap, liquidityDeposit, liquidityWithdrawal,
-// assetCreation, match, cancelation + legacy public node flat transfers/rewards.
-import React, { useState, useEffect } from 'react';
+// TransactionHistory.jsx - DeFi-aware UI on top of background history cache.
+// Prefers explorer indexer (warthogIndexer) for history; falls back to node RPC.
+// Supports indexer types + Warthog v0.10+ node tx shapes (accountHistoryParse).
+import React, { useState, useEffect, useMemo, useSyncExternalStore, useCallback } from 'react';
 import { useToast } from './Toast';
-import { createWarthogApi, fetchBlockDetails } from '../utils/warthogClient.js';
 import { isDefiNode } from '../utils/presetNodes.js';
+import { asDisplayString, abbreviate } from '../utils/accountHistoryParse.js';
+import {
+  ensureHistoryPrefetch,
+  getHistorySnapshot,
+  loadMoreHistory,
+  refreshHistoryPrefetch,
+  setHistoryUiPriority,
+  subscribeHistory,
+  INDEXER_FILTER_CONCURRENCY,
+  INDEXER_FILTER_MAX_PAGES,
+} from '../utils/accountHistoryCache.js';
 
 const PAGE_SIZE = 15;
 
-const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refreshTrigger }) => {
-  const [allHistory, setAllHistory] = useState([]);
-  const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [nextCursor, setNextCursor] = useState('4294967295');
-  const [hasMore, setHasMore] = useState(true);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [showTooltip24h, setShowTooltip24h] = useState(false);
+const HISTORY_FILTERS = [
+  { id: 'all', label: 'All' },
+  { id: 'rewards', label: 'Rewards' },
+  { id: 'transfers', label: 'Transfers' },
+  { id: 'limit_swaps', label: 'Limit Swaps' },
+  { id: 'matches', label: 'Matches' },
+  { id: 'cancels', label: 'Cancels' },
+  { id: 'asset_creations', label: 'Asset Creation' },
+  { id: 'liquidity', label: 'Liquidity' },
+  { id: 'in', label: 'In' },
+  { id: 'out', label: 'Out' },
+];
 
+/** Normalize type strings from normalizeTransaction (and any residual category spill). */
+function txTypeKey(tx) {
+  const raw = String(tx?.type || tx?.category || '').toLowerCase().replace(/-/g, '_');
+  if (!raw) return '';
+  if (tx?.isReward || raw === 'reward' || raw.includes('reward')) return 'reward';
+  if (raw === 'wart_transfer' || raw === 'warttransfer' || raw === 'transfers' || raw === 'transfer') {
+    return 'wart_transfer';
+  }
+  if (raw === 'token_transfer' || raw === 'tokentransfer') return 'token_transfer';
+  if (raw === 'limit_swap' || raw === 'limitswap') return 'limit_swap';
+  if (raw === 'match') return 'match';
+  if (raw === 'cancelation' || raw === 'cancellation' || raw.includes('cancel')) return 'cancelation';
+  if (raw === 'asset_creation' || raw === 'assetcreation') return 'asset_creation';
+  if (raw === 'liquidity_deposit' || raw === 'liquiditydeposit') return 'liquidity_deposit';
+  if (raw === 'liquidity_withdrawal' || raw === 'liquiditywithdrawal' || raw.includes('liquiditywithdraw')) {
+    return 'liquidity_withdrawal';
+  }
+  return raw;
+}
+
+function matchesHistoryFilter(tx, filter) {
+  if (!filter || filter === 'all') return true;
+
+  const type = txTypeKey(tx);
+  const isReward = type === 'reward' || Boolean(tx?.isReward);
+  const dir = String(tx?.direction || '').toLowerCase();
+
+  if (filter === 'rewards') return isReward;
+  if (filter === 'transfers') return type === 'wart_transfer' || type === 'token_transfer';
+  if (filter === 'limit_swaps') return type === 'limit_swap';
+  if (filter === 'matches') return type === 'match';
+  if (filter === 'cancels') return type === 'cancelation';
+  if (filter === 'asset_creations') return type === 'asset_creation';
+  if (filter === 'liquidity') {
+    return type === 'liquidity_deposit' || type === 'liquidity_withdrawal';
+  }
+
+  // Prefer indexer direction when present (matches server direction= filter)
+  if (filter === 'in') {
+    if (dir === 'in') return true;
+    if (dir === 'out' || dir === 'self') return false;
+    return isReward || tx?.isIncoming === true || type === 'liquidity_withdrawal';
+  }
+
+  if (filter === 'out') {
+    if (dir === 'out') return true;
+    if (dir === 'in' || dir === 'self') return false;
+    if (isReward) return false;
+    if (tx?.isIncoming === true) return false;
+    if (type === 'match') return false;
+    return true;
+  }
+
+  return true;
+}
+
+function filterEmptyMessage(filter) {
+  switch (filter) {
+    case 'rewards':
+      return 'No rewards found for this address.';
+    case 'transfers':
+      return 'No WART or token transfers found for this address.';
+    case 'limit_swaps':
+      return 'No limit swaps found for this address.';
+    case 'matches':
+      return 'No DEX matches found for this address.';
+    case 'cancels':
+      return 'No cancelations found for this address.';
+    case 'asset_creations':
+      return 'No asset creations found for this address.';
+    case 'liquidity':
+      return 'No liquidity deposits or withdrawals found for this address.';
+    case 'in':
+      return 'No incoming transactions found for this address.';
+    case 'out':
+      return 'No outgoing transactions found for this address.';
+    default:
+      return 'No transactions found.';
+  }
+}
+
+function abbreviateTxid(value) {
+  const str = asDisplayString(value);
+  if (!str || str === 'N/A') return 'N/A';
+  if (str.length <= 14) return str;
+  return `${str.slice(0, 6)}…${str.slice(-6)}`;
+}
+
+const EMPTY_SNAP = {
+  items: [],
+  hasMore: true,
+  loading: true,
+  scanning: false,
+  error: null,
+  pages: 0,
+  source: null,
+  typeFiltersSupported: null,
+  filterLane: 'all',
+};
+
+function useAccountHistory(address, node, filter = 'all') {
+  const subscribe = useCallback(
+    (onStoreChange) => {
+      if (!address || !node) return () => {};
+      return subscribeHistory((key) => {
+        // Re-render on any update for this account, or global clear
+        if (key === '*') {
+          onStoreChange();
+          return;
+        }
+        onStoreChange();
+      });
+    },
+    [address, node],
+  );
+
+  const getSnapshot = useCallback(() => {
+    if (!address || !node) return EMPTY_SNAP;
+    return getHistorySnapshot(address, node, filter) || EMPTY_SNAP;
+  }, [address, node, filter]);
+
+  // Server snapshot same as empty for SSR
+  const getServerSnapshot = useCallback(() => EMPTY_SNAP, []);
+
+  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+}
+
+const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refreshTrigger }) => {
+  const [currentPage, setCurrentPage] = useState(1);
+  const [historyFilter, setHistoryFilter] = useState('all');
+  const [showTooltip24h, setShowTooltip24h] = useState(false);
   const toast = useToast();
   const [showTooltipWeek, setShowTooltipWeek] = useState(false);
   const [showTooltipMonth, setShowTooltipMonth] = useState(false);
@@ -28,350 +172,94 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
 
   const isTestnet = isDefiNode(node);
 
-  const asDisplayString = (value, fallback = '') => {
-    if (value == null || value === '') return fallback;
-    if (typeof value === 'string') return value;
-    if (typeof value === 'number' || typeof value === 'bigint') return String(value);
-    if (typeof value === 'object') {
-      if (typeof value.hex === 'string') return value.hex;
-      if (typeof value.str === 'string') return value.str;
-      if (typeof value.txHash === 'string') return value.txHash;
-      if (typeof value.hash === 'string') return value.hash;
-      if (typeof value.address === 'string') return value.address;
-      if (typeof value.toHex === 'function') {
-        try {
-          return value.toHex();
-        } catch {
-          /* fall through */
-        }
+  // Probe 'all' first (learns typeFiltersSupported), then dedicated filter lanes when supported.
+  const allSnap = useAccountHistory(address, node, 'all');
+  const typeFiltersSupported = Boolean(allSnap.typeFiltersSupported);
+  const activeLane = typeFiltersSupported ? historyFilter : 'all';
+  const snap = useAccountHistory(address, node, activeLane);
+  // Rewards chip counts: server group=reward lane when available (not buried under other types)
+  const rewardsSnap = useAccountHistory(address, node, typeFiltersSupported ? 'rewards' : 'all');
+
+  const allHistory = snap.items || [];
+  const hasMore = Boolean(snap.hasMore);
+  const loading = Boolean(snap.loading);
+  const scanning = Boolean(snap.scanning);
+  const error = snap.error || null;
+  const pagesScanned = snap.pages || 0;
+  const historySource = snap.source || null;
+
+  // Warm active filter lane (or all); prioritize while panel is open
+  useEffect(() => {
+    if (!address || !node) return undefined;
+    ensureHistoryPrefetch(address, node, 'all');
+    if (typeFiltersSupported) {
+      ensureHistoryPrefetch(address, node, 'rewards');
+      if (historyFilter !== 'all' && historyFilter !== 'rewards') {
+        ensureHistoryPrefetch(address, node, historyFilter);
       }
     }
-    return fallback;
-  };
+    setHistoryUiPriority(address, node, true, activeLane);
+    return () => setHistoryUiPriority(address, node, false, activeLane);
+  }, [address, node, historyFilter, typeFiltersSupported, activeLane]);
 
-  const abbreviate = (value) => {
-    const str = asDisplayString(value);
-    if (!str || str === 'N/A') return 'N/A';
-    if (str.length <= 12) return str;
-    return `${str.slice(0, 6)}...${str.slice(-4)}`;
-  };
-
-  const abbreviateTxid = (value) => {
-    const str = asDisplayString(value);
-    if (!str || str === 'N/A') return 'N/A';
-    if (str.length <= 14) return str;
-    return `${str.slice(0, 6)}…${str.slice(-6)}`;
-  };
-
-  // Safe value extractors for {str, E8, ...} or primitives from API
-  const getAmountStr = (v, fallback = '0') => {
-    if (v == null) return fallback;
-    if (typeof v === 'string' || typeof v === 'number') return String(v);
-    if (typeof v === 'object') {
-      if (v.str != null) return String(v.str);
-      if (v.E8 !== undefined) return (Number(v.E8) / 100000000).toFixed(8);
-      if (v.u64 !== undefined) return String(v.u64);
-    }
-    return fallback;
-  };
-
-  const getFeeStr = (v, fallback = '0') => {
-    if (v == null) return fallback;
-    if (typeof v === 'string' || typeof v === 'number') return String(v);
-    if (typeof v === 'object') {
-      if (v.str != null) return String(v.str);
-      if (v.E8 !== undefined) return (Number(v.E8) / 100000000).toFixed(8);
-    }
-    return fallback;
-  };
-
-  const formatRawAmount = (raw, precision = 8) => {
-    const value = BigInt(raw);
-    const divisor = 10n ** BigInt(precision);
-    const whole = value / divisor;
-    const frac = value % divisor;
-    if (precision === 0) return whole.toString();
-    const fracStr = frac.toString().padStart(precision, '0').replace(/0+$/, '');
-    return fracStr ? `${whole}.${fracStr}` : whole.toString();
-  };
-
-  const sumSwappedLeg = (swaps, leg) => {
-    if (!swaps?.length) return null;
-    if (swaps.length === 1) {
-      const v = swaps[0]?.swapped?.[leg];
-      return v ? getAmountStr(v) : null;
-    }
-
-    let total = 0n;
-    let precision = 8;
-    for (const swap of swaps) {
-      const v = swap?.swapped?.[leg];
-      if (!v) continue;
-      if (v.u64 !== undefined) {
-        total += BigInt(v.u64);
-        if (v.decimals !== undefined) precision = v.decimals;
-      } else if (v.E8 !== undefined) {
-        total += BigInt(v.E8);
-        precision = 8;
-      }
-    }
-    return total > 0n ? formatRawAmount(total, precision) : null;
-  };
-
-  // Normalize ANY tx shape coming from perBlock (DeFi body.* or legacy public node)
-  const normalizeTransaction = (txItem, block, categoryHint = null, viewingAddress = null) => {
-    const viewer = viewingAddress ? asDisplayString(viewingAddress).toLowerCase() : null;
-    const addrEq = (a) => {
-      const addr = asDisplayString(a);
-      return !!(addr && viewer && addr.toLowerCase() === viewer);
-    };
-    // Legacy public node flat shape (from /history on mainnet nodes)
-    if (txItem && txItem.txHash) {
-      const fromA = asDisplayString(txItem.fromAddress, null) || null;
-      const toAddr = asDisplayString(txItem.toAddress, 'N/A') || 'N/A';
-      return {
-        txid: asDisplayString(txItem.txHash, 'N/A'),
-        fromAddress: fromA,
-        toAddress: toAddr,
-        amount: txItem.amount || getAmountStr(txItem.amountE8),
-        fee: getFeeStr(txItem.fee),
-        confirmations: block?.confirmations,
-        height: block?.height,
-        timestamp: null,
-        isReward: !fromA,
-        type: !fromA ? 'reward' : 'wart_transfer',
-        asset: 'WART',
-        description: !fromA ? `Block reward ${txItem.amount || '0'} WART` : `Sent ${txItem.amount || '0'} WART`,
-        isIncoming: addrEq(toAddr),
-        category: categoryHint || (!fromA ? 'reward' : 'wartTransfer'),
-      };
-    }
-
-    // DeFi node shape (v0.10+): entry = { historyId, transaction: { hash, data, signedCommon?, processed? } }
-    // or reward entry directly under body.reward
-    const tx = (txItem && txItem.transaction) ? txItem.transaction : (txItem || {});
-    const data = tx.data || txItem?.data || {};
-    const common = tx.signedCommon || tx.signingData || txItem?.signedCommon || {};
-
-    const hash = asDisplayString(tx.hash || txItem?.hash, 'N/A');
-    const fromA = asDisplayString(common.originAddress || data.fromAddress, null) || null;
-    const toA = asDisplayString(data.toAddress, null) || null;
-
-    let typ = categoryHint || 'unknown';
-    let amt = getAmountStr(data.amount);
-    let assetSym = 'WART';
-    let desc = '';
-    let incoming = false;
-
-    const cat = (categoryHint || '').toLowerCase();
-
-    if (cat.includes('reward') || (!fromA && !data.toAddress && data.amount)) {
-      typ = 'reward';
-      amt = getAmountStr(data.amount);
-      assetSym = 'WART';
-      incoming = addrEq(toA);
-      desc = `Block reward ${amt} WART`;
-    } else if (cat.includes('wart')) {
-      typ = 'wart_transfer';
-      assetSym = 'WART';
-      incoming = addrEq(toA);
-      desc = incoming ? `Received ${amt} WART` : `Sent ${amt} WART to ${abbreviate(toA)}`;
-    } else if (cat.includes('token')) {
-      typ = 'token_transfer';
-      assetSym = data.asset?.name || data.tokenSpec || 'TOKEN';
-      amt = getAmountStr(data.amount);
-      incoming = addrEq(toA);
-      desc = `${incoming ? 'Received' : 'Sent'} ${amt} ${assetSym}`;
-    } else if (cat.includes('limitswap') || cat.includes('limit_swap')) {
-      typ = 'limit_swap';
-      assetSym = data.baseAsset?.name || 'ASSET';
-      amt = getAmountStr(data.amount);
-      const lim = data.limit?.doubleAdjusted != null ? data.limit.doubleAdjusted : (data.limit || '?');
-      const dir = data.buy ? 'BUY' : 'SELL';
-      desc = `${dir} limit ${amt} ${assetSym} @ ${lim}`;
-      incoming = false;
-    } else if (cat.includes('liquiditydeposit') || cat.includes('liquidity_deposit')) {
-      typ = 'liquidity_deposit';
-      assetSym = asDisplayString(data.baseAsset?.name) || 'POOL';
-      const dep = data.deposited || {};
-      const processed = tx.processed || txItem?.transaction?.processed || {};
-      const sharesReceived = getAmountStr(processed.sharesReceived);
-      amt = `${getAmountStr(dep.asset || dep.base || dep)} + ${getAmountStr(dep.wart || dep.quote || '0')}`;
-      desc = sharesReceived && sharesReceived !== '0'
-        ? `Deposited ${amt} into ${assetSym} pool → received ${sharesReceived} LP shares`
-        : `Deposited liquidity into ${assetSym} pool`;
-    } else if (cat.includes('liquiditywithdraw') || cat.includes('liquidity_withdrawal')) {
-      typ = 'liquidity_withdrawal';
-      assetSym = asDisplayString(data.baseAsset?.name) || 'POOL';
-      const shares = getAmountStr(data.sharesRedeemed);
-      const processed = tx.processed || txItem?.transaction?.processed || {};
-      const received = processed.received || {};
-      const baseRecv = getAmountStr(received.base || received.asset);
-      const quoteRecv = getAmountStr(received.quote || received.wart);
-      incoming = true;
-      if (baseRecv !== '0' || quoteRecv !== '0') {
-        amt = `${baseRecv} ${assetSym} + ${quoteRecv} WART`;
-        desc = `Withdrew ${shares} LP shares from ${assetSym} pool → received ${baseRecv} ${assetSym} + ${quoteRecv} WART`;
-      } else {
-        amt = shares;
-        desc = `Withdrew ${shares} LP shares from ${assetSym} pool`;
-      }
-    } else if (cat.includes('assetcreation') || cat.includes('asset_creation')) {
-      typ = 'asset_creation';
-      assetSym = data.name || 'ASSET';
-      amt = getAmountStr(data.supply);
-      desc = `Created ${assetSym} (supply ${amt})`;
-    } else if (cat.includes('match')) {
-      typ = 'match';
-      assetSym = data.baseAsset?.name || 'ASSET';
-      const buySwaps = data.buySwaps || [];
-      const sellSwaps = data.sellSwaps || [];
-      const allSwaps = [...buySwaps, ...sellSwaps];
-      const swapCount = allSwaps.length;
-      const baseAmt = sumSwappedLeg(allSwaps, 'base');
-      const quoteAmt = sumSwappedLeg(allSwaps, 'quote');
-      amt = baseAmt || '0';
-      desc = `DEX match${swapCount ? ` (${swapCount} swap${swapCount !== 1 ? 's' : ''})` : ''} on ${assetSym}`;
-      if (baseAmt && quoteAmt) {
-        desc += ` — ${baseAmt} ${assetSym} / ${quoteAmt} WART`;
-      }
-    } else if (cat.includes('cancel')) {
-      typ = 'cancelation';
-      desc = `Canceled tx ${abbreviate(data.cancelTxid)}`;
-    } else {
-      // fallback generic
-      amt = getAmountStr(data.amount || data.supply);
-      desc = (cat || 'Transaction');
-    }
-
-    const feeVal = common.fee || txItem?.fee;
-
-    return {
-      txid: hash,
-      fromAddress: fromA,
-      toAddress: toA,
-      amount: amt,
-      fee: getFeeStr(feeVal),
-      confirmations: block?.confirmations,
-      height: block?.height,
-      timestamp: null,
-      isReward: typ === 'reward',
-      type: typ,
-      asset: assetSym,
-      description: desc,
-      isIncoming: incoming,
-      category: cat || typ,
-    };
-  };
-
-  console.log(`[HISTORY] Node type: ${isTestnet ? 'DEFI TESTNET' : 'REGULAR PUBLIC NODE'}`);
-
-  const parseHistoryBlocks = (rawData, timestampMap, fullBlockMap) => {
-    const newItems = [];
-    rawData.perBlock.forEach((block) => {
-      const h = block.height;
-      const srcBlock = fullBlockMap[h] || block;
-      const body = block.body || srcBlock?.body || block.transactions || srcBlock?.transactions || {};
-
-      const rewardEntry = body.reward;
-      if (rewardEntry) {
-        const list = Array.isArray(rewardEntry) ? rewardEntry : [rewardEntry];
-        list.forEach((entry) => {
-          if (entry) {
-            const n = normalizeTransaction(entry, srcBlock || block, 'reward', address);
-            n.timestamp = block.header?.time?.timestamp || timestampMap[h] || n.timestamp;
-            newItems.push(n);
-          }
-        });
-      }
-
-      const defiKeys = [
-        'wartTransfer', 'tokenTransfer', 'limitSwap', 'liquidityDeposit', 'liquidityWithdrawal',
-        'assetCreation', 'match', 'cancelation',
-        'wartTransfers', 'tokenTransfers', 'transfers', 'rewards',
-      ];
-      defiKeys.forEach((key) => {
-        const arr = body[key];
-        if (Array.isArray(arr)) {
-          const hint = key.toLowerCase().includes('reward') ? 'reward' :
-                       key.toLowerCase().includes('wart') ? 'wartTransfer' :
-                       key.toLowerCase().includes('token') ? 'tokenTransfer' :
-                       key.toLowerCase().includes('limit') ? 'limitSwap' :
-                       key.toLowerCase().includes('liquiditydeposit') ? 'liquidityDeposit' :
-                       key.toLowerCase().includes('liquiditywithdraw') ? 'liquidityWithdrawal' :
-                       key.toLowerCase().includes('asset') ? 'assetCreation' :
-                       key.toLowerCase().includes('match') ? 'match' :
-                       key.toLowerCase().includes('cancel') ? 'cancelation' : key;
-          arr.forEach((entry) => {
-            if (entry) {
-              const n = normalizeTransaction(entry, srcBlock || block, hint, address);
-              n.timestamp = block.header?.time?.timestamp || timestampMap[h] || n.timestamp;
-              newItems.push(n);
-            }
-          });
-        }
-      });
-
-      if (body.transfers && Array.isArray(body.transfers)) {
-        body.transfers.forEach((t) => {
-          const n = normalizeTransaction(t, srcBlock || block, 'wartTransfer', address);
-          n.timestamp = block.header?.time?.timestamp || timestampMap[h] || n.timestamp;
-          if (!newItems.find((x) => x.txid === n.txid)) newItems.push(n);
-        });
-      }
-      if (body.rewards && Array.isArray(body.rewards)) {
-        body.rewards.forEach((r) => {
-          const n = normalizeTransaction(r, srcBlock || block, 'reward', address);
-          n.timestamp = block.header?.time?.timestamp || timestampMap[h] || n.timestamp;
-          newItems.push(n);
-        });
-      }
-    });
-    return newItems;
-  };
+  // Manual refresh from parent — all lanes for this account
+  useEffect(() => {
+    if (!address || !node) return;
+    if (refreshTrigger == null || refreshTrigger === 0) return;
+    refreshHistoryPrefetch(address, node);
+  }, [refreshTrigger, address, node]);
 
   useEffect(() => {
-    setAllHistory([]);
     setCurrentPage(1);
-    setNextCursor('4294967295');
-    setHasMore(true);
-    setError(null);
+    setHistoryFilter('all');
   }, [address, node]);
 
+  // Keep a few reward pages warm for 24h/week/month chips
   useEffect(() => {
-    if (address && node) fetchInitialHistory();
-  }, [address, node, refreshTrigger]);
+    if (!address || !node || !typeFiltersSupported) return;
+    if (!rewardsSnap.hasMore || rewardsSnap.loading || rewardsSnap.scanning) return;
+    if ((rewardsSnap.items || []).length >= 150) return;
+    void loadMoreHistory(address, node, { filter: 'rewards', minLoaded: 150 });
+  }, [
+    address,
+    node,
+    typeFiltersSupported,
+    rewardsSnap.hasMore,
+    rewardsSnap.loading,
+    rewardsSnap.scanning,
+    rewardsSnap.items,
+  ]);
 
   useEffect(() => {
-    if (allHistory.length > 0 && onCountsUpdate) {
-      const rewards = allHistory.filter(tx => tx.isReward);
-      const now = Date.now();
+    const pool = rewardsSnap.items || [];
+    if (pool.length === 0 || !onCountsUpdate) return;
 
-      // Calculate time periods in milliseconds
-      const oneDay = 24 * 60 * 60 * 1000;
-      const oneWeek = 7 * oneDay;
-      const oneMonth = 30 * oneDay;
+    const rewards = typeFiltersSupported
+      ? pool
+      : pool.filter((tx) => tx.isReward || txTypeKey(tx) === 'reward');
+    const now = Date.now();
+    const oneDay = 24 * 60 * 60 * 1000;
+    const oneWeek = 7 * oneDay;
+    const oneMonth = 30 * oneDay;
 
-      // Filter rewards by time periods
-      const rewards24h = rewards.filter(tx => tx.timestamp && (now - tx.timestamp * 1000) <= oneDay);
-      const rewardsWeek = rewards.filter(tx => tx.timestamp && (now - tx.timestamp * 1000) <= oneWeek);
-      const rewardsMonth = rewards.filter(tx => tx.timestamp && (now - tx.timestamp * 1000) <= oneMonth);
+    const rewards24h = rewards.filter((tx) => tx.timestamp && (now - tx.timestamp * 1000) <= oneDay);
+    const rewardsWeek = rewards.filter((tx) => tx.timestamp && (now - tx.timestamp * 1000) <= oneWeek);
+    const rewardsMonth = rewards.filter((tx) => tx.timestamp && (now - tx.timestamp * 1000) <= oneMonth);
 
-      onCountsUpdate({
-        '24h': rewards24h.length,
-        week: rewardsWeek.length,
-        month: rewardsMonth.length,
-        rewards24h: rewards24h.map(tx => tx.txid),
-        rewardsWeek: rewardsWeek.map(tx => tx.txid),
-        rewardsMonth: rewardsMonth.map(tx => tx.txid),
-      });
-    }
-  }, [allHistory, onCountsUpdate]);
+    onCountsUpdate({
+      '24h': rewards24h.length,
+      week: rewardsWeek.length,
+      month: rewardsMonth.length,
+      rewards24h: rewards24h.map((tx) => tx.txid),
+      rewardsWeek: rewardsWeek.map((tx) => tx.txid),
+      rewardsMonth: rewardsMonth.map((tx) => tx.txid),
+    });
+  }, [rewardsSnap.items, typeFiltersSupported, onCountsUpdate]);
 
   useEffect(() => {
     const checkDarkMode = () => {
-      const isDark = document.documentElement.classList.contains('dark') ||
-                     window.matchMedia('(prefers-color-scheme: dark)').matches;
+      const isDark = document.documentElement.classList.contains('dark')
+        || window.matchMedia('(prefers-color-scheme: dark)').matches;
       setIsDarkMode(isDark);
     };
 
@@ -380,7 +268,7 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
     const observer = new MutationObserver(checkDarkMode);
     observer.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ['class']
+      attributeFilter: ['class'],
     });
 
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
@@ -392,93 +280,73 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
     };
   }, []);
 
-  const fetchInitialHistory = async () => {
-    setLoading(true);
-    setError(null);
-    console.log(`🔍 Fetching history from ${isTestnet ? 'TESTNET/DEFI' : 'PUBLIC NODE'}...`);
+  // Server lanes already match the tab — trust them (avoids false empties from client mismatches).
+  // Legacy path: client filter over the unfiltered 'all' feed.
+  const filteredHistory = useMemo(() => {
+    if (historyFilter === 'all' || typeFiltersSupported) return allHistory;
+    return allHistory.filter((tx) => matchesHistoryFilter(tx, historyFilter));
+  }, [allHistory, historyFilter, typeFiltersSupported]);
 
-    try {
-      const api = await createWarthogApi(node);
-      const histRes = await api.getAccountHistory(address, 4294967295);
-      if (!histRes.success) {
-        setAllHistory([]);
-        setHasMore(false);
-        setNextCursor(null);
-        setCurrentPage(1);
-        setError(histRes.error || 'Failed to fetch transaction history');
-        setLoading(false);
-        return;
-      }
-      const rawData = histRes.data;
+  const filterLabel =
+    HISTORY_FILTERS.find((f) => f.id === historyFilter)?.label || historyFilter;
 
-      if (!rawData.perBlock || !Array.isArray(rawData.perBlock)) {
-        throw new Error('Unexpected response format from history endpoint');
-      }
+  const matchesNeededForPage = currentPage * PAGE_SIZE;
+  const matchFn = useCallback(
+    (tx) => matchesHistoryFilter(tx, historyFilter),
+    [historyFilter],
+  );
 
-      const { timestampMap, fullBlockMap } = await fetchBlockDetails(api, rawData.perBlock);
-      const newItems = parseHistoryBlocks(rawData, timestampMap, fullBlockMap);
+  // Demand-load more pages for the active lane
+  useEffect(() => {
+    if (!address || !node) return undefined;
+    if (!hasMore || loading) return undefined;
+    if (scanning && historySource === 'node') return undefined;
 
-      const seen = new Set();
-      const deduped = newItems.filter((it) => {
-        if (seen.has(it.txid)) return false;
-        seen.add(it.txid);
-        return true;
+    if (historyFilter === 'all' || typeFiltersSupported) {
+      // Server-filtered lane or unfiltered: load until we have enough rows for the UI page
+      if (filteredHistory.length >= matchesNeededForPage) return undefined;
+      if (scanning) return undefined;
+      void loadMoreHistory(address, node, {
+        filter: activeLane,
+        minLoaded: matchesNeededForPage,
       });
-
-      setAllHistory(deduped);
-      setNextCursor(rawData.fromId > 0 ? rawData.fromId : null);
-      setHasMore(deduped.length > 0 && rawData.fromId > 0);
-      setCurrentPage(1);
-    } catch (err) {
-      console.error(err);
-      setError(err.message || 'Failed to fetch history');
-    } finally {
-      setLoading(false);
+      return undefined;
     }
-  };
 
-  const fetchMoreHistory = async () => {
-    if (!hasMore || loading) return;
-    setLoading(true);
-    try {
-      const api = await createWarthogApi(node);
-      const histRes = await api.getAccountHistory(address, nextCursor);
-      if (!histRes.success) {
-        setHasMore(false);
-        setLoading(false);
-        return;
-      }
-      const rawData = histRes.data;
+    // Legacy client hunt only when indexer has no type/group/direction filters
+    if (filteredHistory.length >= matchesNeededForPage) return undefined;
+    if (scanning) return undefined;
+    void loadMoreHistory(address, node, {
+      filter: 'all',
+      untilMatchCount: matchesNeededForPage,
+      matchFn,
+      maxPages: INDEXER_FILTER_MAX_PAGES,
+      concurrency: INDEXER_FILTER_CONCURRENCY,
+    });
+    return undefined;
+  }, [
+    address,
+    node,
+    hasMore,
+    loading,
+    scanning,
+    historySource,
+    historyFilter,
+    typeFiltersSupported,
+    activeLane,
+    allHistory.length,
+    filteredHistory.length,
+    matchesNeededForPage,
+    matchFn,
+  ]);
 
-      if (!rawData.perBlock || !Array.isArray(rawData.perBlock)) {
-        setHasMore(false);
-        setLoading(false);
-        return;
-      }
-
-      const { timestampMap, fullBlockMap } = await fetchBlockDetails(api, rawData.perBlock);
-      const newItems = parseHistoryBlocks(rawData, timestampMap, fullBlockMap);
-
-      const seen = new Set(allHistory.map((x) => x.txid));
-      const fresh = newItems.filter((it) => !seen.has(it.txid));
-
-      setAllHistory(prev => [...prev, ...fresh]);
-      setHasMore(fresh.length > 0 && rawData.fromId > 0);
-      setNextCursor(rawData.fromId > 0 ? rawData.fromId : null);
-    } catch (err) {
-      setError(err.message || 'Failed to load more history');
-    } finally {
-      setLoading(false);
-    }
+  const handleFilterChange = (id) => {
+    setHistoryFilter(id);
+    setCurrentPage(1);
   };
 
   const handleNext = () => {
-    const nextPage = currentPage + 1;
-    const requiredLength = nextPage * PAGE_SIZE;
-    if (allHistory.length < requiredLength && hasMore) fetchMoreHistory();
-    if (allHistory.length >= requiredLength || (allHistory.length < requiredLength && !hasMore)) {
-      setCurrentPage(nextPage);
-    }
+    setCurrentPage((p) => p + 1);
   };
 
   const handlePrev = () => {
@@ -496,8 +364,28 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
 
   const startIndex = (currentPage - 1) * PAGE_SIZE;
   const endIndex = startIndex + PAGE_SIZE;
-  const currentHistory = allHistory.slice(startIndex, endIndex);
-  const hasNext = (endIndex < allHistory.length) || hasMore;
+  const currentHistory = filteredHistory.slice(startIndex, endIndex);
+  // Next enabled if more filtered rows exist, or cache still has unfetched history
+  const hasNext = endIndex < filteredHistory.length || hasMore;
+
+  const isBusy = loading || scanning;
+  /** Actively loading more pages to fill this filter page (not a full-history scan) */
+  const isFilterSearching =
+    historyFilter !== 'all'
+    && !error
+    && hasMore
+    && filteredHistory.length < matchesNeededForPage
+    && isBusy;
+
+  const showEmptyAll =
+    !isBusy && !error && allHistory.length === 0 && !hasMore && historyFilter === 'all';
+  const showEmptyFilter =
+    !isBusy
+    && !error
+    && !isFilterSearching
+    && filteredHistory.length === 0
+    && historyFilter !== 'all'
+    && !hasMore;
 
   const sectionColor = isDarkMode ? '#FFECB3' : '#333';
   const txBackground = isDarkMode ? '#ffecb33d' : '#ddd';
@@ -606,18 +494,95 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
           <h2 className="text-base font-semibold text-orange-400 flex items-center gap-2 flex-wrap order-2 md:order-1">
             Transaction History <span className="text-sm">(Page {currentPage})</span>
             <span
-              className={`inline-block w-2 h-2 rounded-full ${loading ? 'bg-yellow-400 animate-pulse' : 'bg-green-500'}`}
-            ></span>
+              className={`inline-block w-2 h-2 rounded-full ${isBusy ? 'bg-yellow-400 animate-pulse' : 'bg-green-500'}`}
+              title={
+                scanning
+                  ? `${historySource === 'indexer' ? 'Indexer' : 'Node'} loading… ${allHistory.length} txs (${pagesScanned} pages)`
+                  : loading
+                    ? 'Loading…'
+                    : historySource === 'indexer'
+                      ? `Indexer · ${allHistory.length} loaded${hasMore ? ' (more on demand)' : ''}`
+                      : 'Up to date'
+              }
+            />
+            {isBusy && (
+              <span className="text-[10px] font-normal text-zinc-500 normal-case tracking-normal">
+                {historySource === 'indexer' ? 'Indexer' : 'Node'}
+                {' · '}
+                {allHistory.length.toLocaleString()} loaded
+                {isTestnet ? ' · testnet' : ''}
+              </span>
+            )}
+            {!isBusy && historySource === 'indexer' && allHistory.length > 0 && (
+              <span className="text-[10px] font-normal text-zinc-500 normal-case tracking-normal">
+                Indexer · {allHistory.length.toLocaleString()} loaded
+                {hasMore ? '+' : ''}
+              </span>
+            )}
           </h2>
         </div>
 
-        {error && <div className="error"><strong>Error:</strong> {error}</div>}
-        {allHistory.length === 0 && !loading && <p>No transactions found.</p>}
+        <div
+          className="flex flex-wrap items-center gap-1.5 mt-3 mb-4 pb-1"
+          role="tablist"
+          aria-label="History filter"
+        >
+          {HISTORY_FILTERS.map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              role="tab"
+              aria-selected={historyFilter === f.id}
+              className={`compact-btn !mx-0 !my-0 !px-3 !py-1${historyFilter === f.id ? ' compact-btn--active' : ''}`}
+              onClick={() => handleFilterChange(f.id)}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+
+        {error && allHistory.length === 0 && (
+          <div className="error"><strong>Error:</strong> {error}</div>
+        )}
+        {isFilterSearching && (
+          <p className="text-zinc-400 text-sm mb-3">
+            {typeFiltersSupported
+              ? `Loading ${filterLabel.toLowerCase()} from indexer…`
+              : `Searching history for ${filterLabel.toLowerCase()}…`}
+            <span className="text-zinc-500">
+              {' '}
+              ({filteredHistory.length.toLocaleString()}
+              {typeFiltersSupported ? ' loaded' : ' matches'}
+              {historySource === 'indexer' && typeFiltersSupported
+                ? ' · group/direction filter'
+                : historySource === 'indexer'
+                  ? ` · client scan ×${INDEXER_FILTER_CONCURRENCY}`
+                  : ''})
+            </span>
+          </p>
+        )}
+        {!isFilterSearching && isBusy && historyFilter === 'all' && (
+          <p className="text-zinc-500 text-xs mb-3">
+            {historySource === 'indexer' ? 'Loading from indexer…' : 'Loading from node…'}
+            {' '}
+            {allHistory.length > 0
+              ? `${allHistory.length.toLocaleString()} so far`
+              : ''}
+          </p>
+        )}
+        {showEmptyAll && <p>No transactions found.</p>}
+        {showEmptyFilter && (
+          <p className="text-zinc-400 text-sm mb-3">{filterEmptyMessage(historyFilter)}</p>
+        )}
 
         {currentHistory.length > 0 && (
           <div style={{ maxHeight: '420px', overflowY: 'auto', paddingRight: '10px' }}>
+            {isFilterSearching && (
+              <p className="text-zinc-500 text-xs mb-2">
+                Showing {currentHistory.length} so far — loading more pages for matches…
+              </p>
+            )}
             {currentHistory.map((tx, index) => {
-              // Type badge styling
               const typeLabel = (tx.type || tx.category || 'tx').toUpperCase().replace(/_/g, ' ');
               let badgeBg = '#444';
               let badgeColor = '#fff';
@@ -632,17 +597,16 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
 
               return (
                 <div
-                  key={index}
+                  key={`${asDisplayString(tx.txid, 'tx')}-${startIndex + index}`}
                   style={{
                     backgroundColor: txBackground,
                     border: `1px solid ${txBorder}`,
                     borderRadius: '8px',
                     padding: '14px 16px',
                     marginBottom: '14px',
-                    color: txColor
+                    color: txColor,
                   }}
                 >
-                  {/* Header row: type badge + txid */}
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
                     <span
                       style={{
@@ -653,7 +617,7 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
                         borderRadius: '999px',
                         background: badgeBg,
                         color: badgeColor,
-                        textTransform: 'uppercase'
+                        textTransform: 'uppercase',
                       }}
                     >
                       {typeLabel}
@@ -667,14 +631,12 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
                     </span>
                   </div>
 
-                  {/* One-line description of the action */}
                   {tx.description && (
                     <div style={{ marginBottom: '8px', fontSize: '13px', opacity: 0.95 }}>
                       {tx.description}
                     </div>
                   )}
 
-                  {/* From / origin (for signed user txs and rewards) */}
                   {(tx.fromAddress || tx.isReward) && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '12px' }}>
                       <strong style={{ color: labelColor, minWidth: 42 }}>From:</strong>
@@ -688,7 +650,6 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
                     </div>
                   )}
 
-                  {/* To (when applicable) */}
                   {tx.toAddress && tx.type !== 'limit_swap' && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '12px' }}>
                       <strong style={{ color: labelColor, minWidth: 42 }}>To:</strong>
@@ -702,7 +663,6 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
                     </div>
                   )}
 
-                  {/* Amount + Asset (core for all) */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '12px' }}>
                     <strong style={{ color: labelColor, minWidth: 42 }}>Amount:</strong>
                     <span style={{ fontFamily: 'monospace' }}>
@@ -710,7 +670,6 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
                     </span>
                   </div>
 
-                  {/* Fee (only for user signed actions) */}
                   {tx.fee && tx.fee !== '0' && tx.type !== 'reward' && tx.type !== 'match' && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '12px' }}>
                       <strong style={{ color: labelColor, minWidth: 42 }}>Fee:</strong>
@@ -718,7 +677,6 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
                     </div>
                   )}
 
-                  {/* Confirmations / Height / Date row */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', opacity: 0.85, marginTop: '6px', borderTop: `1px solid ${txBorder}`, paddingTop: '6px' }}>
                     <span>Conf: {tx.confirmations ?? '—'}</span>
                     <span>H: {tx.height ?? '—'}</span>
@@ -739,7 +697,7 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
             type="button"
             className="compact-btn"
             onClick={handlePrev}
-            disabled={currentPage === 1 || loading}
+            disabled={currentPage === 1}
           >
             Previous
           </button>
@@ -747,7 +705,7 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
             type="button"
             className="compact-btn"
             onClick={handleNext}
-            disabled={!hasNext || loading}
+            disabled={!hasNext}
           >
             Next
           </button>

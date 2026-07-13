@@ -69,8 +69,53 @@ export function normalizeAssetHash(raw) {
   return raw.trim().replace(/^0x/i, '').toLowerCase();
 }
 
-/** Default transaction fee — high enough for miners to pick up txs. */
+/** Preferred transaction fee when the node's minimum is lower. */
 export const DEFAULT_TX_FEE = '0.01';
+
+/** Human-readable WART amount from raw E8. */
+export function formatFeeE8(e8) {
+  try {
+    const n = Number(e8) / 1e8;
+    return Number.isFinite(n) ? n.toFixed(8).replace(/\.?0+$/, '') : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Display string for the node's current minimum fee. */
+export function formatNodeMinFee(minFeeData) {
+  return minFeeData?.str || formatFeeE8(minFeeData?.E8) || 'unknown';
+}
+
+/**
+ * Effective default fee: max(preferred DEFAULT_TX_FEE, node minimum), after compact-fee rounding.
+ * @param {{ E8: string | number | bigint, str?: string }} minFeeData
+ */
+export async function computeSuggestedTxFee(minFeeData) {
+  const { Wart, RoundedFee } = await import('warthog-js');
+  const nodeMin = RoundedFee.fromE8(BigInt(minFeeData.E8), true);
+  const preferred = Wart.parse(DEFAULT_TX_FEE)?.roundedFee(true);
+  const chosen = preferred && preferred.E8 >= nodeMin.E8 ? preferred : nodeMin;
+
+  if (chosen.E8 === nodeMin.E8 && minFeeData.str) {
+    return minFeeData.str;
+  }
+  return formatFeeE8(chosen.E8) || DEFAULT_TX_FEE;
+}
+
+/** Fetch live min/suggested fees from the connected node. */
+export async function fetchNodeTxFees(api) {
+  const feeRes = await api.getMinFee();
+  if (!feeRes.success) {
+    throw new Error(feeRes.error || 'Could not fetch minimum fee');
+  }
+  const minFee = feeRes.data.minFee;
+  return {
+    minFee,
+    minFeeStr: formatNodeMinFee(minFee),
+    suggestedFeeStr: await computeSuggestedTxFee(minFee),
+  };
+}
 
 /**
  * Parse and validate a fee against the node minimum.
@@ -79,17 +124,27 @@ export const DEFAULT_TX_FEE = '0.01';
  */
 export async function resolveTxFee(feeInput, minFeeData) {
   const { Wart } = await import('warthog-js');
-  const feeStr = String(feeInput ?? '').trim() || DEFAULT_TX_FEE;
+  const feeStr = String(feeInput ?? '').trim().replace(',', '.');
+
+  if (!feeStr) {
+    const suggestedStr = await computeSuggestedTxFee(minFeeData);
+    const suggested = Wart.parse(suggestedStr)?.roundedFee(true);
+    if (!suggested) {
+      throw new Error(`Invalid suggested fee "${suggestedStr}"`);
+    }
+    return { fee: suggested, feeE8: String(suggested.E8) };
+  }
+
   const wartFee = Wart.parse(feeStr);
   if (!wartFee) {
-    throw new Error('Invalid fee amount');
+    throw new Error(`Invalid fee amount "${feeStr}" (use WART units, e.g. ${DEFAULT_TX_FEE})`);
   }
 
   const fee = wartFee.roundedFee(true);
   const minFeeE8 = BigInt(minFeeData.E8);
   if (fee.E8 < minFeeE8) {
-    const minStr = minFeeData.str || 'node minimum';
-    throw new Error(`Fee must be at least ${minStr}`);
+    const minStr = formatNodeMinFee(minFeeData);
+    throw new Error(`Fee must be at least ${minStr} WART (you entered ${feeStr})`);
   }
 
   return { fee, feeE8: String(fee.E8) };

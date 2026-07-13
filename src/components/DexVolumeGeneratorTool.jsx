@@ -3,7 +3,7 @@ import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
 import FormattedNumber from './FormattedNumber.jsx';
 import { useNumberDisplay } from './NumberDisplayContext.jsx';
-import { createWarthogApi, DEFAULT_TX_FEE } from '../utils/warthogClient.js';
+import { createWarthogApi } from '../utils/warthogClient.js';
 import { normalizeChartAssetHash } from '../utils/dexPrice.js';
 import ConfirmDialog from './ConfirmDialog.jsx';
 import { DEFAULT_NODE_URL } from '../utils/presetNodes.js';
@@ -21,6 +21,7 @@ const DexVolumeGeneratorTool = ({ selectedNode: propSelectedNode, wallet: propWa
 
   const {
     nextNonce: contextNextNonce,
+    suggestedTxFee,
     isSigningUnlocked,
     isSessionLocked,
   } = useWallet();
@@ -53,11 +54,33 @@ const DexVolumeGeneratorTool = ({ selectedNode: propSelectedNode, wallet: propWa
 
   const safeStr = (v, fallback = '0') => {
     if (v == null) return fallback;
-    if (typeof v === 'string' || typeof v === 'number') return String(v);
+    if (typeof v === 'string') {
+      const t = v.trim();
+      return t || fallback;
+    }
+    if (typeof v === 'number') {
+      if (!Number.isFinite(v)) return fallback;
+      return String(v);
+    }
     if (typeof v === 'object') {
-      if (v.str != null) return String(v.str);
+      if (v.str != null && String(v.str).trim() !== '') return String(v.str);
       if (v.E8 !== undefined) return (Number(v.E8) / 100000000).toFixed(8);
-      if (v.u64 !== undefined) return String(v.u64);
+      if (v.u64 !== undefined) {
+        const decimals = Number.isFinite(Number(v.decimals))
+          ? Math.min(18, Math.max(0, Number(v.decimals)))
+          : 8;
+        try {
+          const value = BigInt(v.u64);
+          const divisor = 10n ** BigInt(decimals);
+          const whole = value / divisor;
+          const frac = value % divisor;
+          if (decimals === 0) return whole.toString();
+          const fracStr = frac.toString().padStart(decimals, '0').replace(/0+$/, '');
+          return fracStr ? `${whole}.${fracStr}` : whole.toString();
+        } catch {
+          return fallback;
+        }
+      }
     }
     return fallback;
   };
@@ -87,7 +110,7 @@ const DexVolumeGeneratorTool = ({ selectedNode: propSelectedNode, wallet: propWa
       basePrice: parseFloat(document.getElementById('volumeBasePrice')?.value || '0'),
       priceStep: parseFloat(document.getElementById('volumePriceStep')?.value || '0'),
       delayMs: Math.max(0, parseInt(document.getElementById('volumeDelayMs')?.value || '1500', 10) || 0),
-      fee: document.getElementById('volumeTxFee')?.value?.trim() || DEFAULT_TX_FEE,
+      fee: document.getElementById('volumeTxFee')?.value?.trim() || suggestedTxFee,
     };
   };
 
@@ -187,7 +210,7 @@ const DexVolumeGeneratorTool = ({ selectedNode: propSelectedNode, wallet: propWa
   };
 
   const buildVolumeConfirmMessage = (ctx, plan, form) => {
-    const feePerTx = Number(form.fee) || Number(DEFAULT_TX_FEE);
+    const feePerTx = Number(form.fee) || Number(suggestedTxFee);
     const summary = summarizeVolumePlan(plan, {
       assetBalance: Number(ctx.balances.asset) || 0,
       assetName: ctx.assetName,
@@ -297,7 +320,7 @@ const DexVolumeGeneratorTool = ({ selectedNode: propSelectedNode, wallet: propWa
   const volumeEstimate = volumePlan.length ? estimateWartRequired(volumePlan) : null;
 
   return (
-    <>
+    <div>
       <div className="bg-zinc-950 border border-zinc-700 rounded-2xl p-5">
         <h3 className="text-base font-semibold text-white mb-1">DEX Volume Generator</h3>
         <p className="text-sm text-zinc-400 mb-4">
@@ -361,7 +384,7 @@ const DexVolumeGeneratorTool = ({ selectedNode: propSelectedNode, wallet: propWa
             </div>
             <div>
               <label className="block text-sm font-medium mb-2">Fee per order (WART)</label>
-              <input id="volumeTxFee" type="text" defaultValue={DEFAULT_TX_FEE} className="input" />
+              <input key={`volumeTxFee-${selectedNode}-${suggestedTxFee}`} id="volumeTxFee" type="text" inputMode="decimal" defaultValue={suggestedTxFee} placeholder={suggestedTxFee} className="input" />
             </div>
           </div>
 
@@ -500,7 +523,7 @@ const DexVolumeGeneratorTool = ({ selectedNode: propSelectedNode, wallet: propWa
         onConfirm={runVolumeGenerator}
         onCancel={cancelVolumeRun}
       />
-    </>
+    </div>
   );
 };
 

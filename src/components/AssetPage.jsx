@@ -5,7 +5,6 @@ import FormattedNumber from './FormattedNumber.jsx';
 import { isValidAssetHash } from '../utils/warthogFormat';
 import {
   createWarthogApi,
-  DEFAULT_TX_FEE,
   formatSubmitError,
   formatSubmitResult,
   getNodeData,
@@ -335,22 +334,23 @@ const AssetCardWithChart = ({ asset, isCompact, selectedNode, onCopyHash, chartP
   );
 };
 
-const readFormFee = (elementId) => {
-  const raw = document.getElementById(elementId)?.value?.trim();
-  return raw || DEFAULT_TX_FEE;
-};
-
 const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const {
     wallet: contextWallet,
     nextNonce: contextNextNonce,
     selectedNode: contextSelectedNode,
+    suggestedTxFee,
     isSigningUnlocked,
     isSessionLocked,
   } = useWallet();
 
   const wallet = propWallet || contextWallet;
   const selectedNode = propSelectedNode || contextSelectedNode || DEFAULT_NODE_URL;
+
+  const readFormFee = (elementId) => {
+    const raw = document.getElementById(elementId)?.value?.trim().replace(',', '.');
+    return raw || suggestedTxFee;
+  };
 
   const toast = useToast();
 
@@ -570,7 +570,7 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
               <input id="assetDecimals" type="number" defaultValue="8" className="input mb-6" />
 
               <label className="block text-sm font-medium mb-2">Fee (WART)</label>
-              <input id="createAssetFee" type="text" defaultValue={DEFAULT_TX_FEE} className="input mb-4" />
+              <input key={`createAssetFee-${selectedNode}-${suggestedTxFee}`} id="createAssetFee" type="text" inputMode="decimal" defaultValue={suggestedTxFee} placeholder={suggestedTxFee} className="input mb-4" />
 
               <label className="block text-sm font-medium mb-2 text-amber-400">
                 Nonce Override (only use if you get "Duplicate nonce")

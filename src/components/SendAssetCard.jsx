@@ -22,6 +22,7 @@ const SendAssetCard = ({
   const {
     wallet: contextWallet,
     selectedNode: contextSelectedNode,
+    suggestedTxFee,
     nextNonce,
     isSigningUnlocked,
     isSessionLocked,
@@ -39,6 +40,10 @@ const SendAssetCard = ({
   const [amount, setAmount] = useState('');
   const [isLiquidity, setIsLiquidity] = useState(false);
   const [feeInput, setFeeInput] = useState(DEFAULT_TX_FEE);
+
+  useEffect(() => {
+    setFeeInput(suggestedTxFee);
+  }, [suggestedTxFee]);
   const [nonceOverride, setNonceOverride] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState(null);
@@ -245,9 +250,10 @@ const SendAssetCard = ({
             <label className="text-sm">Fee</label>
             <input
               type="text"
+              inputMode="decimal"
               value={feeInput}
               onChange={(e) => setFeeInput(e.target.value)}
-              placeholder={DEFAULT_TX_FEE}
+              placeholder={suggestedTxFee}
               className="input text-sm"
             />
           </div>

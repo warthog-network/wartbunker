@@ -17,6 +17,11 @@ import {
   readPublicSession,
   stripPrivateKey,
 } from '../utils/sessionWallet.js';
+import {
+  clearHistoryPrefetch,
+  ensureHistoryPrefetch,
+  refreshHistoryPrefetch,
+} from '../utils/accountHistoryCache.js';
 
 const WalletContext = createContext();
 
@@ -166,6 +171,16 @@ export const WalletProvider = ({ children }) => {
       fetchBalanceAndNonce(wallet.address);
     }
   }, [wallet, selectedNode, refreshTrigger]);
+
+  // Prefetch history via explorer indexer (node fallback) so History tab is warm on open.
+  useEffect(() => {
+    if (!isLoggedIn || !wallet?.address || !selectedNode) {
+      if (!isLoggedIn) clearHistoryPrefetch();
+      return undefined;
+    }
+    ensureHistoryPrefetch(wallet.address, selectedNode);
+    return undefined;
+  }, [isLoggedIn, wallet?.address, selectedNode]);
 
   const fetchBalanceAndNonce = async (address) => {
     setError(null);
@@ -476,6 +491,9 @@ export const WalletProvider = ({ children }) => {
 
   const refreshBalance = () => {
     setRefreshTrigger(prev => prev + 1);
+    if (wallet?.address && selectedNode) {
+      refreshHistoryPrefetch(wallet.address, selectedNode);
+    }
   };
 
   const performFakeMine = async () => {

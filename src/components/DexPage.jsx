@@ -5,7 +5,6 @@ import FormattedNumber from './FormattedNumber.jsx';
 import { useNumberDisplay } from './NumberDisplayContext.jsx';
 import {
   createWarthogApi,
-  DEFAULT_TX_FEE,
   formatSubmitError,
   formatSubmitResult,
   getNodeData,
@@ -15,15 +14,12 @@ import { computePoolSpotPrice } from '../utils/dexPrice.js';
 import { DEFAULT_NODE_URL } from '../utils/presetNodes.js';
 import { readPublicSession } from '../utils/sessionWallet.js';
 
-const readFormFee = (elementId) => {
-  const raw = document.getElementById(elementId)?.value?.trim();
-  return raw || DEFAULT_TX_FEE;
-};
-
 const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const {
     nextNonce: contextNextNonce,
     selectedNode: contextSelectedNode,
+    nodeMinFeeStr,
+    suggestedTxFee,
     isSigningUnlocked,
     isSessionLocked,
     dexPoolPrefill,
@@ -48,6 +44,16 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const [poolAssetHash, setPoolAssetHash] = useState('');
   const [positionPoolMode, setPositionPoolMode] = useState('deposit');
 
+  const feeFieldKey = `${selectedNode}-${suggestedTxFee}`;
+  const feeHint = nodeMinFeeStr
+    ? `Node minimum: ${nodeMinFeeStr} WART. Suggested: ${suggestedTxFee} WART.`
+    : `Suggested: ${suggestedTxFee} WART.`;
+
+  const readFormFee = (elementId) => {
+    const raw = document.getElementById(elementId)?.value?.trim().replace(',', '.');
+    return raw || suggestedTxFee;
+  };
+
   useEffect(() => {
     if (activeTab === 'limit') {
       import('../utils/encodeLimitPrice.js').catch(() => {});
@@ -57,11 +63,34 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   // ==================== SAFE RENDER HELPERS ====================
   const safeStr = (v, fallback = '0') => {
     if (v == null) return fallback;
-    if (typeof v === 'string' || typeof v === 'number') return String(v);
+    if (typeof v === 'string') {
+      const t = v.trim();
+      return t || fallback;
+    }
+    if (typeof v === 'number') {
+      if (!Number.isFinite(v)) return fallback;
+      return String(v);
+    }
     if (typeof v === 'object') {
-      if (v.str != null) return String(v.str);
+      if (v.str != null && String(v.str).trim() !== '') return String(v.str);
       if (v.E8 !== undefined) return (Number(v.E8) / 100000000).toFixed(8);
-      if (v.u64 !== undefined) return String(v.u64);
+      if (v.u64 !== undefined) {
+        // Fixed-point amount — apply decimals (default 8). Never show raw u64.
+        const decimals = Number.isFinite(Number(v.decimals))
+          ? Math.min(18, Math.max(0, Number(v.decimals)))
+          : 8;
+        try {
+          const value = BigInt(v.u64);
+          const divisor = 10n ** BigInt(decimals);
+          const whole = value / divisor;
+          const frac = value % divisor;
+          if (decimals === 0) return whole.toString();
+          const fracStr = frac.toString().padStart(decimals, '0').replace(/0+$/, '');
+          return fracStr ? `${whole}.${fracStr}` : whole.toString();
+        } catch {
+          return fallback;
+        }
+      }
       if (v.doubleAdjusted != null) return String(v.doubleAdjusted);
     }
     return fallback;
@@ -1095,7 +1124,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                 <input id="liquidityWartAmount" type="number" step="any" placeholder="e.g. 10.0" className="input mb-3" />
 
                 <label className="block text-sm font-medium mb-2">Fee (WART)</label>
-                <input id="liquidityDepositFee" type="text" defaultValue={DEFAULT_TX_FEE} className="input mb-3" />
+                <input key={`liquidityDepositFee-${feeFieldKey}`} id="liquidityDepositFee" type="text" inputMode="decimal" defaultValue={suggestedTxFee} placeholder={suggestedTxFee} className="input mb-3" />
 
                 <label className="block text-sm font-medium mb-2 text-amber-400">
                   Nonce Override (only if duplicate nonce error)
@@ -1130,7 +1159,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                 <input id="liquidityWithdrawShares" type="number" step="any" placeholder="e.g. 1.5" className="input mb-3" />
 
                 <label className="block text-sm font-medium mb-2">Fee (WART)</label>
-                <input id="liquidityWithdrawFee" type="text" defaultValue={DEFAULT_TX_FEE} className="input mb-3" />
+                <input key={`liquidityWithdrawFee-${feeFieldKey}`} id="liquidityWithdrawFee" type="text" inputMode="decimal" defaultValue={suggestedTxFee} placeholder={suggestedTxFee} className="input mb-3" />
 
                 <label className="block text-sm font-medium mb-2 text-amber-400">
                   Nonce Override (only if duplicate nonce error)
@@ -1231,7 +1260,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                   <input id="positionPoolWartAmount" type="number" step="any" placeholder="e.g. 10.0" className="input mb-3" />
 
                   <label className="block text-sm font-medium mb-2">Fee (WART)</label>
-                  <input id="positionPoolDepositFee" type="text" defaultValue={DEFAULT_TX_FEE} className="input mb-3" />
+                  <input key={`positionPoolDepositFee-${feeFieldKey}`} id="positionPoolDepositFee" type="text" inputMode="decimal" defaultValue={suggestedTxFee} placeholder={suggestedTxFee} className="input mb-3" />
 
                   <label className="block text-sm font-medium mb-2 text-amber-400">
                     Nonce Override (only if duplicate nonce error)
@@ -1271,7 +1300,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                   </div>
 
                   <label className="block text-sm font-medium mb-2">Fee (WART)</label>
-                  <input id="liquidityWithdrawFee" type="text" defaultValue={DEFAULT_TX_FEE} className="input mb-3" />
+                  <input key={`liquidityWithdrawFee-${feeFieldKey}`} id="liquidityWithdrawFee" type="text" inputMode="decimal" defaultValue={suggestedTxFee} placeholder={suggestedTxFee} className="input mb-3" />
 
                   <label className="block text-sm font-medium mb-2 text-amber-400">
                     Nonce Override (only if duplicate nonce error)
@@ -1385,7 +1414,16 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                 <input id="limitEncoded" placeholder="e.g. c0e74d" maxLength={6} className="input mb-3 font-mono" />
 
                 <label className="block text-sm font-medium mb-2">Fee (WART)</label>
-                <input id="limitOrderFee" type="text" defaultValue={DEFAULT_TX_FEE} className="input mb-3" />
+                <input
+                  key={`limitOrderFee-${feeFieldKey}`}
+                  id="limitOrderFee"
+                  type="text"
+                  inputMode="decimal"
+                  defaultValue={suggestedTxFee}
+                  placeholder={suggestedTxFee}
+                  className="input mb-3"
+                />
+                <p className="text-xs text-zinc-500 -mt-2 mb-3">{feeHint}</p>
 
                 <label className="block text-sm font-medium mb-2 text-amber-400">
                   Nonce Override (only if duplicate nonce error)
@@ -1463,7 +1501,16 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                 <input id="limitEncoded" placeholder="e.g. c0e74d" maxLength={6} className="input mb-3 font-mono" />
 
                 <label className="block text-sm font-medium mb-2">Fee (WART)</label>
-                <input id="limitOrderFee" type="text" defaultValue={DEFAULT_TX_FEE} className="input mb-3" />
+                <input
+                  key={`limitOrderFee-${feeFieldKey}`}
+                  id="limitOrderFee"
+                  type="text"
+                  inputMode="decimal"
+                  defaultValue={suggestedTxFee}
+                  placeholder={suggestedTxFee}
+                  className="input mb-3"
+                />
+                <p className="text-xs text-zinc-500 -mt-2 mb-3">{feeHint}</p>
 
                 <label className="block text-sm font-medium mb-2 text-amber-400">
                   Nonce Override (only if duplicate nonce error)

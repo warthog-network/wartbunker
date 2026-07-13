@@ -436,11 +436,17 @@ export function coerceDisplayNumber(input) {
     return Number.isFinite(n) ? n : null;
   }
   if (typeof input === 'object') {
-    const obj = /** @type {{ str?: string; doubleAdjusted?: number; E8?: string | number; u64?: string | number }} */ (input);
+    const obj = /** @type {{ str?: string; doubleAdjusted?: number; E8?: string | number; u64?: string | number; decimals?: number }} */ (input);
     if (obj.str != null) return coerceDisplayNumber(obj.str);
     if (obj.doubleAdjusted != null) return coerceDisplayNumber(obj.doubleAdjusted);
     if (obj.E8 !== undefined) return Number(obj.E8) / 1e8;
-    if (obj.u64 !== undefined) return coerceDisplayNumber(String(obj.u64));
+    if (obj.u64 !== undefined) {
+      // Token/WART fixed-point: apply decimals (default 8). Never show raw u64.
+      const decimals = Number.isFinite(Number(obj.decimals))
+        ? Math.min(18, Math.max(0, Number(obj.decimals)))
+        : 8;
+      return Number(obj.u64) / 10 ** decimals;
+    }
   }
   return null;
 }

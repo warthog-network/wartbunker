@@ -23,7 +23,6 @@ const TransactionHistoryPage = ({ wallet: propWallet, selectedNode: propSelected
     rewardsWeek: [],
     rewardsMonth: [],
   });
-  const [refreshHistory, setRefreshHistory] = useState(0);
 
   if (!wallet?.address) {
     return (
@@ -34,13 +33,13 @@ const TransactionHistoryPage = ({ wallet: propWallet, selectedNode: propSelected
     );
   }
 
+  // refreshBalance() in WalletContext already calls refreshHistoryPrefetch + notifies the cache
   return (
     <TransactionHistory
       address={wallet.address}
       node={selectedNode}
       onCountsUpdate={setBlockCounts}
       blockCounts={blockCounts}
-      refreshTrigger={refreshHistory}
     />
   );
 };

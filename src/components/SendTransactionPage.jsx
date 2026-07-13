@@ -16,6 +16,7 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
   const {
     wallet: contextWallet,
     selectedNode: contextSelectedNode,
+    suggestedTxFee,
     nextNonce,
     balance,
     refreshBalance,
@@ -36,6 +37,10 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
   const [toAddress, setToAddress] = useState('');
   const [amount, setAmount] = useState('0.00100000');
   const [feeInput, setFeeInput] = useState(DEFAULT_TX_FEE);
+
+  useEffect(() => {
+    setFeeInput(suggestedTxFee);
+  }, [suggestedTxFee]);
   const [originId, setOriginId] = useState(0);
   const [nonceInput, setNonceInput] = useState('0');
   const [isLoading, setIsLoading] = useState(false);
@@ -349,7 +354,8 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
                 type="text"
                 value={feeInput}
                 onChange={e => setFeeInput(e.target.value)}
-                placeholder="Node minimum"
+                inputMode="decimal"
+                placeholder={suggestedTxFee}
                 className="input text-sm"
               />
             </div>
