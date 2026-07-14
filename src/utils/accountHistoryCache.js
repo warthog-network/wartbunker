@@ -598,7 +598,11 @@ async function loadIndexerPages(entry, opts = {}) {
         }
 
         const txs = Array.isArray(data?.transactions) ? data.transactions : [];
+        // Card detail comes from indexer `meta` (applyIndexerMeta in normalize).
+        // No per-height node getBlock hydrate — keep the node RPC for full history
+        // fallback only (when indexer is unavailable).
         const normalized = normalizeIndexerTransactions(txs, { tipHeight: entry.tipHeight });
+        if (gen !== entry.generation) return;
         mergeItems(entry, normalized);
 
         entry.pages += 1;

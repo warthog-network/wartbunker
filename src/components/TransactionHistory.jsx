@@ -522,24 +522,47 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
           </h2>
         </div>
 
-        <div
-          className="flex flex-wrap items-center gap-1.5 mt-3 mb-4 pb-1"
-          role="tablist"
-          aria-label="History filter"
-        >
-          {HISTORY_FILTERS.map((f) => (
-            <button
-              key={f.id}
-              type="button"
-              role="tab"
-              aria-selected={historyFilter === f.id}
-              className={`compact-btn !mx-0 !my-0 !px-3 !py-1${historyFilter === f.id ? ' compact-btn--active' : ''}`}
-              onClick={() => handleFilterChange(f.id)}
+        <details className="group border border-zinc-800 rounded-xl overflow-hidden bg-zinc-950/50 mt-3 mb-4">
+          <summary className="cursor-pointer list-none flex items-center justify-between gap-3 px-3 py-2.5 hover:bg-zinc-900/80 transition-colors select-none">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="group-open:rotate-90 inline-block transition text-zinc-500 text-[10px] flex-shrink-0">
+                ▶
+              </span>
+              <div className="min-w-0">
+                <div className="text-xs text-zinc-300">Filter</div>
+                <div className="text-[10px] text-zinc-500 truncate">
+                  Type and direction for this history list
+                </div>
+              </div>
+            </div>
+            <span
+              className="compact-btn compact-btn--active !mx-0 !my-0 !px-3 !py-1 flex-shrink-0 pointer-events-none"
+              aria-hidden="true"
             >
-              {f.label}
-            </button>
-          ))}
-        </div>
+              {filterLabel}
+            </span>
+          </summary>
+          <div className="px-3 pb-3 pt-2 border-t border-zinc-800">
+            <div
+              className="flex flex-wrap items-center gap-1.5"
+              role="tablist"
+              aria-label="History filter"
+            >
+              {HISTORY_FILTERS.map((f) => (
+                <button
+                  key={f.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={historyFilter === f.id}
+                  className={`compact-btn !mx-0 !my-0 !px-3 !py-1${historyFilter === f.id ? ' compact-btn--active' : ''}`}
+                  onClick={() => handleFilterChange(f.id)}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </details>
 
         {error && allHistory.length === 0 && (
           <div className="error"><strong>Error:</strong> {error}</div>
@@ -663,12 +686,76 @@ const TransactionHistory = ({ address, node, onCountsUpdate, blockCounts, refres
                     </div>
                   )}
 
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '12px' }}>
-                    <strong style={{ color: labelColor, minWidth: 42 }}>Amount:</strong>
-                    <span style={{ fontFamily: 'monospace' }}>
-                      {tx.amount} <span style={{ opacity: 0.7 }}>{tx.asset}</span>
-                    </span>
-                  </div>
+                  {(() => {
+                    const amountUnit = tx.asset || 'WART';
+                    // Only attach asset_hash copy to the unit when that unit is the base ticker
+                    // (not when amount is WART on a buy limit — hash is still the base asset).
+                    const unitIsBaseTicker = Boolean(
+                      tx.assetHash
+                      && tx.assetName
+                      && amountUnit === tx.assetName,
+                    );
+                    const showSeparateAsset = Boolean(
+                      tx.assetHash
+                      && tx.assetName
+                      && amountUnit !== tx.assetName,
+                    );
+                    const assetChipStyle = {
+                      cursor: 'copy',
+                      opacity: 0.85,
+                      fontWeight: 600,
+                      border: 'none',
+                      background: 'transparent',
+                      color: 'inherit',
+                      padding: 0,
+                      fontFamily: 'inherit',
+                      fontSize: 'inherit',
+                      textDecoration: 'underline',
+                      textDecorationStyle: 'dotted',
+                      textUnderlineOffset: '2px',
+                    };
+                    return (
+                      <>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '12px', gap: '8px' }}>
+                          <strong style={{ color: labelColor, minWidth: 42 }}>Amount:</strong>
+                          <span style={{ fontFamily: 'monospace', textAlign: 'right' }}>
+                            {tx.amount}
+                            {' '}
+                            {unitIsBaseTicker ? (
+                              <button
+                                type="button"
+                                title={`Copy asset id: ${tx.assetHash}`}
+                                aria-label={`Asset ${tx.assetName}, click to copy id`}
+                                onClick={() => copyToClipboard(tx.assetHash)}
+                                style={assetChipStyle}
+                              >
+                                {amountUnit}
+                              </button>
+                            ) : (
+                              <span style={{ opacity: 0.7 }}>{amountUnit}</span>
+                            )}
+                            {tx.amountSecondary ? (
+                              <span style={{ opacity: 0.75 }}> / {tx.amountSecondary}</span>
+                            ) : null}
+                          </span>
+                        </div>
+                        {showSeparateAsset && (
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '12px', gap: '8px' }}>
+                            <strong style={{ color: labelColor, minWidth: 42 }}>Asset:</strong>
+                            <button
+                              type="button"
+                              title={`Copy asset id: ${tx.assetHash}`}
+                              aria-label={`Asset ${tx.assetName}, click to copy id`}
+                              onClick={() => copyToClipboard(tx.assetHash)}
+                              style={{ ...assetChipStyle, fontFamily: 'monospace' }}
+                            >
+                              {tx.assetName}
+                            </button>
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
 
                   {tx.fee && tx.fee !== '0' && tx.type !== 'reward' && tx.type !== 'match' && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '12px' }}>

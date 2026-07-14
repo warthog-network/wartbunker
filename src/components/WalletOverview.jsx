@@ -206,19 +206,6 @@ const WalletOverview = ({ onLogout }) => {
     setLoadingOpenOrders(false);
   };
 
-  const handleOpenOrdersToggle = () => {
-    if (openOrdersExpanded) {
-      setOpenOrdersExpanded(false);
-      return;
-    }
-    if (openOrders) {
-      collapseAllAssetGroups(openOrders.data);
-      setOpenOrdersExpanded(true);
-      return;
-    }
-    fetchOpenOrders();
-  };
-
   const fetchLiquidityPositions = async ({ expand = true, silent = false } = {}) => {
     if (!wallet?.address) {
       if (!silent) toast.error('No wallet connected');
@@ -315,17 +302,6 @@ const WalletOverview = ({ onLogout }) => {
     fetchLiquidityPositions({ expand: false, silent: true });
   }, [wallet?.address, selectedNode, trackedAssetHashKey, openOrders?.data]);
 
-  const handleLiquidityToggle = () => {
-    if (overviewLiquidityExpanded) {
-      setOverviewLiquidityExpanded(false);
-      return;
-    }
-    if (overviewLiquidityPositions) {
-      setOverviewLiquidityExpanded(true);
-      return;
-    }
-    fetchLiquidityPositions();
-  };
   const closeCancelDialog = () => {
     setCancelConfirm(null);
     setCancelSpeedUp(false);
@@ -595,10 +571,13 @@ const WalletOverview = ({ onLogout }) => {
           </div>
         </div>
 
-        {/* Your Assets */}
-        <div className="bg-zinc-950 border border-zinc-700 rounded-2xl overflow-hidden">
-          <div className="px-4 py-3 bg-zinc-900/80 border-b border-zinc-700 flex items-center justify-between">
-            <div className="flex items-center gap-2">
+        {/* Your Assets — collapsible shell; list/drag/send/add unchanged inside */}
+        <details className="group bg-zinc-950 border border-zinc-700 rounded-2xl overflow-hidden" open>
+          <summary className="cursor-pointer list-none flex items-center justify-between gap-3 px-4 py-3 bg-zinc-900/80 border-b border-zinc-700 hover:bg-zinc-900 transition-colors select-none">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="group-open:rotate-90 inline-block transition text-zinc-500 text-[10px] flex-shrink-0">
+                ▶
+              </span>
               <span className="text-xs font-semibold uppercase tracking-[0.12em] text-blue-400">
                 Your Assets
               </span>
@@ -609,9 +588,11 @@ const WalletOverview = ({ onLogout }) => {
               )}
             </div>
             {orderedAssets.length > 1 && (
-              <span className="text-[10px] text-zinc-500">Press and hold to reorder</span>
+              <span className="text-[10px] text-zinc-500 hidden sm:inline flex-shrink-0">
+                Press and hold to reorder
+              </span>
             )}
-          </div>
+          </summary>
 
           <div className="p-4">
             {orderedAssets.length > 0 ? (
@@ -645,7 +626,7 @@ const WalletOverview = ({ onLogout }) => {
                       setDragAssetIndex(null);
                       setDropAssetIndex(null);
                     }}
-                    className={`flex flex-col gap-2 sm:flex-row sm:justify-between sm:items-center sm:gap-3 p-3 rounded-xl bg-zinc-900/60 border transition-colors group min-w-0 overflow-hidden ${
+                    className={`flex flex-col gap-2 sm:flex-row sm:justify-between sm:items-center sm:gap-3 p-3 rounded-xl bg-zinc-900/60 border transition-colors group/asset min-w-0 overflow-hidden ${
                       dragAssetIndex === index
                         ? 'opacity-50 border-violet-500/50'
                         : dropAssetIndex === index
@@ -754,12 +735,32 @@ const WalletOverview = ({ onLogout }) => {
               </button>
             </div>
           </div>
-        </div>
+        </details>
 
-        {/* Open Limit Orders */}
-        <div className="bg-zinc-950 border border-zinc-700 rounded-2xl overflow-hidden">
-          <div className="px-4 py-3 bg-zinc-900/80 border-b border-zinc-700 flex items-center justify-between">
-            <div className="flex items-center gap-2">
+        {/* Open Limit Orders — same single-bar collapsible as Your Assets */}
+        <details
+          className="group bg-zinc-950 border border-zinc-700 rounded-2xl overflow-hidden"
+          open={openOrdersExpanded}
+          onToggle={(e) => {
+            const next = e.currentTarget.open;
+            if (next === openOrdersExpanded) return;
+            if (next) {
+              setOpenOrdersExpanded(true);
+              if (openOrders) {
+                collapseAllAssetGroups(openOrders.data);
+              } else if (!loadingOpenOrders) {
+                fetchOpenOrders({ expand: true });
+              }
+            } else {
+              setOpenOrdersExpanded(false);
+            }
+          }}
+        >
+          <summary className="cursor-pointer list-none flex items-center justify-between gap-3 px-4 py-3 bg-zinc-900/80 border-b border-zinc-700 hover:bg-zinc-900 transition-colors select-none">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="group-open:rotate-90 inline-block transition text-zinc-500 text-[10px] flex-shrink-0">
+                ▶
+              </span>
               <span className="text-xs font-semibold uppercase tracking-[0.12em] text-purple-400">
                 Open Limit Orders
               </span>
@@ -774,39 +775,26 @@ const WalletOverview = ({ onLogout }) => {
                 </span>
               )}
             </div>
-          </div>
+          </summary>
 
           <div className="p-4">
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap mb-4">
               <button
                 type="button"
-                onClick={openOrdersExpanded ? () => fetchOpenOrders() : handleOpenOrdersToggle}
+                onClick={() => fetchOpenOrders()}
                 disabled={loadingOpenOrders}
-                className={`compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1${
-                  openOrdersExpanded ? ' compact-btn--active' : ''
-                }`}
+                className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1"
               >
-                {loadingOpenOrders
-                  ? 'Loading Open Orders…'
-                  : openOrdersExpanded
-                    ? '⟳ Refresh Open Orders'
-                    : openOrders
-                      ? 'View Open Orders'
-                      : 'View My Open Limit Orders'}
+                {loadingOpenOrders ? 'Loading Open Orders…' : '⟳ Refresh Open Orders'}
               </button>
-              {openOrdersExpanded && (
-                <button
-                  type="button"
-                  onClick={() => setOpenOrdersExpanded(false)}
-                  className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1"
-                >
-                  Close
-                </button>
-              )}
             </div>
 
-            {openOrders && openOrdersExpanded && (
-              <div className="mt-4">
+            {loadingOpenOrders && !openOrders && (
+              <p className="text-[11px] text-zinc-500 text-center py-2">Loading open orders…</p>
+            )}
+
+            {openOrders && (
+              <div>
                 {openOrders.code === 0 && Array.isArray(openOrders.data) && openOrders.data.length > 0 ? (
                   <div className="space-y-4">
                     {openOrders.data.length > 1 && (
@@ -847,7 +835,7 @@ const WalletOverview = ({ onLogout }) => {
                             <button
                               type="button"
                               onClick={() => toggleAssetGroup(asset)}
-                              className="open-orders-group-btn group flex items-start sm:items-center gap-3 min-w-0 w-full text-left"
+                              className="open-orders-group-btn group/orders flex items-start sm:items-center gap-3 min-w-0 w-full text-left"
                               aria-expanded={!isGroupCollapsed}
                             >
                               <span
@@ -954,7 +942,7 @@ const WalletOverview = ({ onLogout }) => {
                     })}
                   </div>
                 ) : openOrders.code === 0 ? (
-                  <div className="border border-zinc-800 rounded-xl p-8 text-center mt-4">
+                  <div className="border border-zinc-800 rounded-xl p-8 text-center">
                     <div className="text-3xl mb-3 opacity-30">📭</div>
                     <p className="text-zinc-300 font-medium text-sm">No open limit orders</p>
                     <p className="text-xs text-zinc-500 mt-1 max-w-[260px] mx-auto">
@@ -962,7 +950,7 @@ const WalletOverview = ({ onLogout }) => {
                     </p>
                   </div>
                 ) : (
-                  <div className="bg-red-950/40 border border-red-900 rounded-xl p-4 text-center mt-4">
+                  <div className="bg-red-950/40 border border-red-900 rounded-xl p-4 text-center">
                     <p className="text-red-400 text-sm font-medium">Failed to load open orders</p>
                     <p className="text-xs text-red-400/70 mt-0.5">
                       API responded with code {openOrders.code}
@@ -971,21 +959,31 @@ const WalletOverview = ({ onLogout }) => {
                 )}
               </div>
             )}
-
-            {!openOrdersExpanded && (
-              <p className="text-[11px] text-zinc-500 mt-3 text-center">
-                {openOrders
-                  ? 'Open orders are loaded — tap View to show them again.'
-                  : 'Load pending buy/sell limit orders from the connected node.'}
-              </p>
-            )}
           </div>
-        </div>
+        </details>
 
         {isTestnetNode(selectedNode) && (
-          <div className="bg-zinc-950 border border-zinc-700 rounded-2xl overflow-hidden">
-            <div className="px-4 py-3 bg-zinc-900/80 border-b border-zinc-700 flex items-center justify-between">
-              <div className="flex items-center gap-2">
+          <details
+            className="group bg-zinc-950 border border-zinc-700 rounded-2xl overflow-hidden"
+            open={overviewLiquidityExpanded}
+            onToggle={(e) => {
+              const next = e.currentTarget.open;
+              if (next === overviewLiquidityExpanded) return;
+              if (next) {
+                setOverviewLiquidityExpanded(true);
+                if (overviewLiquidityPositions == null && !loadingLiquidityPositions) {
+                  fetchLiquidityPositions({ expand: true });
+                }
+              } else {
+                setOverviewLiquidityExpanded(false);
+              }
+            }}
+          >
+            <summary className="cursor-pointer list-none flex items-center justify-between gap-3 px-4 py-3 bg-zinc-900/80 border-b border-zinc-700 hover:bg-zinc-900 transition-colors select-none">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="group-open:rotate-90 inline-block transition text-zinc-500 text-[10px] flex-shrink-0">
+                  ▶
+                </span>
                 <span className={`text-xs font-semibold uppercase tracking-[0.12em] ${liquidityPoolClasses.text}`}>
                   My Liquidity Positions
                 </span>
@@ -1000,134 +998,113 @@ const WalletOverview = ({ onLogout }) => {
                   </span>
                 )}
               </div>
-            </div>
+            </summary>
 
             <div className="p-4">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <button
-                    type="button"
-                    onClick={overviewLiquidityExpanded ? () => fetchLiquidityPositions() : handleLiquidityToggle}
-                    disabled={loadingLiquidityPositions}
-                    className={`compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1${
-                      overviewLiquidityExpanded ? ' compact-btn--active' : ''
-                    }`}
-                  >
-                    {loadingLiquidityPositions
-                      ? 'Loading Liquidity…'
-                      : overviewLiquidityExpanded
-                        ? '⟳ Refresh Liquidity'
-                        : overviewLiquidityPositions
-                          ? 'View Liquidity Positions'
-                          : 'View My Liquidity Positions'}
-                  </button>
-                  {overviewLiquidityExpanded && (
-                    <button
-                      type="button"
-                      onClick={() => setOverviewLiquidityExpanded(false)}
-                      className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1"
-                    >
-                      Close
-                    </button>
-                  )}
-                </div>
+              <div className="flex items-center gap-2 flex-wrap mb-4">
+                <button
+                  type="button"
+                  onClick={() => fetchLiquidityPositions()}
+                  disabled={loadingLiquidityPositions}
+                  className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1"
+                >
+                  {loadingLiquidityPositions ? 'Loading Liquidity…' : '⟳ Refresh Liquidity'}
+                </button>
+              </div>
 
-                {overviewLiquidityPositions && overviewLiquidityExpanded && (
-                  <div className="mt-4 space-y-3">
-                    {overviewLiquidityPositions.length > 0 ? (
-                      overviewLiquidityPositions.map((position) => (
-                        <div
-                          key={position.hash}
-                          className="bg-zinc-900 border border-zinc-700 rounded-xl p-4"
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="flex items-center gap-3 min-w-0">
-                              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-500 via-orange-500 to-yellow-500 flex items-center justify-center text-white font-bold text-xl shadow-inner ring-1 ring-white/20 flex-shrink-0">
-                                {position.name?.[0] || 'L'}
-                              </div>
-                              <div className="min-w-0">
-                                <div className="font-bold text-lg tracking-tight text-white truncate">
-                                  {position.name} <span className={`font-normal text-sm ${liquidityPoolClasses.textMuted}`}>LP</span>
-                                </div>
-                                <div className="text-[10px] text-zinc-500 font-mono">
-                                  {position.assetId != null ? `ID ${position.assetId} · ` : ''}
-                                  {position.decimals} decimals
-                                </div>
-                              </div>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => copyToClipboard(position.hash)}
-                              title={`Copy asset hash: ${position.hash}`}
-                              className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1 font-mono tabular-nums flex-shrink-0"
-                            >
-                              {position.hash?.slice(0, 8)}…{position.hash?.slice(-6)}
-                            </button>
-                          </div>
+              {loadingLiquidityPositions && overviewLiquidityPositions == null && (
+                <p className="text-[11px] text-zinc-500 text-center py-2">Loading liquidity positions…</p>
+              )}
 
-                          <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-                            <div className={`bg-zinc-950/80 border rounded-lg p-3 ${liquidityPoolClasses.borderMuted}`}>
-                              <div className={`text-[10px] uppercase tracking-wider mb-1 ${liquidityPoolClasses.textMuted}`}>
-                                Your LP Shares
-                              </div>
-                              <div className="text-lg font-semibold">
-                                <FormattedNumber value={position.lpBalance} variant="balance" />
-                              </div>
+              {overviewLiquidityPositions && (
+                <div className="space-y-3">
+                  {overviewLiquidityPositions.length > 0 ? (
+                    overviewLiquidityPositions.map((position) => (
+                      <div
+                        key={position.hash}
+                        className="bg-zinc-900 border border-zinc-700 rounded-xl p-4"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-500 via-orange-500 to-yellow-500 flex items-center justify-center text-white font-bold text-xl shadow-inner ring-1 ring-white/20 flex-shrink-0">
+                              {position.name?.[0] || 'L'}
                             </div>
-                            <div className="bg-zinc-950/80 border border-zinc-800 rounded-lg p-3">
-                              <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1">
-                                Pool WART
+                            <div className="min-w-0">
+                              <div className="font-bold text-lg tracking-tight text-white truncate">
+                                {position.name} <span className={`font-normal text-sm ${liquidityPoolClasses.textMuted}`}>LP</span>
                               </div>
-                              <div className="text-sm font-medium">
-                                <FormattedNumber value={position.poolWart} variant="balance" />
-                              </div>
-                            </div>
-                            <div className="bg-zinc-950/80 border border-zinc-800 rounded-lg p-3">
-                              <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1">
-                                Pool {position.name}
-                              </div>
-                              <div className="text-sm font-medium">
-                                <FormattedNumber value={position.poolAsset} variant="balance" />
+                              <div className="text-[10px] text-zinc-500 font-mono">
+                                {position.assetId != null ? `ID ${position.assetId} · ` : ''}
+                                {position.decimals} decimals
                               </div>
                             </div>
                           </div>
+                          <button
+                            type="button"
+                            onClick={() => copyToClipboard(position.hash)}
+                            title={`Copy asset hash: ${position.hash}`}
+                            className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1 font-mono tabular-nums flex-shrink-0"
+                          >
+                            {position.hash?.slice(0, 8)}…{position.hash?.slice(-6)}
+                          </button>
+                        </div>
 
-                          <div className="mt-3 pt-3 border-t border-zinc-800 flex justify-end">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setDexPoolPrefill({
-                                  hash: position.hash,
-                                  name: position.name,
-                                });
-                                setCurrentTab('dex');
-                              }}
-                              className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1"
-                            >
-                              Manage in DEX
-                            </button>
+                        <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                          <div className={`bg-zinc-950/80 border rounded-lg p-3 ${liquidityPoolClasses.borderMuted}`}>
+                            <div className={`text-[10px] uppercase tracking-wider mb-1 ${liquidityPoolClasses.textMuted}`}>
+                              Your LP Shares
+                            </div>
+                            <div className="text-lg font-semibold">
+                              <FormattedNumber value={position.lpBalance} variant="balance" />
+                            </div>
+                          </div>
+                          <div className="bg-zinc-950/80 border border-zinc-800 rounded-lg p-3">
+                            <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1">
+                              Pool WART
+                            </div>
+                            <div className="text-sm font-medium">
+                              <FormattedNumber value={position.poolWart} variant="balance" />
+                            </div>
+                          </div>
+                          <div className="bg-zinc-950/80 border border-zinc-800 rounded-lg p-3">
+                            <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1">
+                              Pool {position.name}
+                            </div>
+                            <div className="text-sm font-medium">
+                              <FormattedNumber value={position.poolAsset} variant="balance" />
+                            </div>
                           </div>
                         </div>
-                      ))
-                    ) : (
-                      <div className="border border-zinc-800 rounded-xl p-6 text-center">
-                        <p className="text-zinc-300 font-medium text-sm">No liquidity positions found</p>
-                        <p className="text-xs text-zinc-500 mt-1 max-w-[280px] mx-auto">
-                          LP shares appear here for tracked assets after you deposit into a pool on the DEX.
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                )}
 
-              {!overviewLiquidityExpanded && (
-                <p className="text-[11px] text-zinc-500 mt-3 text-center">
-                  {overviewLiquidityPositions
-                    ? 'Liquidity positions are loaded — tap View to show them again.'
-                    : 'Load LP share balances for your tracked assets from the connected node.'}
-                </p>
+                        <div className="mt-3 pt-3 border-t border-zinc-800 flex justify-end">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDexPoolPrefill({
+                                hash: position.hash,
+                                name: position.name,
+                              });
+                              setCurrentTab('dex');
+                            }}
+                            className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1"
+                          >
+                            Manage in DEX
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="border border-zinc-800 rounded-xl p-6 text-center">
+                      <p className="text-zinc-300 font-medium text-sm">No liquidity positions found</p>
+                      <p className="text-xs text-zinc-500 mt-1 max-w-[280px] mx-auto">
+                        LP shares appear here for tracked assets after you deposit into a pool on the DEX.
+                      </p>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
-          </div>
+          </details>
         )}
 
       </div>

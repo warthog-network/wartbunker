@@ -295,8 +295,116 @@ function abbreviateAddr(value) {
   return `${str.slice(0, 6)}...${str.slice(-4)}`;
 }
 
+function isZeroAmount(amount) {
+  const s = String(amount ?? '').trim();
+  if (!s || s === '0') return true;
+  // "0.00000000", "0.0", etc.
+  return /^0+(?:\.0+)?$/.test(s);
+}
+
+/**
+ * Map indexer `meta` onto display fields for history cards.
+ * Card detail lives on the explorer indexer (backfilled); no client getBlock hydrate.
+ * See docs/WARTBUNKER-INDEXER-RICH-CARDS-CLIENT-GUIDE.md
+ * @param {object} out partially normalized tx
+ * @param {object|null|undefined} rawMeta raw API meta object
+ * @returns {object}
+ */
+export function applyIndexerMeta(out, rawMeta) {
+  const meta = rawMeta && typeof rawMeta === 'object' ? rawMeta : null;
+  if (!meta || !out) return out;
+
+  const next = { ...out, meta };
+
+  if (meta.summary) {
+    next.description = String(meta.summary);
+  }
+
+  if (meta.asset_name) next.assetName = String(meta.asset_name);
+  if (meta.asset_hash) next.assetHash = String(meta.asset_hash);
+  if (meta.asset_decimals != null) next.assetDecimals = Number(meta.asset_decimals);
+
+  const type = String(next.type || '').toLowerCase();
+
+  if (type === 'limit_swap') {
+    if (meta.side) next.side = String(meta.side);
+    if (meta.order_amount != null) next.orderAmount = String(meta.order_amount);
+    if (meta.limit_price != null) next.limitPrice = String(meta.limit_price);
+    // amount is 0 on purpose (not a balance transfer) — show order size on the card
+    if (meta.order_amount && isZeroAmount(next.amount)) {
+      next.amount = String(meta.order_amount);
+      next.asset = meta.side === 'sell'
+        ? (meta.asset_name || 'ASSET')
+        : 'WART';
+    } else if (meta.asset_name && meta.side === 'sell') {
+      next.asset = String(meta.asset_name);
+    }
+    if (!meta.summary) {
+      const asset = meta.asset_name || 'ASSET';
+      const amt = meta.order_amount || next.amount || '0';
+      const lim = meta.limit_price != null ? meta.limit_price : '?';
+      next.description = meta.side === 'buy'
+        ? `BUY limit ${amt} WART for ${asset} @ ${lim}`
+        : meta.side === 'sell'
+          ? `SELL limit ${amt} ${asset} @ ${lim}`
+          : next.description;
+    }
+  }
+
+  if (type === 'match') {
+    if (meta.base_amount != null) next.baseAmount = String(meta.base_amount);
+    if (meta.quote_amount != null) next.quoteAmount = String(meta.quote_amount);
+    if (meta.swap_count != null) next.swapCount = Number(meta.swap_count);
+    if (meta.base_amount) {
+      next.amount = String(meta.base_amount);
+      next.asset = meta.asset_name || next.asset || 'ASSET';
+      if (meta.quote_amount) {
+        next.amountSecondary = `${meta.quote_amount} WART`;
+      }
+    } else if (meta.asset_name) {
+      next.asset = String(meta.asset_name);
+    }
+    if (!meta.summary) {
+      const asset = meta.asset_name || 'ASSET';
+      const n = meta.swap_count ?? 0;
+      let s = `DEX match${n ? ` (${n} swap${n === 1 ? '' : 's'})` : ''} on ${asset}`;
+      if (meta.base_amount && meta.quote_amount) {
+        s += ` — ${meta.base_amount} ${asset} / ${meta.quote_amount} WART`;
+      }
+      next.description = s;
+    }
+  }
+
+  if (type === 'liquidity_deposit' || type === 'liquidity_withdrawal') {
+    if (meta.asset_name) next.asset = String(meta.asset_name);
+    if (meta.base_amount != null && meta.quote_amount != null) {
+      next.amount = `${meta.base_amount} + ${meta.quote_amount}`;
+      next.asset = meta.asset_name ? `${meta.asset_name} / WART` : 'POOL';
+    } else if (meta.shares != null && isZeroAmount(next.amount)) {
+      next.amount = String(meta.shares);
+    }
+  }
+
+  if (type === 'token_transfer') {
+    if (meta.asset_name) next.asset = String(meta.asset_name);
+    if (meta.token_amount != null) next.amount = String(meta.token_amount);
+  }
+
+  if (type === 'asset_creation') {
+    if (meta.asset_name) next.asset = String(meta.asset_name);
+    if (meta.supply != null) next.amount = String(meta.supply);
+  }
+
+  if (type === 'cancelation' && meta.cancel_txid && !meta.summary) {
+    next.description = `Canceled tx ${abbreviateAddr(meta.cancel_txid)}`;
+  }
+
+  return next;
+}
+
 /**
  * Normalize one indexer transaction into the shape used by TransactionHistory UI.
+ * Prefers server `meta` (summary, asset, order/match legs) when present.
  * @param {object} tx indexer row
  * @param {{ tipHeight?: number|null }} [opts]
  */
@@ -320,6 +428,7 @@ export function normalizeIndexerTransaction(tx, opts = {}) {
 
   let asset = 'WART';
   let description = '';
+  const hasAmt = !isZeroAmount(amount);
 
   switch (type) {
     case 'reward':
@@ -332,32 +441,28 @@ export function normalizeIndexerTransaction(tx, opts = {}) {
       break;
     case 'token_transfer':
       asset = 'TOKEN';
-      description = isIncoming
-        ? `Received token transfer`
-        : `Sent token transfer`;
-      if (amount && amount !== '0' && amount !== '0.00000000') {
-        description = isIncoming
-          ? `Received ${amount}`
-          : `Sent ${amount}`;
-      }
+      description = hasAmt
+        ? (isIncoming ? `Received ${amount}` : `Sent ${amount}`)
+        : (isIncoming ? 'Received token transfer' : 'Sent token transfer');
       break;
     case 'limit_swap':
-      description = `Limit swap ${amount}`;
+      // Sparse fallback when meta missing (pre-backfill / other chains).
+      description = hasAmt ? `Limit order ${amount}` : 'Limit order placed';
       break;
     case 'match':
-      description = `DEX match ${amount}`;
+      description = hasAmt ? `DEX match ${amount} WART` : 'DEX match';
       break;
     case 'cancelation':
       description = 'Canceled order';
       break;
     case 'liquidity_deposit':
-      description = `Liquidity deposit ${amount}`;
+      description = hasAmt ? `Liquidity deposit ${amount}` : 'Liquidity deposit';
       break;
     case 'liquidity_withdrawal':
-      description = `Liquidity withdrawal ${amount}`;
+      description = hasAmt ? `Liquidity withdrawal ${amount}` : 'Liquidity withdrawal';
       break;
     case 'asset_creation':
-      description = `Asset creation ${amount}`;
+      description = hasAmt ? `Asset creation ${amount}` : 'Asset creation';
       break;
     default:
       description = type || 'Transaction';
@@ -368,7 +473,7 @@ export function normalizeIndexerTransaction(tx, opts = {}) {
     confirmations = Math.max(0, tipHeight - height + 1);
   }
 
-  return {
+  const base = {
     txid: hash,
     fromAddress: sender || null,
     toAddress: recipient || null,
@@ -385,7 +490,13 @@ export function normalizeIndexerTransaction(tx, opts = {}) {
     category: type,
     direction: direction || null,
     source: 'indexer',
+    meta: null,
+    assetName: null,
+    assetHash: null,
+    amountSecondary: null,
   };
+
+  return applyIndexerMeta(base, tx?.meta);
 }
 
 /**
