@@ -2,6 +2,7 @@ import React, { useCallback, useState, useEffect } from 'react';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
 import FormattedNumber from './FormattedNumber.jsx';
+import SpendableBalanceDisplay from './SpendableBalanceDisplay.jsx';
 import SendAssetCard from './SendAssetCard.jsx';
 import {
   createWarthogApi,
@@ -19,6 +20,8 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
     suggestedTxFee,
     nextNonce,
     balance,
+    balanceAvailable,
+    balanceLocked,
     refreshBalance,
     setError: setContextError,
     setCurrentTab,
@@ -248,9 +251,11 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
     return <section><h2>Send WART</h2><p>Please log in first.</p></section>;
   }
 
+  const spendableWart = balanceAvailable ?? balance;
+
   const handleMaxAmount = () => {
-    if (balance && balance !== '0.00000000') {
-      setAmount(balance);
+    if (spendableWart && spendableWart !== '0.00000000') {
+      setAmount(spendableWart);
     }
   };
 
@@ -299,13 +304,18 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
           <h3 className="text-base font-semibold text-white mb-0.5">Send WART</h3>
           <p className="text-xs text-zinc-500">Native WART transfer</p>
         </div>
-        <div className="flex items-center justify-between text-xs">
-          <span className="text-zinc-500">Available balance</span>
-          <span className="font-mono text-white tabular-nums">
-            {balance != null ? <FormattedNumber value={balance} variant="balance" /> : '…'}{' '}
-            <span className="text-[#FDB913] font-sans">WART</span>
-          </span>
-        </div>
+        {spendableWart != null ? (
+          <SpendableBalanceDisplay
+            available={spendableWart}
+            locked={balanceLocked}
+            total={balance}
+            unit="WART"
+            label="Available balance"
+            layout="stack"
+          />
+        ) : (
+          <div className="text-xs text-zinc-500">Loading balance…</div>
+        )}
 
         <div className="form-group !mb-0">
           <label>Recipient Address</label>
@@ -326,7 +336,7 @@ const SendTransactionPage = ({ wallet: propWallet, selectedNode: propSelectedNod
             <button
               type="button"
               onClick={handleMaxAmount}
-              disabled={!balance || balance === '0.00000000'}
+              disabled={!spendableWart || spendableWart === '0.00000000'}
               className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-2 !my-1 !px-3 !py-1"
             >
               MAX

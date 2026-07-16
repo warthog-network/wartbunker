@@ -3,6 +3,7 @@ import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
 import { useNumberDisplay } from './NumberDisplayContext.jsx';
 import FormattedNumber from './FormattedNumber.jsx';
+import SpendableBalanceDisplay from './SpendableBalanceDisplay.jsx';
 import ConfirmDialog from './ConfirmDialog';
 import AddressQrModal from './AddressQrModal';
 import WalletQrExportModal from './WalletQrExportModal';
@@ -25,6 +26,8 @@ const WalletOverview = ({ onLogout }) => {
   const {
     wallet,
     balance,
+    balanceAvailable,
+    balanceLocked,
     usdBalance,
     selectedNode,
     setCurrentTab,
@@ -485,30 +488,27 @@ const WalletOverview = ({ onLogout }) => {
                   </span>
                 </div>
               )}
-              <div className="flex items-center justify-between gap-2 mb-1 min-w-0">
-                <div className="text-[10px] uppercase tracking-[0.14em] text-zinc-500 font-medium">
-                  Total Balance
-                </div>
+              <div className="relative min-w-0">
                 <button
                   onClick={refreshBalance}
-                  className="refresh-balance-btn flex flex-shrink-0 items-center gap-1 px-2 py-1 text-[10px] font-medium text-zinc-400 bg-zinc-800/80 hover:bg-zinc-700 border border-zinc-600/50 rounded-lg transition-colors !m-0"
+                  className="refresh-balance-btn absolute top-0 right-0 z-10 flex flex-shrink-0 items-center gap-1 px-2 py-1 text-[10px] font-medium text-zinc-400 bg-zinc-800/80 hover:bg-zinc-700 border border-zinc-600/50 rounded-lg transition-colors !m-0"
                   title="Refresh balance"
                 >
                   <span className="text-[#FDB913] text-[11px] leading-none">⟳</span>
                   Refresh
                 </button>
-              </div>
-              <div className="flex items-baseline gap-2 min-w-0 flex-wrap text-white">
                 {balanceLoading ? (
-                  <div className="h-9 w-36 bg-zinc-800/80 rounded-lg animate-pulse" />
+                  <div className="h-9 w-36 bg-zinc-800/80 rounded-lg animate-pulse mt-5" />
                 ) : (
-                  <FormattedNumber
-                    value={balance}
-                    variant="balance"
-                    className="text-3xl font-semibold tracking-tight break-all"
+                  <SpendableBalanceDisplay
+                    available={balanceAvailable ?? balance}
+                    locked={balanceLocked}
+                    total={balance}
+                    unit="WART"
+                    layout="hero"
+                    unitClassName="text-sm font-medium text-[#FDB913]"
                   />
                 )}
-                <span className="text-sm font-medium text-[#FDB913]">WART</span>
               </div>
               <div className="text-sm text-zinc-400 mt-1 tabular-nums">
                 {balanceLoading ? (
@@ -671,13 +671,23 @@ const WalletOverview = ({ onLogout }) => {
                       </div>
                     </div>
 
-                    <div className="flex items-center justify-between gap-2 min-w-0 w-full sm:w-auto sm:flex-shrink-0 sm:max-w-[55%]">
+                    <div className="flex items-center justify-between gap-2 min-w-0 w-full sm:w-auto sm:flex-shrink-0 sm:max-w-[60%]">
                       <div
-                        className="min-w-0 flex-1 font-mono text-xs sm:text-sm text-white tabular-nums truncate text-left sm:text-right"
-                        title={`${formatBalance(asset.balance)} ${asset.name}`}
+                        className="min-w-0 flex-1 text-left sm:text-right"
+                        title={
+                          asset.hasLocked || (parseFloat(asset.locked || '0') > 0)
+                            ? `Available ${formatBalance(asset.available ?? asset.balance)} · Locked ${formatBalance(asset.locked)} · Total ${formatBalance(asset.balance)} ${asset.name}`
+                            : `${formatBalance(asset.balance)} ${asset.name}`
+                        }
                       >
-                        <FormattedNumber value={asset.balance} variant="balance" />
-                        <span className="text-[10px] text-zinc-400 ml-1">{asset.name}</span>
+                        <SpendableBalanceDisplay
+                          available={asset.available ?? asset.balance}
+                          locked={asset.locked}
+                          total={asset.balance}
+                          unit={asset.name}
+                          layout="row"
+                          unitClassName="text-zinc-400"
+                        />
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
                         {isTestnetNode(selectedNode) && (
@@ -688,7 +698,11 @@ const WalletOverview = ({ onLogout }) => {
                                 hash: asset.hash,
                                 name: asset.name,
                                 decimals: asset.decimals ?? 8,
-                                balance: asset.balance,
+                                available: asset.available ?? asset.balance,
+                                locked: asset.locked ?? '0',
+                                total: asset.balance,
+                                // Compat: older consumers treated balance as free amount
+                                balance: asset.available ?? asset.balance,
                               });
                               setCurrentTab('send');
                             }}

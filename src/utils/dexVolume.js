@@ -42,6 +42,49 @@ export function parseAssetBalance(data) {
   return data?.balance?.total?.str ?? data?.balance?.str ?? data?.str ?? '0';
 }
 
+/** Free / locked / total strings from a node balance or wart container. */
+export function parseSpendableParts(container) {
+  if (!container || typeof container !== 'object') {
+    return { total: '0', locked: '0', available: '0', hasLocked: false };
+  }
+  const totalObj = container.total ?? container;
+  const lockedObj = container.locked;
+  const mempoolObj = container.mempool;
+  const total = totalObj?.str ?? (typeof totalObj === 'string' ? totalObj : '0');
+  const locked = lockedObj?.str ?? '0';
+  const mempool = mempoolObj?.str ?? '0';
+  const t = Number(total) || 0;
+  const l = Number(locked) || 0;
+  const m = Number(mempool) || 0;
+  const availableNum = Math.max(0, t - l - m);
+  // Prefer high-precision when u64 present
+  let available = String(availableNum);
+  try {
+    if (totalObj?.u64 != null || totalObj?.E8 != null) {
+      const rawT = BigInt(totalObj.u64 ?? totalObj.E8 ?? 0);
+      const rawL = BigInt(lockedObj?.u64 ?? lockedObj?.E8 ?? 0);
+      const rawM = BigInt(mempoolObj?.u64 ?? mempoolObj?.E8 ?? 0);
+      let free = rawT - rawL - rawM;
+      if (free < 0n) free = 0n;
+      const dec = Number(totalObj.decimals ?? 8);
+      const div = 10n ** BigInt(dec);
+      const whole = free / div;
+      const frac = free % div;
+      available = frac === 0n
+        ? whole.toString()
+        : `${whole}.${frac.toString().padStart(dec, '0').replace(/0+$/, '')}`;
+    }
+  } catch {
+    // keep float fallback
+  }
+  return {
+    total,
+    locked,
+    available,
+    hasLocked: l > 0 || m > 0,
+  };
+}
+
 /** Load wallet balances + market snapshot for the volume tool. */
 export async function fetchVolumeContext(api, address, assetHash) {
   const normalized = normalizeChartAssetHash(assetHash);
@@ -66,13 +109,27 @@ export async function fetchVolumeContext(api, address, assetHash) {
   const poolAsset = market?.liquidityPool?.asset?.str ?? '0';
   const spotPrice = computePoolSpotPrice(market);
 
+  const wartParts = wartRes.success
+    ? parseSpendableParts(wartRes.data?.wart ?? wartRes.data?.balance)
+    : { total: '?', locked: '0', available: '?', hasLocked: false };
+  const assetParts = assetRes.success
+    ? parseSpendableParts(assetRes.data?.balance)
+    : { total: '?', locked: '0', available: '?', hasLocked: false };
+
   return {
     assetHash: normalized,
     assetName,
     decimals,
     balances: {
-      wart: wartRes.success ? parseWartBalance(wartRes.data) : '?',
-      asset: assetRes.success ? parseAssetBalance(assetRes.data) : '?',
+      // Compat: total (legacy consumers)
+      wart: wartParts.total,
+      asset: assetParts.total,
+      wartAvailable: wartParts.available,
+      wartLocked: wartParts.locked,
+      assetAvailable: assetParts.available,
+      assetLocked: assetParts.locked,
+      wartHasLocked: wartParts.hasLocked,
+      assetHasLocked: assetParts.hasLocked,
     },
     pool: { wart: poolWart, asset: poolAsset },
     spotPrice,

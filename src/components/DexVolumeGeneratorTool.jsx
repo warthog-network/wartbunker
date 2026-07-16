@@ -212,7 +212,7 @@ const DexVolumeGeneratorTool = ({ selectedNode: propSelectedNode, wallet: propWa
   const buildVolumeConfirmMessage = (ctx, plan, form) => {
     const feePerTx = Number(form.fee) || Number(suggestedTxFee);
     const summary = summarizeVolumePlan(plan, {
-      assetBalance: Number(ctx.balances.asset) || 0,
+      assetBalance: Number(ctx.balances.assetAvailable ?? ctx.balances.asset) || 0,
       assetName: ctx.assetName,
       feePerTx,
     });
@@ -293,7 +293,7 @@ const DexVolumeGeneratorTool = ({ selectedNode: propSelectedNode, wallet: propWa
         startNonce: nonce,
         delayMs: form.delayMs,
         fee: form.fee,
-        assetBalance: Number(ctx.balances.asset) || 0,
+        assetBalance: Number(ctx.balances.assetAvailable ?? ctx.balances.asset) || 0,
         onProgress: (entry) => {
           logs.push(entry);
           setVolumeLogs([...logs]);
@@ -419,12 +419,41 @@ const DexVolumeGeneratorTool = ({ selectedNode: propSelectedNode, wallet: propWa
           </div>
 
           {volumeContext && (
-            <div className="p-4 bg-zinc-900/60 border border-zinc-700 rounded-2xl text-sm space-y-1">
+            <div className="p-4 bg-zinc-900/60 border border-zinc-700 rounded-2xl text-sm space-y-2">
               <div className="font-semibold text-white">{volumeContext.assetName} market snapshot</div>
-              <div className="text-zinc-300">
-                Your balance: <FormattedNumber value={volumeContext.balances.wart} variant="balance" /> WART
-                {' · '}
-                <FormattedNumber value={volumeContext.balances.asset} variant="balance" /> {volumeContext.assetName}
+              <div className="text-zinc-300 space-y-1">
+                <div>
+                  Your free WART:{' '}
+                  <FormattedNumber
+                    value={volumeContext.balances.wartAvailable ?? volumeContext.balances.wart}
+                    variant="balance"
+                  />
+                  {volumeContext.balances.wartHasLocked && (
+                    <span className="text-zinc-500 text-xs ml-2">
+                      (locked{' '}
+                      <FormattedNumber value={volumeContext.balances.wartLocked} variant="balance" className="text-amber-300" />
+                      {' · '}total{' '}
+                      <FormattedNumber value={volumeContext.balances.wart} variant="balance" />
+                      )
+                    </span>
+                  )}
+                </div>
+                <div>
+                  Your free {volumeContext.assetName}:{' '}
+                  <FormattedNumber
+                    value={volumeContext.balances.assetAvailable ?? volumeContext.balances.asset}
+                    variant="balance"
+                  />
+                  {volumeContext.balances.assetHasLocked && (
+                    <span className="text-zinc-500 text-xs ml-2">
+                      (locked{' '}
+                      <FormattedNumber value={volumeContext.balances.assetLocked} variant="balance" className="text-amber-300" />
+                      {' · '}total{' '}
+                      <FormattedNumber value={volumeContext.balances.asset} variant="balance" />
+                      )
+                    </span>
+                  )}
+                </div>
               </div>
               <div className="text-zinc-400">
                 Pool: <FormattedNumber value={volumeContext.pool.wart} variant="balance" /> WART /{' '}

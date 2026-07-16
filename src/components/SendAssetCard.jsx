@@ -2,16 +2,30 @@ import React, { useEffect, useState } from 'react';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
 import FormattedNumber from './FormattedNumber.jsx';
-import { isValidAssetHash } from '../utils/warthogFormat';
+import SpendableBalanceDisplay from './SpendableBalanceDisplay.jsx';
+import {
+  amountExceedsAvailable,
+  formatBalanceBreakdown,
+  insufficientFreeBalanceMessage,
+  isValidAssetHash,
+} from '../utils/warthogFormat';
 import {
   createWarthogApi,
   DEFAULT_TX_FEE,
   formatSubmitError,
   formatSubmitResult,
+  normalizeAssetHash,
   signAndSubmitTransaction,
 } from '../utils/warthogClient.js';
 import { bumpNonceAfterSuccess, getSmartNonce } from '../utils/cancelLimitOrder.js';
 import { DEFAULT_NODE_URL } from '../utils/presetNodes.js';
+
+const emptySpendable = () => ({
+  available: '',
+  locked: '0',
+  total: '',
+  hasLocked: false,
+});
 
 const SendAssetCard = ({
   wallet: propWallet,
@@ -34,12 +48,13 @@ const SendAssetCard = ({
 
   const [assetHash, setAssetHash] = useState('');
   const [assetName, setAssetName] = useState('');
-  const [assetBalance, setAssetBalance] = useState('');
+  const [spendable, setSpendable] = useState(emptySpendable);
   const [decimals, setDecimals] = useState('8');
   const [recipient, setRecipient] = useState('');
   const [amount, setAmount] = useState('');
   const [isLiquidity, setIsLiquidity] = useState(false);
   const [feeInput, setFeeInput] = useState(DEFAULT_TX_FEE);
+  const [balanceLoading, setBalanceLoading] = useState(false);
 
   useEffect(() => {
     setFeeInput(suggestedTxFee);
@@ -52,11 +67,73 @@ const SendAssetCard = ({
     if (!prefill) return;
     setAssetHash(prefill.hash || '');
     setAssetName(prefill.name || '');
-    setAssetBalance(prefill.balance || '');
+    const available = prefill.available ?? prefill.balance ?? '';
+    const locked = prefill.locked ?? '0';
+    const total = prefill.total ?? prefill.balance ?? available;
+    setSpendable({
+      available,
+      locked,
+      total,
+      hasLocked: parseFloat(locked || '0') > 0,
+    });
     setDecimals(String(prefill.decimals ?? 8));
     setAmount('');
     onPrefillConsumed?.();
   }, [prefill, onPrefillConsumed]);
+
+  const loadAssetBalance = async (hashRaw, { silent = false } = {}) => {
+    const account = wallet?.address;
+    if (!account || !selectedNode) return null;
+
+    let hash;
+    try {
+      hash = normalizeAssetHash(hashRaw);
+    } catch {
+      hash = String(hashRaw || '').replace(/^0x/i, '').toLowerCase();
+    }
+    if (!isValidAssetHash(hash)) return null;
+
+    if (!silent) setBalanceLoading(true);
+    try {
+      const api = await createWarthogApi(selectedNode);
+      const res = await api.getAccountAssetBalance(account, hash);
+      if (!res.success) throw new Error(res.error || 'Failed to fetch asset balance');
+
+      const tokenInfo = res.data?.token || {};
+      const dec = tokenInfo.decimals ?? res.data?.balance?.total?.decimals ?? (parseInt(decimals, 10) || 8);
+      const breakdown = await formatBalanceBreakdown(res.data?.balance, {
+        kind: 'token',
+        decimals: dec,
+      });
+
+      const next = {
+        available: breakdown.available,
+        locked: breakdown.locked,
+        total: breakdown.total,
+        hasLocked: breakdown.hasLocked,
+      };
+      setSpendable(next);
+      if (tokenInfo.name) setAssetName(tokenInfo.name);
+      setDecimals(String(dec));
+      return next;
+    } catch (err) {
+      if (!silent) toast.error(err.message || 'Could not load asset balance');
+      return null;
+    } finally {
+      if (!silent) setBalanceLoading(false);
+    }
+  };
+
+  // Live refresh when hash is complete
+  useEffect(() => {
+    const hash = String(assetHash || '').replace(/^0x/i, '').toLowerCase();
+    if (!wallet?.address || !isValidAssetHash(hash)) return undefined;
+    const t = setTimeout(() => {
+      loadAssetBalance(hash, { silent: true });
+    }, 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-fetch on hash/node/address
+  }, [assetHash, wallet?.address, selectedNode]);
 
   const copyToClipboard = (text) => {
     if (!text) return;
@@ -65,9 +142,11 @@ const SendAssetCard = ({
     }).catch(() => toast.error('Failed to copy'));
   };
 
+  const freeBalance = spendable.available || spendable.total || '';
+
   const handleMaxAmount = () => {
-    if (assetBalance && assetBalance !== '0') {
-      setAmount(assetBalance);
+    if (freeBalance && freeBalance !== '0') {
+      setAmount(freeBalance);
     }
   };
 
@@ -100,6 +179,21 @@ const SendAssetCard = ({
     setResult(null);
 
     try {
+      // Live free-balance check — locked tokens cannot be transferred
+      const live = (await loadAssetBalance(assetIdRaw, { silent: true })) || spendable;
+      if (live?.available != null && amountExceedsAvailable(amountStr, live.available)) {
+        const unit = assetName || 'tokens';
+        const msg = insufficientFreeBalanceMessage({
+          available: live.available,
+          locked: live.locked,
+          unit,
+        });
+        setAmount(live.available);
+        setResult(formatSubmitError(msg));
+        toast.error(msg);
+        return;
+      }
+
       const api = await createWarthogApi(selectedNode);
       const { nonce, data } = await signAndSubmitTransaction(api, {
         nonceId,
@@ -118,10 +212,22 @@ const SendAssetCard = ({
       bumpNonceAfterSuccess(wallet.address, nonce, nextNonce);
       setNonceOverride('');
       toast.success('Asset transfer sent — check History tab');
+      loadAssetBalance(assetIdRaw, { silent: true });
     } catch (err) {
       console.error(err);
-      setResult(formatSubmitError(err.message || 'Unknown error'));
-      toast.error('Transfer failed: ' + (err.message || 'Unknown error'));
+      let message = err.message || 'Unknown error';
+      if (/insufficient\s+(token\s+)?balance/i.test(message)) {
+        const live = spendable;
+        if (live?.available != null) {
+          message = insufficientFreeBalanceMessage({
+            available: live.available,
+            locked: live.locked,
+            unit: assetName || 'tokens',
+          });
+        }
+      }
+      setResult(formatSubmitError(message));
+      toast.error('Transfer failed: ' + message);
     } finally {
       setIsLoading(false);
     }
@@ -162,13 +268,20 @@ const SendAssetCard = ({
         </p>
       </div>
 
-      {assetName && (
-        <div className="flex items-center justify-between text-xs">
-          <span className="text-zinc-500">Selected asset</span>
-          <span className="font-mono text-white tabular-nums">
-            {assetBalance ? <FormattedNumber value={assetBalance} variant="balance" /> : '…'}{' '}
-            <span className="text-[#FDB913] font-sans">{assetName}</span>
-          </span>
+      {(assetName || freeBalance || balanceLoading) && (
+        <div>
+          {balanceLoading && !freeBalance ? (
+            <div className="text-xs text-zinc-500">Loading balance…</div>
+          ) : (
+            <SpendableBalanceDisplay
+              available={spendable.available || freeBalance}
+              locked={spendable.locked}
+              total={spendable.total || freeBalance}
+              unit={assetName || 'token'}
+              label="Selected asset (available)"
+              layout="stack"
+            />
+          )}
         </div>
       )}
 
@@ -178,6 +291,9 @@ const SendAssetCard = ({
           type="text"
           value={assetHash}
           onChange={(e) => setAssetHash(e.target.value.trim())}
+          onBlur={() => {
+            if (isValidAssetHash(assetHash)) loadAssetBalance(assetHash, { silent: true });
+          }}
           placeholder="e.g. b92b88491b478c22fbc5b3f03f8b5539555ff2680944a8c847a1eb90ef69894e"
           className="input font-mono text-sm"
           autoComplete="off"
@@ -225,7 +341,7 @@ const SendAssetCard = ({
           <button
             type="button"
             onClick={handleMaxAmount}
-            disabled={!assetBalance || assetBalance === '0'}
+            disabled={!freeBalance || freeBalance === '0'}
             className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-2 !my-1 !px-3 !py-1"
           >
             MAX
@@ -238,6 +354,13 @@ const SendAssetCard = ({
           placeholder="e.g. 1.5"
           className="input"
         />
+        {spendable.hasLocked && (
+          <p className="text-[10px] text-amber-400/80 mt-1.5">
+            MAX uses free balance only —{' '}
+            <FormattedNumber value={spendable.locked} variant="balance" className="text-amber-300" />{' '}
+            {assetName || 'tokens'} locked in open orders.
+          </p>
+        )}
       </div>
 
       <details className="group">

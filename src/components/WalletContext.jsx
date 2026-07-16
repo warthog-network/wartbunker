@@ -42,7 +42,12 @@ export const WalletProvider = ({ children }) => {
   // Always start with safe defaults. This ensures the first render (server HTML + client hydrate)
   // produces identical output. Storage restore happens after hydration (client-only layout effect).
   const [wallet, setWallet] = useState(null);
+  /** WART total balance (kept for existing consumers). */
   const [balance, setBalance] = useState(null);
+  /** WART free to spend (total − locked − mempool). */
+  const [balanceAvailable, setBalanceAvailable] = useState(null);
+  /** WART locked in open orders / pending. */
+  const [balanceLocked, setBalanceLocked] = useState(null);
   const [usdBalance, setUsdBalance] = useState(null);
   const [nextNonce, setNextNonce] = useState(null);
   const [pinHeight, setPinHeight] = useState(null);
@@ -185,6 +190,8 @@ export const WalletProvider = ({ children }) => {
   const fetchBalanceAndNonce = async (address) => {
     setError(null);
     setBalance(null);
+    setBalanceAvailable(null);
+    setBalanceLocked(null);
     setNextNonce(null);
     setPinHeight(null);
     setPinHash(null);
@@ -217,20 +224,19 @@ export const WalletProvider = ({ children }) => {
       }
       const data = balRes.data;
 
-      const { formatWartBalance, getNextNonceFromAccount } = await import('../utils/warthogFormat.js');
+      const { formatBalanceBreakdown, getNextNonceFromAccount } = await import('../utils/warthogFormat.js');
 
-      const wartBalanceObj = isMainnetNode(activeNode)
-        ? data?.balance?.total
-        : data?.wart?.total;
+      const wartContainer = isMainnetNode(activeNode) ? data?.balance : data?.wart;
+      const wartBreakdown = await formatBalanceBreakdown(wartContainer, { kind: 'wart' });
+      setBalance(wartBreakdown.total);
+      setBalanceAvailable(wartBreakdown.available);
+      setBalanceLocked(wartBreakdown.locked);
 
-      const balanceInWart = await formatWartBalance(wartBalanceObj);
-      setBalance(balanceInWart);
-
-      // USD price (via server proxy to avoid CORS)
+      // USD price (via server proxy to avoid CORS) — priced on total holdings
       try {
         const priceResponse = await axios.get('/api/price');
         const price = priceResponse.data?.usd || 0;
-        setUsdBalance((parseFloat(balanceInWart) * price).toFixed(2));
+        setUsdBalance((parseFloat(wartBreakdown.total) * price).toFixed(2));
       } catch {
         setUsdBalance('N/A');
       }
@@ -244,56 +250,61 @@ export const WalletProvider = ({ children }) => {
       console.error('Balance fetch error:', err);
       setError(err.message || 'Failed to fetch balance');
       setBalance('0.00000000');
+      setBalanceAvailable('0.00000000');
+      setBalanceLocked('0.00000000');
       setUsdBalance('N/A');
     }
   };
 
-  // NEW: Fetch balance of a custom asset
- const fetchAssetBalance = async (assetHash, assetName = '') => {
-  if (!wallet?.address || !selectedNode) return;
+  // NEW: Fetch balance of a custom asset (total / locked / available)
+  const fetchAssetBalance = async (assetHash, assetName = '') => {
+    if (!wallet?.address || !selectedNode) return;
 
-  try {
-    const api = await createWarthogApi(selectedNode);
-    const hash = normalizeAssetHash(assetHash);
-    const res = await api.getAccountAssetBalance(wallet.address, hash);
-    if (!res.success) {
-      throw new Error(res.error || 'Failed to fetch asset balance');
-    }
-    const data = res.data;
-
-    // Extract from the correct structure
-    const tokenInfo = data?.token || {};
-    const balanceInfo = data?.balance?.total || data?.balance || {};
-
-    const decimals = tokenInfo.decimals || balanceInfo.decimals || 8;
-    const { formatTokenBalance } = await import('../utils/warthogFormat.js');
-    const balanceStr = await formatTokenBalance(balanceInfo, decimals);
-
-    const finalName = assetName || tokenInfo.name || 'Unknown Asset';
-
-    const newAsset = {
-      hash,
-      name: finalName,
-      balance: balanceStr,
-      decimals: decimals,
-    };
-
-    setAssetBalances(prev => {
-      const index = prev.findIndex(a => a.hash === assetHash);
-      if (index !== -1) {
-        const updated = [...prev];
-        updated[index] = newAsset;
-        return updated;
+    try {
+      const api = await createWarthogApi(selectedNode);
+      const hash = normalizeAssetHash(assetHash);
+      const res = await api.getAccountAssetBalance(wallet.address, hash);
+      if (!res.success) {
+        throw new Error(res.error || 'Failed to fetch asset balance');
       }
-      return [...prev, newAsset];
-    });
+      const data = res.data;
 
-  } catch (err) {
-    console.error('Failed to fetch asset balance:', err);
-    // Note: UI layer (WalletOverview) shows user-facing toasts for manual fetches.
-    // Context itself intentionally does not depend on the toast system.
-  }
-};
+      const tokenInfo = data?.token || {};
+      const decimals = tokenInfo.decimals ?? data?.balance?.total?.decimals ?? 8;
+      const { formatBalanceBreakdown } = await import('../utils/warthogFormat.js');
+      const breakdown = await formatBalanceBreakdown(data?.balance, {
+        kind: 'token',
+        decimals,
+      });
+
+      const finalName = assetName || tokenInfo.name || 'Unknown Asset';
+
+      const newAsset = {
+        hash,
+        name: finalName,
+        balance: breakdown.total,
+        available: breakdown.available,
+        locked: breakdown.locked,
+        mempool: breakdown.mempool,
+        hasLocked: breakdown.hasLocked,
+        decimals,
+      };
+
+      setAssetBalances((prev) => {
+        const index = prev.findIndex((a) => a.hash?.toLowerCase() === hash.toLowerCase());
+        if (index !== -1) {
+          const updated = [...prev];
+          updated[index] = newAsset;
+          return updated;
+        }
+        return [...prev, newAsset];
+      });
+    } catch (err) {
+      console.error('Failed to fetch asset balance:', err);
+      // Note: UI layer (WalletOverview) shows user-facing toasts for manual fetches.
+      // Context itself intentionally does not depend on the toast system.
+    }
+  };
 
   // ==================== WATCHED ASSETS PERSISTENCE ====================
 
@@ -498,9 +509,15 @@ export const WalletProvider = ({ children }) => {
   }, []);
 
   const refreshBalance = () => {
-    setRefreshTrigger(prev => prev + 1);
+    setRefreshTrigger((prev) => prev + 1);
     if (wallet?.address && selectedNode) {
       refreshHistoryPrefetch(wallet.address, selectedNode);
+      // Also refresh asset free/locked so overview matches open orders
+      watchedAssets.forEach((asset, idx) => {
+        setTimeout(() => {
+          fetchAssetBalance(asset.hash, asset.customName);
+        }, idx * 120);
+      });
     }
   };
 
@@ -535,6 +552,8 @@ export const WalletProvider = ({ children }) => {
     wallet,
     setWallet,
     balance,
+    balanceAvailable,
+    balanceLocked,
     usdBalance,
     nextNonce,
     pinHeight,

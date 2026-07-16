@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
 import FormattedNumber from './FormattedNumber.jsx';
@@ -8,11 +8,18 @@ import {
   formatSubmitError,
   formatSubmitResult,
   getNodeData,
+  normalizeAssetHash,
   signAndSubmitTransaction,
 } from '../utils/warthogClient.js';
 import { computePoolSpotPrice } from '../utils/dexPrice.js';
 import { DEFAULT_NODE_URL } from '../utils/presetNodes.js';
 import { readPublicSession } from '../utils/sessionWallet.js';
+import {
+  amountExceedsAvailable,
+  formatBalanceBreakdown,
+  insufficientFreeBalanceMessage,
+  isValidAssetHash,
+} from '../utils/warthogFormat.js';
 
 const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const {
@@ -24,6 +31,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     isSessionLocked,
     dexPoolPrefill,
     setDexPoolPrefill,
+    refreshBalance,
   } = useWallet();
 
   const selectedNode = propSelectedNode || contextSelectedNode || DEFAULT_NODE_URL;
@@ -43,6 +51,9 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const [limitOrderMode, setLimitOrderMode] = useState('buy');
   const [poolAssetHash, setPoolAssetHash] = useState('');
   const [positionPoolMode, setPositionPoolMode] = useState('deposit');
+  /** Live free/locked snapshot for the limit-order form asset (sell) or WART (buy). */
+  const [limitSpendable, setLimitSpendable] = useState(null);
+  const [limitSpendableLoading, setLimitSpendableLoading] = useState(false);
 
   const feeFieldKey = `${selectedNode}-${suggestedTxFee}`;
   const feeHint = nodeMinFeeStr
@@ -59,6 +70,184 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       import('../utils/encodeLimitPrice.js').catch(() => {});
     }
   }, [activeTab]);
+
+  const readLimitAssetHash = () => {
+    const raw = document.getElementById('limitAssetHash')?.value?.trim() || '';
+    if (!raw) return '';
+    try {
+      return normalizeAssetHash(raw);
+    } catch {
+      return raw.replace(/^0x/i, '').toLowerCase();
+    }
+  };
+
+  /**
+   * Load free/locked balance for the current limit-order side.
+   * Sell → asset free balance; Buy → WART free balance.
+   */
+  const refreshLimitSpendable = useCallback(async ({ silent = false } = {}) => {
+    const account = wallet?.address;
+    if (!account || !selectedNode) {
+      setLimitSpendable(null);
+      return null;
+    }
+
+    const isBuy = limitOrderMode === 'buy';
+    if (!isBuy) {
+      const hash = readLimitAssetHash();
+      if (!isValidAssetHash(hash)) {
+        setLimitSpendable(null);
+        return null;
+      }
+    }
+
+    if (!silent) setLimitSpendableLoading(true);
+    try {
+      const api = await createWarthogApi(selectedNode);
+      if (isBuy) {
+        const res = await api.getAccountWartBalance(account);
+        if (!res.success) throw new Error(res.error || 'Failed to fetch WART balance');
+        const breakdown = await formatBalanceBreakdown(res.data?.wart, { kind: 'wart' });
+        const info = {
+          side: 'buy',
+          unit: 'WART',
+          name: 'WART',
+          decimals: 8,
+          available: breakdown.available,
+          locked: breakdown.locked,
+          total: breakdown.total,
+          hasLocked: breakdown.hasLocked,
+        };
+        setLimitSpendable(info);
+        return info;
+      }
+
+      const hash = readLimitAssetHash();
+      const res = await api.getAccountAssetBalance(account, hash);
+      if (!res.success) throw new Error(res.error || 'Failed to fetch asset balance');
+      const tokenInfo = res.data?.token || {};
+      const decimals = tokenInfo.decimals ?? res.data?.balance?.total?.decimals ?? 8;
+      const breakdown = await formatBalanceBreakdown(res.data?.balance, {
+        kind: 'token',
+        decimals,
+      });
+      const info = {
+        side: 'sell',
+        unit: tokenInfo.name || 'asset',
+        name: tokenInfo.name || 'Asset',
+        decimals,
+        assetHash: hash,
+        available: breakdown.available,
+        locked: breakdown.locked,
+        total: breakdown.total,
+        hasLocked: breakdown.hasLocked,
+      };
+      setLimitSpendable(info);
+      // Align price-encoder decimals with on-chain token decimals when empty/default
+      const decInput = document.getElementById('limitPriceDecimals');
+      if (decInput && (!decInput.value || decInput.value === '8')) {
+        decInput.value = String(decimals);
+      }
+      return info;
+    } catch (err) {
+      if (!silent) {
+        toast.error(err.message || 'Could not load spendable balance');
+      }
+      setLimitSpendable(null);
+      return null;
+    } finally {
+      if (!silent) setLimitSpendableLoading(false);
+    }
+  }, [wallet?.address, selectedNode, limitOrderMode, toast]);
+
+  // Refresh spendable when entering limit tab / switching buy↔sell
+  useEffect(() => {
+    if (activeTab !== 'limit') return undefined;
+    const t = setTimeout(() => {
+      refreshLimitSpendable({ silent: true });
+    }, 50);
+    return () => clearTimeout(t);
+  }, [activeTab, limitOrderMode, refreshLimitSpendable]);
+
+  const fillLimitAmountFromAvailable = async () => {
+    const info = limitSpendable || (await refreshLimitSpendable());
+    if (!info) {
+      toast.error(
+        limitOrderMode === 'sell'
+          ? 'Enter a valid asset hash first, then load available balance'
+          : 'Could not load available WART balance',
+      );
+      return;
+    }
+    const amountInput = document.getElementById('limitAmount');
+    if (amountInput) {
+      amountInput.value = info.available;
+    }
+    toast.success(`Filled available: ${info.available} ${info.unit}`);
+  };
+
+  const renderLimitSpendableCard = () => {
+    const isBuy = limitOrderMode === 'buy';
+    const border = isBuy ? 'border-emerald-800/80' : 'border-rose-800/80';
+    const muted = isBuy ? 'text-emerald-300/80' : 'text-rose-300/80';
+
+    if (limitSpendableLoading && !limitSpendable) {
+      return (
+        <div className={`mb-4 p-3 rounded-xl border bg-black/30 ${border} text-xs text-zinc-400`}>
+          Loading available balance…
+        </div>
+      );
+    }
+
+    if (!limitSpendable) {
+      if (!isBuy) {
+        return (
+          <div className={`mb-4 p-3 rounded-xl border bg-black/30 ${border} text-xs text-zinc-500`}>
+            Enter asset hash and click <span className={muted}>Check balance</span> to see free vs locked tokens.
+          </div>
+        );
+      }
+      return null;
+    }
+
+    return (
+      <div className={`mb-4 p-3 rounded-xl border bg-black/40 ${border} text-xs space-y-1.5`}>
+        <div className="flex items-center justify-between gap-2">
+          <span className={`font-medium ${muted}`}>
+            {limitSpendable.name} spendable
+          </span>
+          <button
+            type="button"
+            onClick={() => refreshLimitSpendable()}
+            disabled={limitSpendableLoading}
+            className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-2 !py-0.5 text-[10px]"
+          >
+            {limitSpendableLoading ? '…' : 'Refresh'}
+          </button>
+        </div>
+        <div className="flex flex-wrap gap-x-4 gap-y-1 tabular-nums text-white">
+          <span>
+            <span className="text-zinc-500">Available </span>
+            <FormattedNumber value={limitSpendable.available} variant="balance" />
+            <span className="text-zinc-500 ml-1">{limitSpendable.unit}</span>
+          </span>
+          <span className="text-amber-300/90">
+            <span className="text-zinc-500">Locked </span>
+            <FormattedNumber value={limitSpendable.locked} variant="balance" />
+          </span>
+          <span className="text-zinc-400">
+            <span className="text-zinc-500">Total </span>
+            <FormattedNumber value={limitSpendable.total} variant="balance" />
+          </span>
+        </div>
+        {limitSpendable.hasLocked && (
+          <p className="text-[10px] text-amber-400/80">
+            Locked tokens are held by open limit orders until they fill or you cancel them.
+          </p>
+        )}
+      </div>
+    );
+  };
 
   // ==================== SAFE RENDER HELPERS ====================
   const safeStr = (v, fallback = '0') => {
@@ -434,7 +623,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     }
   };
 
-  // ==================== MY LIQUIDITY POSITION CARD ====================
+  // ==================== MY ASSET BALANCE CARD (pool position tab) ====================
   const renderPositionCard = (result) => {
     try {
       if (!result || result.code !== 0 || !result.data) {
@@ -447,10 +636,23 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
 
       const balData = result.data || {};
       const assetInfo = balData.asset || balData.token || {};
-
-      let balanceInfo = balData.balance?.total || balData.balance || balData;
-      if (balanceInfo && typeof balanceInfo === 'object' && (balanceInfo.total || balanceInfo.locked || balanceInfo.mempool)) {
-        balanceInfo = balanceInfo.total || {};
+      const bal = balData.balance || {};
+      const totalObj = bal.total || bal;
+      const lockedObj = bal.locked;
+      const totalStr = safeStr(totalObj);
+      const lockedStr = lockedObj ? safeStr(lockedObj) : '0';
+      const lockedNum = parseFloat(lockedStr) || 0;
+      let availableStr = totalStr;
+      try {
+        const t = BigInt(totalObj?.u64 ?? totalObj?.E8 ?? 0);
+        const l = BigInt(lockedObj?.u64 ?? lockedObj?.E8 ?? 0);
+        const m = BigInt(bal.mempool?.u64 ?? bal.mempool?.E8 ?? 0);
+        let free = t - l - m;
+        if (free < 0n) free = 0n;
+        const dec = Number(totalObj?.decimals ?? assetInfo.decimals ?? 8);
+        availableStr = safeStr({ u64: free.toString(), decimals: dec });
+      } catch {
+        availableStr = totalStr;
       }
 
       const assetName = assetInfo.name || balData.asset?.name || 'Asset';
@@ -459,12 +661,25 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
         <div className={`mt-6 border rounded-3xl p-6 ${liquidityPoolClasses.bgPanel} ${liquidityPoolClasses.border}`}>
           <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between mb-4 gap-1 sm:gap-4">
             <div className="min-w-0 flex-1">
-              <div className={`text-xs tracking-[2px] font-medium ${liquidityPoolClasses.text}`}>YOUR LIQUIDITY POSITION</div>
+              <div className={`text-xs tracking-[2px] font-medium ${liquidityPoolClasses.text}`}>
+                {lockedNum > 0 ? 'AVAILABLE TOKEN BALANCE' : 'YOUR TOKEN BALANCE'}
+              </div>
               <FormattedNumber
-                value={balanceInfo}
+                value={availableStr}
                 variant="balance"
                 className="text-4xl sm:text-5xl font-semibold tracking-[-1.5px] mt-1 break-all sm:break-normal block"
               />
+              {lockedNum > 0 && (
+                <div className={`mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs tabular-nums ${liquidityPoolClasses.textMuted}`}>
+                  <span>
+                    Total <FormattedNumber value={totalStr} variant="balance" className="text-zinc-300" />
+                  </span>
+                  <span className="text-amber-400/90">
+                    Locked <FormattedNumber value={lockedStr} variant="balance" className="text-amber-300" />
+                    <span className="text-zinc-500"> (open orders)</span>
+                  </span>
+                </div>
+              )}
             </div>
             <div className="text-left sm:text-right mt-0.5 sm:mt-0 flex-shrink-0">
               <div className={`text-xs ${liquidityPoolClasses.textMuted}`}>Current holding in</div>
@@ -473,7 +688,9 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
           </div>
           
           <div className={`text-[10px] border-t pt-3 ${liquidityPoolClasses.textMuted} ${liquidityPoolClasses.borderMuted}`}>
-            This reflects your share of the pool after confirmed deposits. Larger positions = higher fee share.
+            {lockedNum > 0
+              ? 'Available is free to sell or transfer. Locked tokens are held by open limit orders until they fill or you cancel them.'
+              : 'This is your confirmed free balance for this asset on the connected node.'}
           </div>
 
           <details className="mt-4">
@@ -879,9 +1096,9 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const handleLimitSwap = async () => {
     const assetHashRaw = document.getElementById('limitAssetHash')?.value.trim() || '';
     const isBuy = limitOrderMode === 'buy';
-    const amountStr = document.getElementById('limitAmount')?.value.trim() || '';
+    let amountStr = document.getElementById('limitAmount')?.value.trim() || '';
     const limitHex = document.getElementById('limitEncoded')?.value.trim() || '';
-    const assetDecimalsStr = document.getElementById('limitPriceDecimals')?.value || '8';
+    let assetDecimalsStr = document.getElementById('limitPriceDecimals')?.value || '8';
 
     const nonceOverrideRaw = document.getElementById('limitNonceOverride')?.value.trim() || '';
     let nonceId = getSmartNonce();
@@ -905,6 +1122,27 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     setResults(prev => ({ ...prev, limitSwap: null }));
 
     try {
+      // Live free-balance check before signing (avoids opaque node "Insufficient token balance")
+      const spendable = await refreshLimitSpendable({ silent: true });
+      if (spendable) {
+        if (!isBuy && spendable.decimals != null) {
+          assetDecimalsStr = String(spendable.decimals);
+        }
+        if (amountExceedsAvailable(amountStr, spendable.available)) {
+          const msg = insufficientFreeBalanceMessage({
+            available: spendable.available,
+            locked: spendable.locked,
+            unit: spendable.unit,
+          });
+          // Cap the form field so the user can retry with free balance
+          const amountInput = document.getElementById('limitAmount');
+          if (amountInput) amountInput.value = spendable.available;
+          setResults((prev) => ({ ...prev, limitSwap: formatSubmitError(msg) }));
+          toast.error(msg);
+          return;
+        }
+      }
+
       const api = await createWarthogApi(selectedNode);
       const { nonce, data } = await signAndSubmitTransaction(api, {
         nonceId,
@@ -927,10 +1165,25 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       }
 
       toast.success('Limit order submitted — balance may stay locked until the order fills');
+      // Refresh free/locked after successful lock of funds
+      refreshLimitSpendable({ silent: true });
+      refreshBalance?.();
     } catch (err) {
       console.error(err);
-      setResults(prev => ({ ...prev, limitSwap: formatSubmitError(err.message || 'Unknown error') }));
-      toast.error('Limit order failed: ' + (err.message || 'Unknown error'));
+      let message = err.message || 'Unknown error';
+      // Map node rejection into the clearer free/locked wording when possible
+      if (/insufficient\s+(token\s+)?balance/i.test(message)) {
+        const spendable = limitSpendable || (await refreshLimitSpendable({ silent: true }));
+        if (spendable) {
+          message = insufficientFreeBalanceMessage({
+            available: spendable.available,
+            locked: spendable.locked,
+            unit: spendable.unit,
+          });
+        }
+      }
+      setResults(prev => ({ ...prev, limitSwap: formatSubmitError(message) }));
+      toast.error('Limit order failed: ' + message);
     } finally {
       setLoading(prev => ({ ...prev, limitSwap: false }));
     }
@@ -1367,8 +1620,19 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                 <label className="block text-sm font-medium mb-2">Asset Hash (64 hex chars, no 0x)</label>
                 <input id="limitAssetHash" placeholder="e.g. 0e4825efffa294610d2ac376713e3bcc9b53d378e823834b64e5df01f75d3b0c" className="input mb-3 font-mono text-sm" />
 
+                {renderLimitSpendableCard()}
+
                 <label className="block text-sm font-medium mb-2">Amount (in WART)</label>
-                <input id="limitAmount" type="number" step="any" placeholder="e.g. 1.0" className="input mb-4" />
+                <div className="flex flex-col sm:flex-row gap-3 mb-4">
+                  <input id="limitAmount" type="number" step="any" placeholder="e.g. 1.0" className="input flex-1 !mb-0" />
+                  <button
+                    type="button"
+                    onClick={fillLimitAmountFromAvailable}
+                    className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1 self-end whitespace-nowrap"
+                  >
+                    Use available
+                  </button>
+                </div>
 
                 <div className="bg-zinc-900 border border-emerald-700 p-4 rounded-2xl mb-4">
                   <div className="text-sm font-medium text-emerald-300 mb-3">
@@ -1452,10 +1716,38 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
 
               <div>
                 <label className="block text-sm font-medium mb-2">Asset Hash (64 hex chars, no 0x)</label>
-                <input id="limitAssetHash" placeholder="e.g. 0e4825efffa294610d2ac376713e3bcc9b53d378e823834b64e5df01f75d3b0c" className="input mb-3 font-mono text-sm" />
+                <div className="flex flex-col sm:flex-row gap-3 mb-3">
+                  <input
+                    id="limitAssetHash"
+                    placeholder="e.g. 0e4825efffa294610d2ac376713e3bcc9b53d378e823834b64e5df01f75d3b0c"
+                    className="input flex-1 !mb-0 font-mono text-sm"
+                    onBlur={() => {
+                      if (limitOrderMode === 'sell') refreshLimitSpendable({ silent: true });
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => refreshLimitSpendable()}
+                    disabled={limitSpendableLoading}
+                    className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1 self-end whitespace-nowrap"
+                  >
+                    {limitSpendableLoading ? 'Loading…' : 'Check balance'}
+                  </button>
+                </div>
+
+                {renderLimitSpendableCard()}
 
                 <label className="block text-sm font-medium mb-2">Amount (in asset units)</label>
-                <input id="limitAmount" type="number" step="any" placeholder="e.g. 1000" className="input mb-4" />
+                <div className="flex flex-col sm:flex-row gap-3 mb-4">
+                  <input id="limitAmount" type="number" step="any" placeholder="e.g. 1000" className="input flex-1 !mb-0" />
+                  <button
+                    type="button"
+                    onClick={fillLimitAmountFromAvailable}
+                    className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1 self-end whitespace-nowrap"
+                  >
+                    Use available
+                  </button>
+                </div>
 
                 <div className="bg-zinc-900 border border-rose-700 p-4 rounded-2xl mb-4">
                   <div className="text-sm font-medium text-rose-300 mb-3">

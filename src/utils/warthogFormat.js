@@ -38,6 +38,117 @@ export async function formatTokenBalance(balanceObj, decimals = 8) {
   return '0';
 }
 
+/** Raw integer units from a node amount object (`u64` / `E8` / `amount`). */
+export function rawAmountUnits(amountObj) {
+  if (!amountObj || typeof amountObj !== 'object') return 0n;
+  const raw = amountObj.u64 ?? amountObj.E8 ?? amountObj.amount;
+  if (raw === undefined || raw === null || raw === '') return 0n;
+  try {
+    return BigInt(raw);
+  } catch {
+    return 0n;
+  }
+}
+
+/**
+ * Normalize node balance containers into total / locked / mempool parts.
+ * Accepts `data.balance`, `data.wart`, or a bare amount object.
+ */
+export function pickBalanceParts(container) {
+  if (!container || typeof container !== 'object') {
+    return { total: null, locked: null, mempool: null };
+  }
+  if (container.total != null || container.locked != null || container.mempool != null) {
+    return {
+      total: container.total ?? null,
+      locked: container.locked ?? null,
+      mempool: container.mempool ?? null,
+    };
+  }
+  // Bare amount: treat as total free balance
+  if (
+    container.str != null
+    || container.u64 != null
+    || container.E8 != null
+    || container.amount != null
+  ) {
+    return { total: container, locked: null, mempool: null };
+  }
+  return { total: null, locked: null, mempool: null };
+}
+
+/**
+ * Format total / locked / mempool / available from a node balance container.
+ * Available = max(0, total − locked − mempool) in integer units.
+ *
+ * @param {object|null} container `data.balance` or `data.wart` (or bare amount)
+ * @param {{ kind?: 'wart' | 'token', decimals?: number }} [options]
+ */
+export async function formatBalanceBreakdown(container, options = {}) {
+  const kind = options.kind === 'wart' ? 'wart' : 'token';
+  const decimals = kind === 'wart'
+    ? WART_PRECISION
+    : Math.min(Math.max(parseInt(options.decimals, 10) || 8, 0), 18);
+
+  const parts = pickBalanceParts(container);
+  const totalRaw = rawAmountUnits(parts.total);
+  const lockedRaw = rawAmountUnits(parts.locked);
+  const mempoolRaw = rawAmountUnits(parts.mempool);
+  let availableRaw = totalRaw - lockedRaw - mempoolRaw;
+  if (availableRaw < 0n) availableRaw = 0n;
+
+  const formatOne = async (obj, rawFallback) => {
+    if (obj) {
+      if (kind === 'wart') return formatWartBalance(obj);
+      return formatTokenBalance(obj, decimals);
+    }
+    return formatAmountFromRaw(rawFallback, decimals);
+  };
+
+  const [total, locked, mempool, available] = await Promise.all([
+    formatOne(parts.total, totalRaw),
+    formatOne(parts.locked, lockedRaw),
+    formatOne(parts.mempool, mempoolRaw),
+    Promise.resolve(formatAmountFromRaw(availableRaw, decimals)),
+  ]);
+
+  const lockedOrPending = lockedRaw + mempoolRaw;
+
+  return {
+    total,
+    locked,
+    mempool,
+    available,
+    totalRaw,
+    lockedRaw,
+    mempoolRaw,
+    availableRaw,
+    lockedOrPending,
+    hasLocked: lockedOrPending > 0n,
+  };
+}
+
+/** True when `amountStr` exceeds free balance (string compare via decimal parse). */
+export function amountExceedsAvailable(amountStr, availableStr) {
+  const amount = Number(String(amountStr ?? '').trim().replace(',', '.'));
+  const available = Number(String(availableStr ?? '').trim().replace(',', '.'));
+  if (!Number.isFinite(amount) || amount <= 0) return false;
+  if (!Number.isFinite(available)) return false;
+  // Small epsilon for float display noise
+  return amount > available + 1e-12;
+}
+
+/**
+ * Human message when an order/send exceeds free balance.
+ * @example "Only 279057.82 free; 230470.95 locked in open orders."
+ */
+export function insufficientFreeBalanceMessage({ available, locked, unit = '' }) {
+  const free = String(available ?? '0');
+  const lock = String(locked ?? '0');
+  const suffix = unit ? ` ${unit}` : '';
+  return `Only ${free}${suffix} free; ${lock}${suffix} locked in open orders.`;
+}
+
 /** Format a limit order price using warthog-js Price when a hex encoding is available. */
 export async function formatLimitPrice(limit, assetDecimals = 8) {
   if (limit == null) return '0.00000000';
