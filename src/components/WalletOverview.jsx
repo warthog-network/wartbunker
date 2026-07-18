@@ -1102,7 +1102,7 @@ const WalletOverview = ({ onLogout }) => {
                             }}
                             className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1"
                           >
-                            Manage in DEX
+                            Manage on Swap
                           </button>
                         </div>
                       </div>

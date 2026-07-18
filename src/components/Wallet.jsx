@@ -194,7 +194,7 @@ const WalletContent = () => {
     { key: 'history', label: 'History' },
     ...(isTestnet ? [
       { key: 'assets', label: 'Assets' },
-      { key: 'dex', label: 'DEX' },
+      { key: 'dex', label: 'Swap' },
     ] : []),
     { key: 'tools', label: 'Tools' },
     { key: 'network', label: 'Network' },

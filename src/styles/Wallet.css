@@ -91,54 +91,515 @@
   }
 }
 
-/* DEX sub-tabs — override .container button (uses orange --primary in dark mode) */
+/* DEX / Swap sub-tabs — quiet preset style (outline active, not solid orange fill) */
 .container .dex-tabs button.dex-tab-btn {
+  flex: 1 1 0;
   flex-shrink: 0;
   min-width: fit-content;
   display: flex;
   align-items: center;
   justify-content: center;
-  margin: 0;
-  padding: 0.35rem 0.45rem;
-  font-size: 0.65rem;
+  margin: 0 !important;
+  padding: 0.45rem 0.75rem !important;
+  font-size: 0.8rem !important;
   font-weight: 500;
   line-height: 1.2;
-  border-radius: 8px;
-  border: none;
-  background: transparent;
-  color: #a1a1aa;
-  box-shadow: none;
-  transform: none;
-  overflow: visible;
-  position: static;
+  border-radius: 9999px !important;
+  border: 1px solid rgba(82, 82, 91, 0.55) !important;
+  background: rgba(39, 39, 42, 0.65) !important;
+  color: #a1a1aa !important;
+  box-shadow: none !important;
+  transform: none !important;
+  overflow: visible !important;
+  position: static !important;
   width: auto;
-  min-height: 0;
+  min-height: 0 !important;
 }
 
 .container .dex-tabs button.dex-tab-btn::before {
-  display: none;
+  display: none !important;
 }
 
 .container .dex-tabs button.dex-tab-btn:hover {
-  background: rgba(231, 147, 0, 0.14);
-  color: var(--primary-hover);
-  transform: none;
-  box-shadow: none;
+  background: rgba(63, 63, 70, 0.9) !important;
+  color: #d4d4d8 !important;
+  border-color: rgba(113, 113, 122, 0.7) !important;
+  transform: none !important;
+  box-shadow: none !important;
 }
 
 .container .dex-tabs button.dex-tab-btn.dex-tab-btn--active,
 .container .dex-tabs button.dex-tab-btn.dex-tab-btn--active:hover {
-  background: var(--primary-hover);
-  color: #18181b;
-  transform: none;
-  box-shadow: none;
+  background: rgba(231, 147, 0, 0.1) !important;
+  color: #E79300 !important;
+  border-color: rgba(231, 147, 0, 0.75) !important;
+  transform: none !important;
+  box-shadow: none !important;
 }
 
 @media (min-width: 640px) {
   .container .dex-tabs button.dex-tab-btn {
-    font-size: 0.7rem;
-    padding: 0.4rem 0.5rem;
+    font-size: 0.85rem !important;
+    padding: 0.5rem 1rem !important;
   }
+}
+
+/* Swap page — kill global .container / modal button orange for all controls inside */
+.container .swap-page button,
+.swap-page button,
+.modal-content .swap-chip-btn,
+.modal-content .swap-token-row,
+.modal-content .swap-cta-btn {
+  background: transparent !important;
+  color: #a1a1aa !important;
+  border: 1px solid transparent !important;
+  box-shadow: none !important;
+  transform: none !important;
+  overflow: visible !important;
+  position: static !important;
+  margin: 0 !important;
+  min-height: 0 !important;
+  width: auto !important;
+}
+
+.container .swap-page button::before,
+.swap-page button::before,
+.modal-content .swap-chip-btn::before,
+.modal-content .swap-token-row::before,
+.modal-content .swap-cta-btn::before {
+  display: none !important;
+}
+
+.container .swap-page button:hover,
+.swap-page button:hover {
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+/* Quiet chip buttons (MAX, Use spot, etc.) — matches number-display presets */
+.container .swap-page button.swap-chip-btn,
+.swap-page button.swap-chip-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 0.35rem 0.7rem !important;
+  font-size: 0.6875rem !important;
+  font-weight: 600 !important;
+  line-height: 1.2 !important;
+  border-radius: 9999px !important;
+  background: rgba(39, 39, 42, 0.85) !important;
+  color: #a1a1aa !important;
+  border: 1px solid rgba(82, 82, 91, 0.55) !important;
+}
+
+.container .swap-page button.swap-chip-btn:hover:not(:disabled),
+.swap-page button.swap-chip-btn:hover:not(:disabled) {
+  background: rgba(63, 63, 70, 0.95) !important;
+  color: #e4e4e7 !important;
+  border-color: rgba(113, 113, 122, 0.7) !important;
+}
+
+.container .swap-page button.swap-chip-btn.swap-chip-btn--active,
+.container .swap-page button.swap-chip-btn.swap-chip-btn--active:hover:not(:disabled),
+.swap-page button.swap-chip-btn.swap-chip-btn--active,
+.swap-page button.swap-chip-btn.swap-chip-btn--active:hover:not(:disabled) {
+  background: rgba(231, 147, 0, 0.1) !important;
+  color: #E79300 !important;
+  border-color: rgba(231, 147, 0, 0.7) !important;
+}
+
+/* Token selector pill */
+.container .swap-page button.swap-token-btn,
+.swap-page button.swap-token-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 0.5rem !important;
+  padding: 0.4rem 0.75rem !important;
+  border-radius: 9999px !important;
+  background: rgba(24, 24, 27, 0.95) !important;
+  color: #fafafa !important;
+  border: 1px solid rgba(63, 63, 70, 0.9) !important;
+  font-size: 0.875rem !important;
+  font-weight: 600 !important;
+}
+
+.container .swap-page button.swap-token-btn:hover:not(:disabled),
+.swap-page button.swap-token-btn:hover:not(:disabled) {
+  border-color: rgba(113, 113, 122, 0.9) !important;
+  color: #fff !important;
+  background: rgba(39, 39, 42, 0.95) !important;
+}
+
+/* Flip direction control */
+.container .swap-page button.swap-flip-btn,
+.swap-page button.swap-flip-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 2.5rem !important;
+  height: 2.5rem !important;
+  padding: 0 !important;
+  border-radius: 0.75rem !important;
+  background: #18181b !important;
+  color: #a1a1aa !important;
+  border: 1px solid rgba(63, 63, 70, 0.9) !important;
+}
+
+.container .swap-page button.swap-flip-btn:hover:not(:disabled),
+.swap-page button.swap-flip-btn:hover:not(:disabled) {
+  color: #e4e4e7 !important;
+  border-color: rgba(113, 113, 122, 0.9) !important;
+  background: #27272a !important;
+}
+
+/* Primary CTA — muted zinc, not solid brand yellow */
+.container .swap-page button.swap-cta-btn,
+.swap-page button.swap-cta-btn {
+  display: flex !important;
+  width: 100% !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin-top: 0.5rem !important;
+  padding: 0.9rem 1rem !important;
+  border-radius: 1rem !important;
+  font-size: 0.95rem !important;
+  font-weight: 600 !important;
+  background: rgba(39, 39, 42, 0.95) !important;
+  color: #e4e4e7 !important;
+  border: 1px solid rgba(82, 82, 91, 0.65) !important;
+}
+
+.container .swap-page button.swap-cta-btn:hover:not(:disabled),
+.swap-page button.swap-cta-btn:hover:not(:disabled) {
+  background: rgba(63, 63, 70, 0.95) !important;
+  color: #fafafa !important;
+  border-color: rgba(113, 113, 122, 0.8) !important;
+}
+
+.container .swap-page button.swap-cta-btn:disabled,
+.swap-page button.swap-cta-btn:disabled {
+  opacity: 0.45 !important;
+  cursor: not-allowed !important;
+  color: #71717a !important;
+}
+
+/* Advanced disclosure header */
+.container .swap-page button.swap-advanced-btn,
+.swap-page button.swap-advanced-btn {
+  display: flex !important;
+  width: 100% !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 0.75rem 1rem !important;
+  font-size: 0.875rem !important;
+  font-weight: 500 !important;
+  background: transparent !important;
+  color: #a1a1aa !important;
+  border: none !important;
+  border-radius: 0 !important;
+}
+
+.container .swap-page button.swap-advanced-btn:hover,
+.swap-page button.swap-advanced-btn:hover {
+  color: #e4e4e7 !important;
+  background: rgba(39, 39, 42, 0.35) !important;
+}
+
+/* Available balance link — plain text, never orange fill */
+.container .swap-page button.swap-balance-btn,
+.swap-page button.swap-balance-btn {
+  display: inline-block !important;
+  width: auto !important;
+  max-width: min(100%, 14rem) !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  font-size: 0.6875rem !important;
+  font-weight: 400 !important;
+  line-height: 1.35 !important;
+  text-align: right !important;
+  background: transparent !important;
+  color: #71717a !important;
+  border: none !important;
+  border-radius: 0 !important;
+  white-space: normal !important;
+}
+
+.container .swap-page button.swap-balance-btn:hover,
+.swap-page button.swap-balance-btn:hover {
+  color: #a1a1aa !important;
+  background: transparent !important;
+}
+
+/* Token picker list rows */
+.container .swap-page button.swap-token-row,
+.swap-page button.swap-token-row {
+  display: flex !important;
+  width: 100% !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 0.75rem !important;
+  border-radius: 0.75rem !important;
+  background: rgba(24, 24, 27, 0.5) !important;
+  color: #fafafa !important;
+  border: 1px solid rgba(39, 39, 42, 0.9) !important;
+  text-align: left !important;
+}
+
+.container .swap-page button.swap-token-row:hover,
+.swap-page button.swap-token-row:hover {
+  border-color: rgba(82, 82, 91, 0.9) !important;
+  background: rgba(39, 39, 42, 0.55) !important;
+}
+
+.container .swap-page button.swap-token-row.swap-token-row--active,
+.swap-page button.swap-token-row.swap-token-row--active {
+  border-color: rgba(231, 147, 0, 0.45) !important;
+  background: rgba(231, 147, 0, 0.08) !important;
+}
+
+/* Keep compact-btn working inside swap page */
+.container .swap-page button.compact-btn,
+.swap-page button.compact-btn {
+  width: auto !important;
+  min-width: 0 !important;
+  padding: 0.25rem 0.625rem !important;
+  font-size: 0.6875rem !important;
+  border-radius: 0.5rem !important;
+  background: rgba(39, 39, 42, 0.8) !important;
+  color: #a1a1aa !important;
+  border: 1px solid rgba(82, 82, 91, 0.5) !important;
+}
+
+.container .swap-page button.compact-btn:hover:not(:disabled),
+.swap-page button.compact-btn:hover:not(:disabled) {
+  background: #3f3f46 !important;
+  color: #d4d4d8 !important;
+  border-color: rgba(82, 82, 91, 0.5) !important;
+}
+
+.container .swap-page button.compact-btn.compact-btn--active,
+.container .swap-page button.compact-btn.compact-btn--active:hover:not(:disabled),
+.swap-page button.compact-btn.compact-btn--active,
+.swap-page button.compact-btn.compact-btn--active:hover:not(:disabled) {
+  background: rgba(231, 147, 0, 0.12) !important;
+  color: #E79300 !important;
+  border-color: rgba(231, 147, 0, 0.6) !important;
+}
+
+/* dex-tabs inside swap-page still use shared quiet tab styles above */
+.container .swap-page .dex-tabs button.dex-tab-btn {
+  flex: 1 1 0 !important;
+}
+
+/* Swap headings should not pick up global yellow h2 brand color */
+.container .swap-page h2 {
+  color: #f4f4f5 !important;
+}
+
+/* —— Swap polish —— */
+.swap-page .swap-card {
+  border-radius: 1.5rem;
+  border: 1px solid rgba(39, 39, 42, 0.95);
+  background:
+    linear-gradient(180deg, rgba(24, 24, 27, 0.55) 0%, rgba(9, 9, 11, 0.92) 100%);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.03) inset,
+    0 18px 40px -24px rgba(0, 0, 0, 0.85);
+  overflow: hidden;
+}
+
+.swap-page .swap-panel {
+  border-radius: 1rem;
+  border: 1px solid rgba(39, 39, 42, 0.95);
+  background: rgba(24, 24, 27, 0.55);
+  padding: 1rem;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.swap-page .swap-panel:focus-within {
+  border-color: rgba(82, 82, 91, 0.85);
+  background: rgba(24, 24, 27, 0.75);
+}
+
+.swap-page .swap-summary {
+  border-radius: 0.75rem;
+  border: 1px solid rgba(39, 39, 42, 0.8);
+  background: rgba(9, 9, 11, 0.45);
+  padding: 0.65rem 0.75rem;
+}
+
+.swap-page .swap-hint {
+  text-align: center;
+  font-size: 0.6875rem;
+  color: #52525b;
+  margin-top: 0.75rem;
+  padding: 0 0.5rem;
+  line-height: 1.45;
+}
+
+.swap-page .swap-empty-banner {
+  margin: 0 1rem 0.5rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 0.75rem;
+  border: 1px dashed rgba(63, 63, 70, 0.85);
+  background: rgba(24, 24, 27, 0.4);
+  font-size: 0.75rem;
+  color: #a1a1aa;
+  line-height: 1.4;
+}
+
+.container .swap-page button.swap-flip-btn,
+.swap-page button.swap-flip-btn {
+  box-shadow: 0 8px 20px -12px rgba(0, 0, 0, 0.9) !important;
+}
+
+/* Advanced accordion shell */
+.swap-page .swap-advanced {
+  margin-top: 1.5rem;
+  border-radius: 1.25rem;
+  border: 1px solid rgba(39, 39, 42, 0.95);
+  background:
+    linear-gradient(180deg, rgba(24, 24, 27, 0.35) 0%, rgba(9, 9, 11, 0.65) 100%);
+  overflow: hidden;
+}
+
+.container .swap-page button.swap-advanced-btn,
+.swap-page button.swap-advanced-btn {
+  gap: 0.75rem !important;
+}
+
+.swap-page .swap-advanced-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 9999px;
+  border: 1px solid rgba(63, 63, 70, 0.8);
+  background: rgba(39, 39, 42, 0.6);
+  color: #a1a1aa;
+  font-size: 0.65rem;
+  transition: transform 0.2s ease, color 0.15s ease, border-color 0.15s ease;
+  flex-shrink: 0;
+}
+
+.swap-page .swap-advanced-chevron.is-open {
+  transform: rotate(90deg);
+  color: #e4e4e7;
+  border-color: rgba(113, 113, 122, 0.7);
+}
+
+.swap-page .swap-adv-section {
+  border-radius: 1rem;
+  border: 1px solid rgba(39, 39, 42, 0.9);
+  background: rgba(9, 9, 11, 0.4);
+  padding: 0.9rem;
+}
+
+.swap-page .swap-adv-section + .swap-adv-section {
+  margin-top: 0.75rem;
+}
+
+.swap-page .swap-adv-label {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: #a1a1aa;
+  margin-bottom: 0.35rem;
+}
+
+.swap-page .swap-adv-hint {
+  font-size: 0.625rem;
+  color: #52525b;
+  margin-top: 0.35rem;
+  line-height: 1.4;
+}
+
+.swap-page .swap-adv-field {
+  margin-bottom: 0.75rem;
+}
+
+.swap-page .swap-adv-field:last-child {
+  margin-bottom: 0;
+}
+
+.swap-page .swap-adv-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #71717a;
+  margin-bottom: 0.75rem;
+}
+
+.swap-page .swap-adv-title-dot {
+  width: 0.35rem;
+  height: 0.35rem;
+  border-radius: 9999px;
+  background: rgba(231, 147, 0, 0.65);
+  box-shadow: 0 0 0 3px rgba(231, 147, 0, 0.12);
+}
+
+.swap-page .swap-adv-tools {
+  margin-top: 0.25rem;
+}
+
+.swap-page .swap-adv-tools .dex-tabs {
+  margin-bottom: 0.85rem;
+  border-radius: 9999px;
+  background: rgba(9, 9, 11, 0.55);
+  border-color: rgba(39, 39, 42, 0.95);
+}
+
+.swap-page .swap-adv-pane {
+  border-radius: 0.9rem;
+  border: 1px solid rgba(39, 39, 42, 0.85);
+  background: rgba(24, 24, 27, 0.35);
+  padding: 0.85rem;
+}
+
+.swap-page .swap-adv-pane p.lead {
+  font-size: 0.75rem;
+  color: #71717a;
+  margin: 0 0 0.75rem;
+  line-height: 1.45;
+}
+
+.swap-page .swap-adv-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.65rem;
+}
+
+.swap-page .swap-input-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+
+.swap-page .swap-input-row .input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Soften form inputs inside advanced for visual consistency */
+.container .swap-page .swap-advanced .input,
+.container .swap-page .swap-advanced input.input {
+  background: rgba(9, 9, 11, 0.65) !important;
+  border-color: rgba(63, 63, 70, 0.75) !important;
+  border-radius: 0.65rem !important;
+  font-size: 0.8125rem !important;
+}
+
+.container .swap-page .swap-advanced .input:focus,
+.container .swap-page .swap-advanced input.input:focus {
+  border-color: rgba(113, 113, 122, 0.85) !important;
+  box-shadow: 0 0 0 3px rgba(63, 63, 70, 0.35) !important;
 }
 
 /* Headings inside the main container */
@@ -476,7 +937,7 @@
     box-sizing: border-box;
   }
 
-  .container button:not(.mobile-hamburger):not(.remove-token-btn):not(.refresh-balance-btn):not(.icon-square-btn):not(.compact-btn):not(.saved-wallet-card):not(.dex-tab-btn):not(.wallet-tab-btn):not(.wallet-nav-btn):not(.wallet-action-btn):not(.network-node-btn):not(.open-orders-group-btn) {
+  .container button:not(.mobile-hamburger):not(.remove-token-btn):not(.refresh-balance-btn):not(.icon-square-btn):not(.compact-btn):not(.saved-wallet-card):not(.dex-tab-btn):not(.wallet-tab-btn):not(.wallet-nav-btn):not(.wallet-action-btn):not(.network-node-btn):not(.open-orders-group-btn):not(.swap-chip-btn):not(.swap-token-btn):not(.swap-flip-btn):not(.swap-cta-btn):not(.swap-advanced-btn):not(.swap-balance-btn):not(.swap-token-row) {
     font-size: 1rem;
     width: 100%;
     margin-right: 0;
@@ -570,7 +1031,7 @@
 
 /* Enhanced touch targets for mobile */
 @media (max-width: 767px) {
-  button:not(.remove-token-btn):not(.refresh-balance-btn):not(.icon-square-btn):not(.compact-btn):not(.saved-wallet-card):not(.dex-tab-btn):not(.wallet-tab-btn):not(.wallet-nav-btn):not(.wallet-action-btn):not(.network-node-btn) {
+  button:not(.remove-token-btn):not(.refresh-balance-btn):not(.icon-square-btn):not(.compact-btn):not(.saved-wallet-card):not(.dex-tab-btn):not(.wallet-tab-btn):not(.wallet-nav-btn):not(.wallet-action-btn):not(.network-node-btn):not(.swap-chip-btn):not(.swap-token-btn):not(.swap-flip-btn):not(.swap-balance-btn):not(.swap-advanced-btn) {
     min-height: 48px;
     touch-action: manipulation;
   }

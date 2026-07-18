@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
 import FormattedNumber from './FormattedNumber.jsx';
@@ -11,7 +11,7 @@ import {
   normalizeAssetHash,
   signAndSubmitTransaction,
 } from '../utils/warthogClient.js';
-import { computePoolSpotPrice } from '../utils/dexPrice.js';
+import { computePoolSpotPrice, formatAssetPrice } from '../utils/dexPrice.js';
 import { DEFAULT_NODE_URL } from '../utils/presetNodes.js';
 import { readPublicSession } from '../utils/sessionWallet.js';
 import {
@@ -20,6 +20,8 @@ import {
   insufficientFreeBalanceMessage,
   isValidAssetHash,
 } from '../utils/warthogFormat.js';
+
+const DEFAULT_MARKET_SLIPPAGE_PCT = 5;
 
 const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const {
@@ -32,10 +34,16 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     dexPoolPrefill,
     setDexPoolPrefill,
     refreshBalance,
+    assetBalances = [],
+    balanceAvailable,
+    balanceLocked,
+    balance,
+    addWatchedAsset,
   } = useWallet();
 
   const selectedNode = propSelectedNode || contextSelectedNode || DEFAULT_NODE_URL;
   const wallet = propWallet || readPublicSession();
+  const account = wallet?.address || '';
 
   const toast = useToast();
   const {
@@ -44,210 +52,116 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     liquidityPoolClasses,
   } = useNumberDisplay();
 
+  // Primary UI: Market | Limit only
+  const [orderMode, setOrderMode] = useState('market'); // market | limit
+  /** true = you pay WART (buy asset); false = you pay asset (sell for WART) */
+  const [payingWart, setPayingWart] = useState(true);
+  const [selectedAsset, setSelectedAsset] = useState(null); // { hash, symbol, name, decimals }
+  const [payAmount, setPayAmount] = useState('');
+  const [limitPrice, setLimitPrice] = useState(''); // WART per 1 asset
+  const [slippagePct, setSlippagePct] = useState(String(DEFAULT_MARKET_SLIPPAGE_PCT));
+  const [txFee, setTxFee] = useState(suggestedTxFee);
+  const [nonceOverride, setNonceOverride] = useState('');
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showTokenPicker, setShowTokenPicker] = useState(false);
+  const [manualHashInput, setManualHashInput] = useState('');
+  const [assetDecimals, setAssetDecimals] = useState(8);
+
+  const [spotPrice, setSpotPrice] = useState(null);
+  const [marketInfo, setMarketInfo] = useState(null);
+  const [marketLoading, setMarketLoading] = useState(false);
+
+  const [paySpendable, setPaySpendable] = useState(null);
+  const [paySpendableLoading, setPaySpendableLoading] = useState(false);
+
   const [results, setResults] = useState({});
   const [loading, setLoading] = useState({});
-  const [activeTab, setActiveTab] = useState('market');
-  const [liquidityMode, setLiquidityMode] = useState('deposit');
-  const [limitOrderMode, setLimitOrderMode] = useState('buy');
-  const [poolAssetHash, setPoolAssetHash] = useState('');
-  const [positionPoolMode, setPositionPoolMode] = useState('deposit');
-  /** Live free/locked snapshot for the limit-order form asset (sell) or WART (buy). */
-  const [limitSpendable, setLimitSpendable] = useState(null);
-  const [limitSpendableLoading, setLimitSpendableLoading] = useState(false);
 
-  const feeFieldKey = `${selectedNode}-${suggestedTxFee}`;
+  // Advanced: liquidity / pool tools (kept for power users)
+  const [advancedSubTab, setAdvancedSubTab] = useState('orders'); // orders | liquidity | pool | market
+  const [liquidityMode, setLiquidityMode] = useState('deposit');
+  const [positionPoolMode, setPositionPoolMode] = useState('deposit');
+  const [poolAssetHash, setPoolAssetHash] = useState('');
+
   const feeHint = nodeMinFeeStr
     ? `Node minimum: ${nodeMinFeeStr} WART. Suggested: ${suggestedTxFee} WART.`
     : `Suggested: ${suggestedTxFee} WART.`;
 
-  const readFormFee = (elementId) => {
-    const raw = document.getElementById(elementId)?.value?.trim().replace(',', '.');
-    return raw || suggestedTxFee;
-  };
+  useEffect(() => {
+    setTxFee(suggestedTxFee);
+  }, [suggestedTxFee]);
 
   useEffect(() => {
-    if (activeTab === 'limit') {
-      import('../utils/encodeLimitPrice.js').catch(() => {});
-    }
-  }, [activeTab]);
+    import('../utils/encodeLimitPrice.js').catch(() => {});
+  }, []);
 
-  const readLimitAssetHash = () => {
-    const raw = document.getElementById('limitAssetHash')?.value?.trim() || '';
-    if (!raw) return '';
-    try {
-      return normalizeAssetHash(raw);
-    } catch {
-      return raw.replace(/^0x/i, '').toLowerCase();
-    }
-  };
+  // Token list from watched balances
+  const tokenOptions = useMemo(() => {
+    return (assetBalances || []).map((a) => ({
+      hash: (a.hash || '').toLowerCase().replace(/^0x/i, ''),
+      symbol: a.name || a.customName || 'TOKEN',
+      name: a.customName || a.name || 'Asset',
+      decimals: a.decimals ?? 8,
+      available: a.available ?? a.balance ?? '0',
+      locked: a.locked ?? '0',
+      total: a.total ?? a.balance ?? '0',
+    })).filter((t) => t.hash && t.hash.length === 64);
+  }, [assetBalances]);
 
-  /**
-   * Load free/locked balance for the current limit-order side.
-   * Sell → asset free balance; Buy → WART free balance.
-   */
-  const refreshLimitSpendable = useCallback(async ({ silent = false } = {}) => {
-    const account = wallet?.address;
-    if (!account || !selectedNode) {
-      setLimitSpendable(null);
-      return null;
-    }
-
-    const isBuy = limitOrderMode === 'buy';
-    if (!isBuy) {
-      const hash = readLimitAssetHash();
-      if (!isValidAssetHash(hash)) {
-        setLimitSpendable(null);
-        return null;
-      }
-    }
-
-    if (!silent) setLimitSpendableLoading(true);
-    try {
-      const api = await createWarthogApi(selectedNode);
-      if (isBuy) {
-        const res = await api.getAccountWartBalance(account);
-        if (!res.success) throw new Error(res.error || 'Failed to fetch WART balance');
-        const breakdown = await formatBalanceBreakdown(res.data?.wart, { kind: 'wart' });
-        const info = {
-          side: 'buy',
-          unit: 'WART',
-          name: 'WART',
-          decimals: 8,
-          available: breakdown.available,
-          locked: breakdown.locked,
-          total: breakdown.total,
-          hasLocked: breakdown.hasLocked,
-        };
-        setLimitSpendable(info);
-        return info;
-      }
-
-      const hash = readLimitAssetHash();
-      const res = await api.getAccountAssetBalance(account, hash);
-      if (!res.success) throw new Error(res.error || 'Failed to fetch asset balance');
-      const tokenInfo = res.data?.token || {};
-      const decimals = tokenInfo.decimals ?? res.data?.balance?.total?.decimals ?? 8;
-      const breakdown = await formatBalanceBreakdown(res.data?.balance, {
-        kind: 'token',
-        decimals,
-      });
-      const info = {
-        side: 'sell',
-        unit: tokenInfo.name || 'asset',
-        name: tokenInfo.name || 'Asset',
-        decimals,
-        assetHash: hash,
-        available: breakdown.available,
-        locked: breakdown.locked,
-        total: breakdown.total,
-        hasLocked: breakdown.hasLocked,
-      };
-      setLimitSpendable(info);
-      // Align price-encoder decimals with on-chain token decimals when empty/default
-      const decInput = document.getElementById('limitPriceDecimals');
-      if (decInput && (!decInput.value || decInput.value === '8')) {
-        decInput.value = String(decimals);
-      }
-      return info;
-    } catch (err) {
-      if (!silent) {
-        toast.error(err.message || 'Could not load spendable balance');
-      }
-      setLimitSpendable(null);
-      return null;
-    } finally {
-      if (!silent) setLimitSpendableLoading(false);
-    }
-  }, [wallet?.address, selectedNode, limitOrderMode, toast]);
-
-  // Refresh spendable when entering limit tab / switching buy↔sell
+  // Prefill from Overview "Manage in DEX"
   useEffect(() => {
-    if (activeTab !== 'limit') return undefined;
-    const t = setTimeout(() => {
-      refreshLimitSpendable({ silent: true });
-    }, 50);
-    return () => clearTimeout(t);
-  }, [activeTab, limitOrderMode, refreshLimitSpendable]);
+    if (!dexPoolPrefill?.hash) return;
+    const hash = dexPoolPrefill.hash.toLowerCase().replace(/^0x/i, '');
+    const match = tokenOptions.find((t) => t.hash === hash);
+    setSelectedAsset(match || {
+      hash,
+      symbol: dexPoolPrefill.name || 'TOKEN',
+      name: dexPoolPrefill.name || 'Asset',
+      decimals: 8,
+    });
+    setPoolAssetHash(hash);
+    setManualHashInput(hash);
+    setShowAdvanced(true);
+    setAdvancedSubTab('pool');
+    setDexPoolPrefill(null);
+    // load pool after state settles
+    setTimeout(() => loadPoolAndPosition(hash), 0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dexPoolPrefill, setDexPoolPrefill]);
 
-  const fillLimitAmountFromAvailable = async () => {
-    const info = limitSpendable || (await refreshLimitSpendable());
-    if (!info) {
-      toast.error(
-        limitOrderMode === 'sell'
-          ? 'Enter a valid asset hash first, then load available balance'
-          : 'Could not load available WART balance',
-      );
-      return;
+  // Auto-select first tracked asset if none chosen
+  useEffect(() => {
+    if (!selectedAsset && tokenOptions.length > 0) {
+      setSelectedAsset(tokenOptions[0]);
+      setAssetDecimals(tokenOptions[0].decimals ?? 8);
+      setManualHashInput(tokenOptions[0].hash);
     }
-    const amountInput = document.getElementById('limitAmount');
-    if (amountInput) {
-      amountInput.value = info.available;
-    }
-    toast.success(`Filled available: ${info.available} ${info.unit}`);
+  }, [tokenOptions, selectedAsset]);
+
+  const assetHash = selectedAsset?.hash || '';
+
+  // ==================== NONCE ====================
+  const getSmartNonce = () => {
+    if (!wallet?.address) return contextNextNonce ?? 0;
+    const stored = localStorage.getItem(`warthogNextNonce_${wallet.address}`);
+    const persistentNonce = stored ? Number(stored) : 0;
+    return Math.max(persistentNonce, contextNextNonce ?? 0, 0);
   };
 
-  const renderLimitSpendableCard = () => {
-    const isBuy = limitOrderMode === 'buy';
-    const border = isBuy ? 'border-emerald-800/80' : 'border-rose-800/80';
-    const muted = isBuy ? 'text-emerald-300/80' : 'text-rose-300/80';
-
-    if (limitSpendableLoading && !limitSpendable) {
-      return (
-        <div className={`mb-4 p-3 rounded-xl border bg-black/30 ${border} text-xs text-zinc-400`}>
-          Loading available balance…
-        </div>
-      );
-    }
-
-    if (!limitSpendable) {
-      if (!isBuy) {
-        return (
-          <div className={`mb-4 p-3 rounded-xl border bg-black/30 ${border} text-xs text-zinc-500`}>
-            Enter asset hash and click <span className={muted}>Check balance</span> to see free vs locked tokens.
-          </div>
-        );
-      }
-      return null;
-    }
-
-    return (
-      <div className={`mb-4 p-3 rounded-xl border bg-black/40 ${border} text-xs space-y-1.5`}>
-        <div className="flex items-center justify-between gap-2">
-          <span className={`font-medium ${muted}`}>
-            {limitSpendable.name} spendable
-          </span>
-          <button
-            type="button"
-            onClick={() => refreshLimitSpendable()}
-            disabled={limitSpendableLoading}
-            className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-2 !py-0.5 text-[10px]"
-          >
-            {limitSpendableLoading ? '…' : 'Refresh'}
-          </button>
-        </div>
-        <div className="flex flex-wrap gap-x-4 gap-y-1 tabular-nums text-white">
-          <span>
-            <span className="text-zinc-500">Available </span>
-            <FormattedNumber value={limitSpendable.available} variant="balance" />
-            <span className="text-zinc-500 ml-1">{limitSpendable.unit}</span>
-          </span>
-          <span className="text-amber-300/90">
-            <span className="text-zinc-500">Locked </span>
-            <FormattedNumber value={limitSpendable.locked} variant="balance" />
-          </span>
-          <span className="text-zinc-400">
-            <span className="text-zinc-500">Total </span>
-            <FormattedNumber value={limitSpendable.total} variant="balance" />
-          </span>
-        </div>
-        {limitSpendable.hasLocked && (
-          <p className="text-[10px] text-amber-400/80">
-            Locked tokens are held by open limit orders until they fill or you cancel them.
-          </p>
-        )}
-      </div>
-    );
+  const updateNonceAfterSuccess = (usedNonce) => {
+    if (!wallet?.address) return;
+    const newNonce = Math.max(getSmartNonce(), usedNonce + 1);
+    localStorage.setItem(`warthogNextNonce_${wallet.address}`, newNonce);
   };
+
+  const isNodeSuccess = (result) => {
+    if (!result || result.error) return false;
+    if (result.code !== undefined && result.code !== 0) return false;
+    return true;
+  };
+
+  const getNodeError = (result) =>
+    result?.error || result?.message || (result?.code != null ? `Node error (code ${result.code})` : null);
 
   // ==================== SAFE RENDER HELPERS ====================
   const safeStr = (v, fallback = '0') => {
@@ -264,7 +178,6 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       if (v.str != null && String(v.str).trim() !== '') return String(v.str);
       if (v.E8 !== undefined) return (Number(v.E8) / 100000000).toFixed(8);
       if (v.u64 !== undefined) {
-        // Fixed-point amount — apply decimals (default 8). Never show raw u64.
         const decimals = Number.isFinite(Number(v.decimals))
           ? Math.min(18, Math.max(0, Number(v.decimals)))
           : 8;
@@ -285,40 +198,8 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     return fallback;
   };
 
-  const safeRender = (v, fallback = '') => {
-    if (v == null) return fallback;
-    if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return v;
-    return fallback;
-  };
-
-  // ==================== SMART NONCE HANDLING ====================
-  const getSmartNonce = () => {
-    if (!wallet?.address) return contextNextNonce ?? 0;
-
-    const stored = localStorage.getItem(`warthogNextNonce_${wallet.address}`);
-    const persistentNonce = stored ? Number(stored) : 0;
-
-    return Math.max(persistentNonce, contextNextNonce ?? 0, 0);
-  };
-
-  const updateNonceAfterSuccess = (usedNonce) => {
-    if (!wallet?.address) return;
-
-    const newNonce = Math.max(getSmartNonce(), usedNonce + 1);
-    localStorage.setItem(`warthogNextNonce_${wallet.address}`, newNonce);
-  };
-
-  const isNodeSuccess = (result) => {
-    if (!result || result.error) return false;
-    if (result.code !== undefined && result.code !== 0) return false;
-    return true;
-  };
-
-  const getNodeError = (result) =>
-    result?.error || result?.message || (result?.code != null ? `Node error (code ${result.code})` : null);
-
   const query = async (key, path, method = 'GET', data = null) => {
-    setLoading(prev => ({ ...prev, [key]: true }));
+    setLoading((prev) => ({ ...prev, [key]: true }));
     try {
       const api = await createWarthogApi(selectedNode);
       let result;
@@ -330,20 +211,16 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       } else {
         result = await getNodeData(api, path);
       }
-      setResults(prev => ({ ...prev, [key]: result }));
+      setResults((prev) => ({ ...prev, [key]: result }));
       return result;
     } catch (err) {
-      const errorMsg = err.message;
-      setResults(prev => ({ ...prev, [key]: { error: errorMsg } }));
+      setResults((prev) => ({ ...prev, [key]: { error: err.message } }));
       throw err;
     } finally {
-      setLoading(prev => ({ ...prev, [key]: false }));
+      setLoading((prev) => ({ ...prev, [key]: false }));
     }
   };
 
-  const account = wallet?.address || '';
-
-  // ==================== COPY TO CLIPBOARD ====================
   const copyToClipboard = (text) => {
     if (!text) return;
     navigator.clipboard.writeText(text).then(() => {
@@ -351,527 +228,343 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     }).catch(() => {});
   };
 
-  // ==================== TRANSACTION RESULT CARD ====================
-  const renderTransactionResult = (result, type) => {
-    if (!result) return null;
-
-    const isSuccess = isNodeSuccess(result);
-    const txHash = result.data?.txHash || result.txHash || result.data?.hash || null;
-
-    return (
-      <div className={`mt-6 rounded-2xl border p-5 ${isSuccess ? 'bg-emerald-950/40 border-emerald-700' : 'bg-red-950/40 border-red-700'}`}>
-        <div className="flex items-center gap-3 mb-3">
-          <div className={`w-8 h-8 rounded-full flex items-center justify-center text-lg ${isSuccess ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white'}`}>
-            {isSuccess ? '✓' : '!'}
-          </div>
-          <div>
-            <div className={`font-semibold text-lg ${isSuccess ? 'text-emerald-400' : 'text-red-400'}`}>
-              {isSuccess ? `${type} Submitted Successfully` : `${type} Failed`}
-            </div>
-            <div className="text-xs text-zinc-400">
-              {isSuccess
-                ? 'Transaction sent to node • Check History tab for confirmation'
-                : (getNodeError(result) || 'The node rejected this transaction')}
-            </div>
-          </div>
-        </div>
-
-        {txHash && (
-          <div className="mt-3 p-3 bg-zinc-950 rounded-xl border border-zinc-700">
-            <div className="text-xs text-zinc-400 mb-1">Transaction Hash</div>
-            <div 
-              onClick={() => copyToClipboard(txHash)}
-              className="font-mono text-sm text-emerald-400 break-all cursor-pointer hover:text-emerald-300"
-            >
-              {txHash}
-            </div>
-          </div>
-        )}
-
-        {result.error && (
-          <div className="mt-3 text-sm text-red-400">
-            {result.error}
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  // ==================== STYLIZED POOL / MARKET CARD ====================
-  const renderPoolMarketCard = (result) => {
+  // ==================== MARKET + BALANCE ====================
+  const loadMarket = useCallback(async (hash) => {
+    if (!hash || !isValidAssetHash(hash)) {
+      setSpotPrice(null);
+      setMarketInfo(null);
+      return null;
+    }
+    setMarketLoading(true);
     try {
-      if (!result || result.code !== 0 || !result.data) {
-        return (
-          <div className="mt-4 p-4 bg-zinc-950 border border-zinc-700 rounded-2xl text-sm text-zinc-400">
-            No pool/market data available.
-          </div>
-        );
+      const api = await createWarthogApi(selectedNode);
+      const result = await getNodeData(api, `dex/market/${encodeURIComponent(hash)}`);
+      if (result?.code === 0 && result.data) {
+        const spot = computePoolSpotPrice(result.data);
+        const asset = result.data.baseAsset || result.data.asset || {};
+        const decimals = asset.decimals ?? 8;
+        setSpotPrice(spot);
+        setMarketInfo(result.data);
+        setAssetDecimals(decimals);
+        if (asset.name) {
+          setSelectedAsset((prev) => (prev && prev.hash === hash
+            ? { ...prev, symbol: asset.name, name: asset.name, decimals }
+            : prev));
+        }
+        return { spot, data: result.data, decimals };
+      }
+      setSpotPrice(null);
+      setMarketInfo(null);
+      return null;
+    } catch {
+      setSpotPrice(null);
+      setMarketInfo(null);
+      return null;
+    } finally {
+      setMarketLoading(false);
+    }
+  }, [selectedNode]);
+
+  useEffect(() => {
+    if (assetHash) loadMarket(assetHash);
+  }, [assetHash, loadMarket]);
+
+  const refreshPaySpendable = useCallback(async ({ silent = false } = {}) => {
+    if (!account || !selectedNode) {
+      setPaySpendable(null);
+      return null;
+    }
+
+    if (!silent) setPaySpendableLoading(true);
+    try {
+      const api = await createWarthogApi(selectedNode);
+
+      if (payingWart) {
+        const res = await api.getAccountWartBalance(account);
+        if (!res.success) throw new Error(res.error || 'Failed to fetch WART balance');
+        const breakdown = await formatBalanceBreakdown(res.data?.wart, { kind: 'wart' });
+        const info = {
+          side: 'buy',
+          unit: 'WART',
+          name: 'WART',
+          decimals: 8,
+          available: breakdown.available,
+          locked: breakdown.locked,
+          total: breakdown.total,
+          hasLocked: breakdown.hasLocked,
+        };
+        setPaySpendable(info);
+        return info;
       }
 
-      const d = result.data;
-      const asset = d.asset || d.baseAsset || d.market?.asset || {};
-      const liquidity = d.liquidityPool || d.liquidity || d.reserves || d.poolReserves || d.pool || {};
-      
-      const wartReserve = liquidity.wart || liquidity.WART || '0';
-      const assetReserve = liquidity.asset || liquidity[asset.name] || liquidity.assetE8 || '0';
-
-      const spotPrice = computePoolSpotPrice(d);
-      const priceRaw = d.price || d.spotPrice || d.doubleAdjustedPrice || d.marketPrice;
-      const priceDisplayValue = spotPrice ?? (
-        priceRaw != null
-          ? (typeof priceRaw === 'object' && priceRaw.doubleAdjusted != null
-            ? priceRaw.doubleAdjusted
-            : priceRaw)
-          : null
-      );
-      
-      return (
-        <div className={`mt-6 bg-zinc-950 border rounded-3xl overflow-hidden shadow-xl ${liquidityPoolClasses.borderPanel}`}>
-          <div className="px-6 py-5 bg-zinc-900 flex items-center justify-between border-b border-zinc-800">
-            <div className="flex items-center gap-4">
-              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-white text-3xl font-bold shadow-inner ring-1 ring-white/20 ${liquidityPoolClasses.bgSolid}`}>
-                {asset.name?.[0] || 'P'}
-              </div>
-              <div>
-                <div className="text-3xl font-semibold tracking-[-1.5px] text-white">
-                  {asset.name} <span className={liquidityPoolClasses.textFaint}>/ WART</span>
-                </div>
-                <div className="font-mono text-[10px] text-zinc-500 -mt-1">
-                  POOL • {asset.decimals || 8} decimals • Asset ID {asset.id || '—'}
-                </div>
-              </div>
-            </div>
-            
-            {asset.hash && (
-              <div 
-                onClick={() => copyToClipboard(asset.hash)}
-                className="text-right cursor-pointer group"
-              >
-                <div className={`font-mono text-xs text-zinc-400 transition-colors ${liquidityPoolClasses.groupHoverText}`}>
-                  {asset.hash.slice(0, 10)}…{asset.hash.slice(-8)}
-                </div>
-                <div className={`text-[10px] ${liquidityPoolClasses.textMuted} ${liquidityPoolClasses.groupHoverText}`}>Copy Asset Hash</div>
-              </div>
-            )}
-          </div>
-
-          <div className="p-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-              <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-3">
-                <div className={`flex items-center gap-1.5 text-[9px] uppercase tracking-[1px] mb-0.5 ${liquidityPoolClasses.text}`}>
-                  <div className={`w-1 h-1 rounded-full ${liquidityPoolClasses.bgSolid}`}></div>
-                  WART RESERVE
-                </div>
-                <FormattedNumber
-                  value={wartReserve}
-                  variant="balance"
-                  className="text-2xl sm:text-3xl md:text-[26px] leading-none font-semibold tracking-[-1.5px]"
-                />
-                <div className="text-[10px] text-zinc-500 mt-0.5">WART</div>
-              </div>
-
-              <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-3">
-                <div className={`flex items-center gap-1.5 text-[9px] uppercase tracking-[1px] mb-0.5 ${liquidityPoolClasses.text}`}>
-                  <div className={`w-1 h-1 rounded-full ${liquidityPoolClasses.bgSolid}`}></div>
-                  {asset.name || 'ASSET'} RESERVE
-                </div>
-                <FormattedNumber
-                  value={assetReserve}
-                  variant="balance"
-                  className="text-2xl sm:text-3xl md:text-[26px] leading-none font-semibold tracking-[-1.5px]"
-                />
-                <div className="text-[10px] text-zinc-500 mt-0.5">{asset.name || 'Asset'}</div>
-              </div>
-
-              <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-3 flex flex-col">
-                <div className="flex items-center gap-1.5 text-[9px] uppercase tracking-[1px] text-violet-400 mb-0.5">
-                  <div className="w-1 h-1 rounded-full bg-violet-400"></div>
-                  SPOT PRICE
-                </div>
-                <FormattedNumber
-                  value={priceDisplayValue}
-                  overrides={{ maxDecimals: 8 }}
-                  className="text-2xl sm:text-3xl md:text-[26px] leading-none font-semibold tracking-[-1.5px] mt-auto block"
-                />
-                <div className="text-[10px] text-zinc-500 mt-0.5">WART per {asset.name || 'asset'}</div>
-              </div>
-            </div>
-
-            <div className="mt-3 flex flex-wrap gap-x-6 gap-y-0.5 px-1 text-sm">
-              {liquidity.shares && (
-                <div>
-                  <span className={liquidityPoolClasses.text}>Shares:</span>{" "}
-                  <FormattedNumber value={liquidity.shares} variant="balance" />
-                </div>
-              )}
-              <div>
-                <span className={limitOrderBuyClasses.text}>Buy orders:</span>{" "}
-                <span className="font-mono text-white">{d.wartToAssetSwaps?.length || 0}</span>
-              </div>
-              <div>
-                <span className={limitOrderSellClasses.text}>Sell orders:</span>{" "}
-                <span className="font-mono text-white">{d.assetToWartSwaps?.length || 0}</span>
-              </div>
-            </div>
-
-            {(d.wartToAssetSwaps?.length > 0 || d.assetToWartSwaps?.length > 0) && (
-              <details className="mt-3 group">
-                <summary className={`cursor-pointer text-sm flex items-center gap-2 px-1 select-none ${limitOrderBuyClasses.text}`}>
-                  <span className="group-open:rotate-90 inline-block transition">▶</span>
-                  View open orders ({(d.wartToAssetSwaps?.length || 0) + (d.assetToWartSwaps?.length || 0)})
-                </summary>
-                <div className="mt-2 space-y-2 text-xs">
-                  {d.wartToAssetSwaps?.length > 0 && (
-                    <div>
-                      <div className={`mb-1 px-1 ${limitOrderBuyClasses.text}`}>Buy (WART → {asset.name})</div>
-                      {d.wartToAssetSwaps.map((order, idx) => (
-                        <div key={idx} className="limit-order-card bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 flex items-center justify-between font-mono">
-                          <span>
-                            Limit <FormattedNumber value={order.limit?.doubleAdjusted || order.limit} overrides={{ maxDecimals: 8 }} /> •{' '}
-                            <FormattedNumber value={order.amount?.str || order.amount || '0'} variant="balance" /> (filled{' '}
-                            <FormattedNumber value={order.filled?.str || order.filled || '0'} variant="balance" />)
-                          </span>
-                          <span onClick={() => copyToClipboard(order.txHash)} className="text-purple-400 hover:text-purple-300 cursor-pointer text-[10px]">
-                            {order.txHash?.slice(0, 8)}…{order.txHash?.slice(-6)}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {d.assetToWartSwaps?.length > 0 && (
-                    <div>
-                      <div className={`mb-1 px-1 ${limitOrderSellClasses.text}`}>Sell ({asset.name} → WART)</div>
-                      {d.assetToWartSwaps.map((order, idx) => (
-                        <div key={idx} className="limit-order-card bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 flex items-center justify-between font-mono">
-                          <span>
-                            Limit <FormattedNumber value={order.limit?.doubleAdjusted || order.limit} overrides={{ maxDecimals: 8 }} /> •{' '}
-                            <FormattedNumber value={order.amount?.str || order.amount || '0'} variant="balance" /> (filled{' '}
-                            <FormattedNumber value={order.filled?.str || order.filled || '0'} variant="balance" />)
-                          </span>
-                          <span onClick={() => copyToClipboard(order.txHash)} className="text-purple-400 hover:text-purple-300 cursor-pointer text-[10px]">
-                            {order.txHash?.slice(0, 8)}…{order.txHash?.slice(-6)}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </details>
-            )}
-
-            <details className="mt-6 group">
-              <summary className="cursor-pointer text-xs text-zinc-500 hover:text-zinc-400 flex items-center gap-1.5 select-none">
-                <span className="group-open:rotate-90 inline-block transition">▶</span> 
-                Show full JSON response
-              </summary>
-              <pre className="mt-3 text-[10px] bg-black/60 p-4 rounded-xl overflow-auto max-h-80 text-zinc-400 border border-zinc-800">
-                {JSON.stringify(result, null, 2)}
-              </pre>
-            </details>
-          </div>
-        </div>
-      );
-    } catch (renderErr) {
-      console.warn('renderPoolMarketCard failed to render safely:', renderErr);
-      return (
-        <div className="mt-4 p-4 bg-red-950/40 border border-red-700 rounded-2xl text-sm">
-          <div className="text-red-400 font-medium mb-2">Could not render pool data (unexpected response shape)</div>
-          <pre className="text-[10px] bg-black/60 p-3 rounded-xl overflow-auto max-h-80 text-red-300/80 border border-red-900">
-            {JSON.stringify(result, null, 2)}
-          </pre>
-        </div>
-      );
-    }
-  };
-
-  // ==================== LP SHARES BALANCE CARD ====================
-  const renderLiquiditySharesCard = (result) => {
-    try {
-      if (!result || result.code !== 0 || !result.data) {
+      if (!isValidAssetHash(assetHash)) {
+        setPaySpendable(null);
         return null;
       }
 
-      const balData = result.data || {};
-      const assetInfo = balData.token || balData.asset || {};
-      const balanceInfo = balData.balance?.total || balData.balance || balData;
-      const assetName = assetInfo.name || 'Pool';
+      const res = await api.getAccountAssetBalance(account, assetHash);
+      if (!res.success) throw new Error(res.error || 'Failed to fetch asset balance');
+      const tokenInfo = res.data?.token || {};
+      const decimals = tokenInfo.decimals ?? res.data?.balance?.total?.decimals ?? assetDecimals ?? 8;
+      const breakdown = await formatBalanceBreakdown(res.data?.balance, {
+        kind: 'token',
+        decimals,
+      });
+      const info = {
+        side: 'sell',
+        unit: tokenInfo.name || selectedAsset?.symbol || 'asset',
+        name: tokenInfo.name || selectedAsset?.name || 'Asset',
+        decimals,
+        assetHash,
+        available: breakdown.available,
+        locked: breakdown.locked,
+        total: breakdown.total,
+        hasLocked: breakdown.hasLocked,
+      };
+      setPaySpendable(info);
+      setAssetDecimals(decimals);
+      return info;
+    } catch (err) {
+      if (!silent) toast.error(err.message || 'Could not load spendable balance');
+      setPaySpendable(null);
+      return null;
+    } finally {
+      if (!silent) setPaySpendableLoading(false);
+    }
+  }, [account, selectedNode, payingWart, assetHash, assetDecimals, selectedAsset, toast]);
 
-      return (
-        <div className={`mt-6 border rounded-3xl p-6 ${liquidityPoolClasses.bgPanel} ${liquidityPoolClasses.border}`}>
-          <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between mb-4 gap-1 sm:gap-4">
-            <div className="min-w-0 flex-1">
-              <div className={`text-xs tracking-[2px] font-medium ${liquidityPoolClasses.text}`}>YOUR LP SHARES</div>
-              <FormattedNumber
-                value={balanceInfo}
-                variant="balance"
-                className="text-4xl sm:text-5xl font-semibold tracking-[-1.5px] mt-1 break-all sm:break-normal block"
-              />
-            </div>
-            <div className="text-left sm:text-right mt-0.5 sm:mt-0 flex-shrink-0">
-              <div className={`text-xs ${liquidityPoolClasses.textMuted}`}>Redeemable in</div>
-              <div className="font-semibold text-lg text-white">{assetName} pool</div>
-            </div>
-          </div>
-          <div className={`text-[10px] border-t pt-3 ${liquidityPoolClasses.textMuted} ${liquidityPoolClasses.borderMuted}`}>
-            LP shares represent your pool ownership. Withdraw below to receive underlying asset + WART.
-          </div>
-        </div>
-      );
-    } catch (renderErr) {
-      console.warn('renderLiquiditySharesCard failed:', renderErr);
+  useEffect(() => {
+    const t = setTimeout(() => refreshPaySpendable({ silent: true }), 50);
+    return () => clearTimeout(t);
+  }, [refreshPaySpendable]);
+
+  // Fallback spendable from context when live fetch not ready
+  const displayPayAvailable = useMemo(() => {
+    if (paySpendable) return paySpendable;
+    if (payingWart) {
+      return {
+        available: balanceAvailable ?? balance ?? '0',
+        locked: balanceLocked ?? '0',
+        total: balance ?? balanceAvailable ?? '0',
+        unit: 'WART',
+        hasLocked: parseFloat(balanceLocked || '0') > 0,
+      };
+    }
+    const match = tokenOptions.find((t) => t.hash === assetHash);
+    if (match) {
+      return {
+        available: match.available,
+        locked: match.locked,
+        total: match.total,
+        unit: match.symbol,
+        hasLocked: parseFloat(match.locked || '0') > 0,
+      };
+    }
+    return null;
+  }, [paySpendable, payingWart, balanceAvailable, balanceLocked, balance, tokenOptions, assetHash]);
+
+  // ==================== PRICE / ESTIMATE ====================
+  const effectiveLimitPrice = useMemo(() => {
+    if (orderMode === 'limit') {
+      const p = parseFloat(String(limitPrice).replace(',', '.'));
+      return Number.isFinite(p) && p > 0 ? p : null;
+    }
+    // Market: spot adjusted by slippage
+    if (spotPrice == null || spotPrice <= 0) return null;
+    const slip = Math.max(0, Math.min(50, parseFloat(slippagePct) || DEFAULT_MARKET_SLIPPAGE_PCT)) / 100;
+    // Buy: willing to pay more → higher limit. Sell: willing to accept less → lower limit.
+    return payingWart ? spotPrice * (1 + slip) : spotPrice * (1 - slip);
+  }, [orderMode, limitPrice, spotPrice, slippagePct, payingWart]);
+
+  const receiveEstimate = useMemo(() => {
+    const amt = parseFloat(String(payAmount).replace(',', '.'));
+    if (!Number.isFinite(amt) || amt <= 0 || effectiveLimitPrice == null || effectiveLimitPrice <= 0) {
       return null;
     }
+    // Buy: pay WART → receive ~ amount / price asset
+    // Sell: pay asset → receive ~ amount * price WART
+    if (payingWart) return amt / effectiveLimitPrice;
+    return amt * effectiveLimitPrice;
+  }, [payAmount, effectiveLimitPrice, payingWart]);
+
+  // ==================== ACTIONS ====================
+  const fillMax = async () => {
+    const info = paySpendable || (await refreshPaySpendable());
+    if (!info) {
+      toast.error(payingWart ? 'Could not load available WART' : 'Select an asset and load balance first');
+      return;
+    }
+    setPayAmount(info.available);
+    toast.success(`Filled available: ${info.available} ${info.unit}`);
   };
 
-  // ==================== MY ASSET BALANCE CARD (pool position tab) ====================
-  const renderPositionCard = (result) => {
+  const flipDirection = () => {
+    setPayingWart((v) => !v);
+    setPayAmount('');
+  };
+
+  const selectToken = (token) => {
+    setSelectedAsset(token);
+    setAssetDecimals(token.decimals ?? 8);
+    setManualHashInput(token.hash);
+    setShowTokenPicker(false);
+    setPoolAssetHash(token.hash);
+  };
+
+  const applyManualHash = () => {
+    let hash = manualHashInput.trim().replace(/^0x/i, '').toLowerCase();
+    if (!isValidAssetHash(hash)) {
+      toast.error('Asset hash must be 64 hex characters');
+      return;
+    }
+    const match = tokenOptions.find((t) => t.hash === hash);
+    const token = match || {
+      hash,
+      symbol: hash.slice(0, 4).toUpperCase(),
+      name: 'Asset',
+      decimals: assetDecimals || 8,
+    };
+    setSelectedAsset(token);
+    setPoolAssetHash(hash);
+    addWatchedAsset?.(hash, token.name !== 'Asset' ? token.name : '');
+    toast.success('Asset selected');
+  };
+
+  const handleSwap = async () => {
+    if (!assetHash || !isValidAssetHash(assetHash)) {
+      toast.error('Select a token to swap');
+      return;
+    }
+    const amountStr = String(payAmount).trim().replace(',', '.');
+    if (!amountStr || parseFloat(amountStr) <= 0) {
+      toast.error('Enter an amount');
+      return;
+    }
+    if (!isSigningUnlocked) {
+      toast.error(isSessionLocked ? 'Unlock your wallet to swap' : 'Wallet not loaded. Please log in again.');
+      return;
+    }
+
+    let priceForEncode = effectiveLimitPrice;
+    if (orderMode === 'limit') {
+      const p = parseFloat(String(limitPrice).replace(',', '.'));
+      if (!Number.isFinite(p) || p <= 0) {
+        toast.error('Enter a valid limit price (WART per token)');
+        return;
+      }
+      priceForEncode = p;
+    } else if (priceForEncode == null) {
+      // Try refresh market once
+      const m = await loadMarket(assetHash);
+      if (!m?.spot) {
+        toast.error('No pool spot price — cannot place a market order. Try Limit instead.');
+        return;
+      }
+      const slip = Math.max(0, Math.min(50, parseFloat(slippagePct) || DEFAULT_MARKET_SLIPPAGE_PCT)) / 100;
+      priceForEncode = payingWart ? m.spot * (1 + slip) : m.spot * (1 - slip);
+    }
+
+    setLoading((prev) => ({ ...prev, swap: true }));
+    setResults((prev) => ({ ...prev, swap: null }));
+
     try {
-      if (!result || result.code !== 0 || !result.data) {
-        return (
-          <div className="mt-4 p-4 bg-zinc-950 border border-zinc-700 rounded-2xl text-sm text-zinc-400">
-            No position data. Deposit liquidity first, then refresh.
-          </div>
-        );
+      const spendable = await refreshPaySpendable({ silent: true });
+      let decimalsStr = String(assetDecimals || 8);
+      if (spendable) {
+        if (!payingWart && spendable.decimals != null) {
+          decimalsStr = String(spendable.decimals);
+        }
+        if (amountExceedsAvailable(amountStr, spendable.available)) {
+          const msg = insufficientFreeBalanceMessage({
+            available: spendable.available,
+            locked: spendable.locked,
+            unit: spendable.unit,
+          });
+          setPayAmount(spendable.available);
+          setResults((prev) => ({ ...prev, swap: formatSubmitError(msg) }));
+          toast.error(msg);
+          return;
+        }
       }
 
-      const balData = result.data || {};
-      const assetInfo = balData.asset || balData.token || {};
-      const bal = balData.balance || {};
-      const totalObj = bal.total || bal;
-      const lockedObj = bal.locked;
-      const totalStr = safeStr(totalObj);
-      const lockedStr = lockedObj ? safeStr(lockedObj) : '0';
-      const lockedNum = parseFloat(lockedStr) || 0;
-      let availableStr = totalStr;
+      const { encodeLimitPriceHex } = await import('../utils/encodeLimitPrice.js');
+      let limitHex;
       try {
-        const t = BigInt(totalObj?.u64 ?? totalObj?.E8 ?? 0);
-        const l = BigInt(lockedObj?.u64 ?? lockedObj?.E8 ?? 0);
-        const m = BigInt(bal.mempool?.u64 ?? bal.mempool?.E8 ?? 0);
-        let free = t - l - m;
-        if (free < 0n) free = 0n;
-        const dec = Number(totalObj?.decimals ?? assetInfo.decimals ?? 8);
-        availableStr = safeStr({ u64: free.toString(), decimals: dec });
+        limitHex = await encodeLimitPriceHex(String(priceForEncode), decimalsStr, {
+          ceil: payingWart, // buy rounds up (more aggressive)
+        });
       } catch {
-        availableStr = totalStr;
+        limitHex = await encodeLimitPriceHex(String(priceForEncode), decimalsStr, {
+          ceil: true,
+        });
       }
 
-      const assetName = assetInfo.name || balData.asset?.name || 'Asset';
+      let nonceId = getSmartNonce();
+      if (nonceOverride.trim() !== '') {
+        const parsed = parseInt(nonceOverride, 10);
+        if (!Number.isNaN(parsed)) nonceId = parsed;
+      }
 
-      return (
-        <div className={`mt-6 border rounded-3xl p-6 ${liquidityPoolClasses.bgPanel} ${liquidityPoolClasses.border}`}>
-          <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between mb-4 gap-1 sm:gap-4">
-            <div className="min-w-0 flex-1">
-              <div className={`text-xs tracking-[2px] font-medium ${liquidityPoolClasses.text}`}>
-                {lockedNum > 0 ? 'AVAILABLE TOKEN BALANCE' : 'YOUR TOKEN BALANCE'}
-              </div>
-              <FormattedNumber
-                value={availableStr}
-                variant="balance"
-                className="text-4xl sm:text-5xl font-semibold tracking-[-1.5px] mt-1 break-all sm:break-normal block"
-              />
-              {lockedNum > 0 && (
-                <div className={`mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs tabular-nums ${liquidityPoolClasses.textMuted}`}>
-                  <span>
-                    Total <FormattedNumber value={totalStr} variant="balance" className="text-zinc-300" />
-                  </span>
-                  <span className="text-amber-400/90">
-                    Locked <FormattedNumber value={lockedStr} variant="balance" className="text-amber-300" />
-                    <span className="text-zinc-500"> (open orders)</span>
-                  </span>
-                </div>
-              )}
-            </div>
-            <div className="text-left sm:text-right mt-0.5 sm:mt-0 flex-shrink-0">
-              <div className={`text-xs ${liquidityPoolClasses.textMuted}`}>Current holding in</div>
-              <div className="font-semibold text-lg text-white">{assetName}</div>
-            </div>
-          </div>
-          
-          <div className={`text-[10px] border-t pt-3 ${liquidityPoolClasses.textMuted} ${liquidityPoolClasses.borderMuted}`}>
-            {lockedNum > 0
-              ? 'Available is free to sell or transfer. Locked tokens are held by open limit orders until they fill or you cancel them.'
-              : 'This is your confirmed free balance for this asset on the connected node.'}
-          </div>
+      const api = await createWarthogApi(selectedNode);
+      const { nonce, data } = await signAndSubmitTransaction(api, {
+        nonceId,
+        fee: (txFee || suggestedTxFee).toString().trim().replace(',', '.') || suggestedTxFee,
+        buildSpec: {
+          type: 'LIMIT_SWAP',
+          assetHash,
+          isBuy: payingWart,
+          amount: amountStr,
+          assetDecimals: decimalsStr,
+          limitHex,
+        },
+      });
 
-          <details className="mt-4">
-            <summary className={`cursor-pointer text-xs ${liquidityPoolClasses.textFaint} ${liquidityPoolClasses.groupHoverText}`}>View raw balance JSON</summary>
-            <pre className={`mt-2 text-[10px] bg-black/40 p-3 rounded-xl overflow-auto ${liquidityPoolClasses.textMuted}`}>{JSON.stringify(result, null, 2)}</pre>
-          </details>
-        </div>
+      setResults((prev) => ({ ...prev, swap: formatSubmitResult(data) }));
+      updateNonceAfterSuccess(nonce);
+      setNonceOverride('');
+
+      const label = orderMode === 'market'
+        ? (payingWart ? 'Market buy submitted' : 'Market sell submitted')
+        : (payingWart ? 'Limit buy placed' : 'Limit sell placed');
+      toast.success(
+        orderMode === 'market'
+          ? `${label} — may fill against the pool at your slippage price`
+          : `${label} — funds may stay locked until the order fills`,
       );
-    } catch (renderErr) {
-      console.warn('renderPositionCard failed to render safely:', renderErr);
-      return (
-        <div className="mt-4 p-4 bg-red-950/40 border border-red-700 rounded-2xl text-sm">
-          <div className="text-red-400 font-medium mb-2">Could not render your position (unexpected balance shape from node)</div>
-          <pre className="text-[10px] bg-black/60 p-3 rounded-xl overflow-auto max-h-80 text-red-300/80 border border-red-900">
-            {JSON.stringify(result, null, 2)}
-          </pre>
-        </div>
-      );
+      refreshPaySpendable({ silent: true });
+      refreshBalance?.();
+      loadMarket(assetHash);
+    } catch (err) {
+      console.error(err);
+      let message = err.message || 'Unknown error';
+      if (/insufficient\s+(token\s+)?balance/i.test(message)) {
+        const spendable = paySpendable || (await refreshPaySpendable({ silent: true }));
+        if (spendable) {
+          message = insufficientFreeBalanceMessage({
+            available: spendable.available,
+            locked: spendable.locked,
+            unit: spendable.unit,
+          });
+        }
+      }
+      setResults((prev) => ({ ...prev, swap: formatSubmitError(message) }));
+      toast.error('Swap failed: ' + message);
+    } finally {
+      setLoading((prev) => ({ ...prev, swap: false }));
     }
   };
 
-  // ==================== OPEN ORDERS RENDERER ====================
-  const renderOpenOrdersCompact = (result, queriedAssetHash = null) => {
-    if (!result || result.code !== 0) {
-      return (
-        <div className="mt-4 p-8 bg-zinc-950 border border-zinc-700 rounded-2xl text-center">
-          <div className="text-4xl mb-2 opacity-40">⚠️</div>
-          <p className="text-zinc-300 font-medium">Failed to load orders</p>
-          <p className="text-xs text-zinc-500 mt-1">Node returned an error.</p>
-        </div>
-      );
-    }
-
-    let assetGroups = [];
-    let isFlat = false;
-
-    const rawData = result.data;
-
-    if (Array.isArray(rawData) && rawData.length > 0) {
-      const first = rawData[0];
-      if (first && (first.baseAsset || first.wartToAssetSwaps || first.assetToWartSwaps)) {
-        assetGroups = rawData;
-      } else {
-        isFlat = true;
-        assetGroups = [{
-          baseAsset: { name: 'Asset', hash: queriedAssetHash || 'unknown', id: '?' },
-          wartToAssetSwaps: rawData.filter(o => o.isBuy !== false),
-          assetToWartSwaps: rawData.filter(o => o.isBuy === false),
-        }];
-      }
-    } 
-    else if (rawData && typeof rawData === 'object' && (rawData.baseAsset || rawData.wartToAssetSwaps)) {
-      assetGroups = [rawData];
-    }
-
-    if (assetGroups.length === 0) {
-      return (
-        <div className="mt-4 p-8 bg-zinc-950 border border-zinc-700 rounded-2xl text-center">
-          <div className="text-4xl mb-2 opacity-40">📭</div>
-          <p className="text-zinc-300 font-medium">No open limit orders</p>
-          <p className="text-xs text-zinc-500 mt-1">
-            {queriedAssetHash 
-              ? `No pending orders found for this asset.` 
-              : 'Your pending buy/sell orders will appear here.'}
-          </p>
-          {queriedAssetHash && (
-            <p className="text-[10px] text-zinc-600 mt-2 font-mono break-all px-4">
-              {queriedAssetHash}
-            </p>
-          )}
-        </div>
-      );
-    }
-
-    return (
-      <div className="mt-4 space-y-4">
-        {assetGroups.map((assetOrder, idx) => {
-          const asset = assetOrder.baseAsset || {};
-          const buyOrders = assetOrder.wartToAssetSwaps || [];
-          const sellOrders = assetOrder.assetToWartSwaps || [];
-
-          return (
-            <div key={idx} className="bg-zinc-950 border border-zinc-700 rounded-2xl overflow-hidden">
-              <div className="px-4 py-3 bg-zinc-900 flex items-center justify-between border-b border-zinc-700">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-purple-500 via-violet-500 to-fuchsia-500 flex items-center justify-center text-white font-bold text-xl">
-                    {asset.name?.[0] || (isFlat ? '•' : '?')}
-                  </div>
-                  <div>
-                    <div className="font-bold text-xl text-white tracking-tight">{asset.name || 'Asset'}</div>
-                    <div className="text-[10px] text-zinc-500 font-mono -mt-0.5">Asset #{asset.id}</div>
-                  </div>
-                </div>
-                {asset.hash && (
-                  <div onClick={() => copyToClipboard(asset.hash)} className="text-right cursor-pointer group">
-                    <div className="font-mono text-xs text-purple-400 group-hover:text-purple-300">{asset.hash?.slice(0,8)}…{asset.hash?.slice(-6)}</div>
-                    <div className="text-[10px] text-zinc-500 group-hover:text-zinc-400">copy hash</div>
-                  </div>
-                )}
-              </div>
-
-              <div className="p-4 space-y-4">
-                {buyOrders.length > 0 && (
-                  <div>
-                    <div className={`uppercase text-xs tracking-widest mb-2 px-1 flex items-center gap-2 ${limitOrderBuyClasses.text}`}>
-                      <span className={`inline-block w-2 h-2 rounded-full ${limitOrderBuyClasses.bgSolid}`}></span> 
-                      BUY ORDERS ({buyOrders.length})
-                    </div>
-                    <div className="space-y-2">
-                      {buyOrders.slice(0, 5).map((order, oIdx) => (
-                        <div key={oIdx} className="limit-order-card bg-zinc-900 border border-zinc-700 rounded-xl p-3 text-sm">
-                          <div className="flex justify-between text-xs mb-1">
-                            <span className={limitOrderBuyClasses.text}>
-                              Limit: <FormattedNumber value={order.limit?.doubleAdjusted || order.limit} overrides={{ maxDecimals: 8 }} />
-                            </span>
-                            <span className="text-zinc-400">
-                              Filled: <FormattedNumber value={order.filled?.str || order.filled || '0'} variant="balance" /> /{' '}
-                              <FormattedNumber value={order.amount?.str || order.amount || '0'} variant="balance" />
-                            </span>
-                          </div>
-                          <div onClick={() => copyToClipboard(order.txHash)} className="font-mono text-purple-400 text-xs cursor-pointer hover:underline">
-                            {order.txHash?.slice(0,10)}…{order.txHash?.slice(-6)}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {sellOrders.length > 0 && (
-                  <div>
-                    <div className={`uppercase text-xs tracking-widest mb-2 px-1 flex items-center gap-2 ${limitOrderSellClasses.text}`}>
-                      <span className={`inline-block w-2 h-2 rounded-full ${limitOrderSellClasses.bgSolid}`}></span> 
-                      SELL ORDERS ({sellOrders.length})
-                    </div>
-                    <div className="space-y-2">
-                      {sellOrders.slice(0, 5).map((order, oIdx) => (
-                        <div key={oIdx} className="limit-order-card bg-zinc-900 border border-zinc-700 rounded-xl p-3 text-sm">
-                          <div className="flex justify-between text-xs mb-1">
-                            <span className={limitOrderSellClasses.text}>
-                              Limit: <FormattedNumber value={order.limit?.doubleAdjusted || order.limit} overrides={{ maxDecimals: 8 }} />
-                            </span>
-                            <span className="text-zinc-400">
-                              Filled: <FormattedNumber value={order.filled?.str || order.filled || '0'} variant="balance" /> /{' '}
-                              <FormattedNumber value={order.amount?.str || order.amount || '0'} variant="balance" />
-                            </span>
-                          </div>
-                          <div onClick={() => copyToClipboard(order.txHash)} className="font-mono text-purple-400 text-xs cursor-pointer hover:underline">
-                            {order.txHash?.slice(0,10)}…{order.txHash?.slice(-6)}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {buyOrders.length === 0 && sellOrders.length === 0 && (
-                  <div className="text-xs text-zinc-500 italic px-1">No orders in this group</div>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
-
-  // ==================== HANDLERS ====================
+  // ==================== ADVANCED: LIQUIDITY HANDLERS ====================
   const handleLiquidityDeposit = async () => {
     const assetHashRaw = document.getElementById('liquidityAssetHash')?.value.trim() || '';
     const assetAmountStr = document.getElementById('liquidityAssetAmount')?.value.trim() || '';
     const decimalsStr = document.getElementById('liquidityDecimals')?.value || '8';
     const wartAmountStr = document.getElementById('liquidityWartAmount')?.value.trim() || '';
-
     const nonceOverrideRaw = document.getElementById('liquidityNonceOverride')?.value.trim() || '';
     let nonceId = getSmartNonce();
     if (nonceOverrideRaw !== '') {
-      const parsed = parseInt(nonceOverrideRaw);
-      if (!isNaN(parsed)) {
-        nonceId = parsed;
-      }
+      const parsed = parseInt(nonceOverrideRaw, 10);
+      if (!Number.isNaN(parsed)) nonceId = parsed;
     }
 
     if (!assetHashRaw || !assetAmountStr || !wartAmountStr) {
@@ -883,14 +576,15 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       return;
     }
 
-    setLoading(prev => ({ ...prev, liquidityDeposit: true }));
-    setResults(prev => ({ ...prev, liquidityDeposit: null }));
+    setLoading((prev) => ({ ...prev, liquidityDeposit: true }));
+    setResults((prev) => ({ ...prev, liquidityDeposit: null }));
 
     try {
       const api = await createWarthogApi(selectedNode);
+      const feeRaw = document.getElementById('liquidityDepositFee')?.value?.trim().replace(',', '.');
       const { nonce, data } = await signAndSubmitTransaction(api, {
         nonceId,
-        fee: readFormFee('liquidityDepositFee'),
+        fee: feeRaw || suggestedTxFee,
         buildSpec: {
           type: 'LIQUIDITY_DEPOSIT',
           assetHash: assetHashRaw,
@@ -899,31 +593,70 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
           wartAmount: wartAmountStr,
         },
       });
-
-      setResults(prev => ({ ...prev, liquidityDeposit: formatSubmitResult(data) }));
+      setResults((prev) => ({ ...prev, liquidityDeposit: formatSubmitResult(data) }));
       updateNonceAfterSuccess(nonce);
-
-      if (document.getElementById('liquidityNonceOverride')) {
-        document.getElementById('liquidityNonceOverride').value = '';
-      }
-
-      toast.success('Liquidity deposit sent — check pool info below');
+      toast.success('Liquidity deposit sent');
+      refreshBalance?.();
     } catch (err) {
-      console.error(err);
-      setResults(prev => ({ ...prev, liquidityDeposit: formatSubmitError(err.message || 'Unknown error') }));
+      setResults((prev) => ({ ...prev, liquidityDeposit: formatSubmitError(err.message || 'Unknown error') }));
       toast.error('Liquidity deposit failed: ' + (err.message || 'Unknown error'));
     } finally {
-      setLoading(prev => ({ ...prev, liquidityDeposit: false }));
+      setLoading((prev) => ({ ...prev, liquidityDeposit: false }));
+    }
+  };
+
+  const handleLiquidityWithdraw = async () => {
+    const assetHashRaw = document.getElementById('liquidityWithdrawAssetHash')?.value.trim() || '';
+    const sharesStr = document.getElementById('liquidityWithdrawShares')?.value.trim() || '';
+    const nonceOverrideRaw = document.getElementById('liquidityWithdrawNonceOverride')?.value.trim() || '';
+    let nonceId = getSmartNonce();
+    if (nonceOverrideRaw !== '') {
+      const parsed = parseInt(nonceOverrideRaw, 10);
+      if (!Number.isNaN(parsed)) nonceId = parsed;
+    }
+
+    if (!assetHashRaw || !sharesStr) {
+      toast.error('Asset Hash and LP shares are required');
+      return;
+    }
+    if (!isSigningUnlocked) {
+      toast.error(isSessionLocked ? 'Unlock your wallet to withdraw liquidity' : 'Wallet not loaded. Please log in again.');
+      return;
+    }
+
+    setLoading((prev) => ({ ...prev, liquidityWithdraw: true }));
+    setResults((prev) => ({ ...prev, liquidityWithdraw: null }));
+
+    try {
+      const api = await createWarthogApi(selectedNode);
+      const feeRaw = document.getElementById('liquidityWithdrawFee')?.value?.trim().replace(',', '.');
+      const { nonce, data } = await signAndSubmitTransaction(api, {
+        nonceId,
+        fee: feeRaw || suggestedTxFee,
+        buildSpec: {
+          type: 'LIQUIDITY_WITHDRAW',
+          assetHash: assetHashRaw,
+          shares: sharesStr,
+        },
+      });
+      setResults((prev) => ({ ...prev, liquidityWithdraw: formatSubmitResult(data) }));
+      updateNonceAfterSuccess(nonce);
+      toast.success('Liquidity withdrawal sent');
+      refreshBalance?.();
+    } catch (err) {
+      setResults((prev) => ({ ...prev, liquidityWithdraw: formatSubmitError(err.message || 'Unknown error') }));
+      toast.error('Liquidity withdrawal failed: ' + (err.message || 'Unknown error'));
+    } finally {
+      setLoading((prev) => ({ ...prev, liquidityWithdraw: false }));
     }
   };
 
   const handlePositionPoolDeposit = async () => {
-    const assetHashRaw = poolAssetHash.trim();
+    const assetHashRaw = poolAssetHash.trim() || assetHash;
     const assetAmountStr = document.getElementById('positionPoolAssetAmount')?.value.trim() || '';
-    const decimalsStr = document.getElementById('positionPoolDecimals')?.value || '8';
+    const decimalsStr = document.getElementById('positionPoolDecimals')?.value || String(assetDecimals || 8);
     const wartAmountStr = document.getElementById('positionPoolWartAmount')?.value.trim() || '';
     const nonceOverrideRaw = document.getElementById('positionPoolNonceOverride')?.value.trim() || '';
-
     let nonceId = getSmartNonce();
     if (nonceOverrideRaw !== '') {
       const parsed = parseInt(nonceOverrideRaw, 10);
@@ -944,9 +677,10 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
 
     try {
       const api = await createWarthogApi(selectedNode);
+      const feeRaw = document.getElementById('positionPoolDepositFee')?.value?.trim().replace(',', '.');
       const { nonce, data } = await signAndSubmitTransaction(api, {
         nonceId,
-        fee: readFormFee('positionPoolDepositFee'),
+        fee: feeRaw || suggestedTxFee,
         buildSpec: {
           type: 'LIQUIDITY_DEPOSIT',
           assetHash: assetHashRaw,
@@ -955,18 +689,12 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
           wartAmount: wartAmountStr,
         },
       });
-
       setResults((prev) => ({ ...prev, liquidityDeposit: formatSubmitResult(data) }));
       updateNonceAfterSuccess(nonce);
-
-      if (document.getElementById('positionPoolNonceOverride')) {
-        document.getElementById('positionPoolNonceOverride').value = '';
-      }
-
-      toast.success('Liquidity deposit sent — refresh pool info to see updated position');
-      await loadPoolAndPosition(assetHashRaw);
+      toast.success('Liquidity deposit sent');
+      loadPoolAndPosition(assetHashRaw);
+      refreshBalance?.();
     } catch (err) {
-      console.error(err);
       setResults((prev) => ({ ...prev, liquidityDeposit: formatSubmitError(err.message || 'Unknown error') }));
       toast.error('Liquidity deposit failed: ' + (err.message || 'Unknown error'));
     } finally {
@@ -974,77 +702,12 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     }
   };
 
-  const handleLiquidityWithdraw = async () => {
-    const assetHashRaw =
-      document.getElementById('liquidityWithdrawAssetHash')?.value.trim() ||
-      document.getElementById('poolAssetHash')?.value.trim() ||
-      '';
-    const sharesStr = document.getElementById('liquidityWithdrawShares')?.value.trim() || '';
-    const nonceOverrideRaw =
-      document.getElementById('positionPoolWithdrawNonceOverride')?.value.trim() ||
-      document.getElementById('liquidityWithdrawNonceOverride')?.value.trim() ||
-      '';
-
-    let nonceId = getSmartNonce();
-    if (nonceOverrideRaw !== '') {
-      const parsed = parseInt(nonceOverrideRaw, 10);
-      if (!Number.isNaN(parsed)) nonceId = parsed;
-    }
-
-    if (!assetHashRaw || !sharesStr) {
-      toast.error('Asset Hash and LP shares amount are required');
-      return;
-    }
-    if (!isSigningUnlocked) {
-      toast.error(isSessionLocked ? 'Unlock your wallet to withdraw liquidity' : 'Wallet not loaded. Please log in again.');
-      return;
-    }
-
-    setLoading((prev) => ({ ...prev, liquidityWithdraw: true }));
-    setResults(prev => ({ ...prev, liquidityWithdraw: null }));
-
-    try {
-      const api = await createWarthogApi(selectedNode);
-      const { nonce, data } = await signAndSubmitTransaction(api, {
-        nonceId,
-        fee: readFormFee('liquidityWithdrawFee'),
-        buildSpec: {
-          type: 'LIQUIDITY_WITHDRAW',
-          assetHash: assetHashRaw,
-          shares: sharesStr,
-        },
-      });
-
-      setResults(prev => ({ ...prev, liquidityWithdraw: formatSubmitResult(data) }));
-      updateNonceAfterSuccess(nonce);
-
-      if (document.getElementById('positionPoolWithdrawNonceOverride')) {
-        document.getElementById('positionPoolWithdrawNonceOverride').value = '';
-      }
-      if (document.getElementById('liquidityWithdrawNonceOverride')) {
-        document.getElementById('liquidityWithdrawNonceOverride').value = '';
-      }
-
-      toast.success('Liquidity withdrawal sent — check History for received asset + WART');
-      if (poolAssetHash) {
-        await loadPoolAndPosition(poolAssetHash);
-      }
-    } catch (err) {
-      console.error(err);
-      setResults((prev) => ({ ...prev, liquidityWithdraw: formatSubmitError(err.message || 'Unknown error') }));
-      toast.error('Liquidity withdrawal failed: ' + (err.message || 'Unknown error'));
-    } finally {
-      setLoading((prev) => ({ ...prev, liquidityWithdraw: false }));
-    }
-  };
-
-  const fillWithdrawSharesFromBalance = () => {
+  const fillWithdrawFromLpBalance = () => {
     const balanceResult = results.myLiquidityBalance;
     if (!balanceResult || balanceResult.code !== 0) {
-      toast.error('Load pool & position first to fetch your LP share balance');
+      toast.error('Load pool & position first');
       return;
     }
-
     const balData = balanceResult.data || {};
     const balanceInfo = balData.balance?.total || balData.balance || balData;
     const shares = safeStr(balanceInfo, '');
@@ -1052,8 +715,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       toast.error('No LP shares found for this pool');
       return;
     }
-
-    const poolHash = document.getElementById('poolAssetHash')?.value.trim() || '';
+    const poolHash = poolAssetHash || assetHash || '';
     const assetInput = document.getElementById('liquidityWithdrawAssetHash');
     const sharesInput = document.getElementById('liquidityWithdrawShares');
     if (assetInput && poolHash) assetInput.value = poolHash;
@@ -1062,769 +724,925 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   };
 
   const loadPoolAndPosition = async (assetHashOverride) => {
-    const assetRaw = assetHashOverride || poolAssetHash || document.getElementById('poolAssetHash')?.value.trim() || '';
+    const assetRaw = assetHashOverride || poolAssetHash || assetHash || document.getElementById('poolAssetHash')?.value?.trim() || '';
     if (!assetRaw) {
       toast.error('Please enter an Asset Hash');
       return;
     }
-
-    let assetHash = assetRaw;
-    if (assetHash.toLowerCase().startsWith('0x')) assetHash = assetHash.slice(2);
-    if (assetHash.length !== 64) {
+    let hash = assetRaw;
+    if (hash.toLowerCase().startsWith('0x')) hash = hash.slice(2);
+    if (hash.length !== 64) {
       toast.error('Asset Hash must be exactly 64 hex characters');
       return;
     }
-
-    await query('poolMarket', `dex/market/${encodeURIComponent(assetHash)}`);
-
-    if (account) {
-      await query('myAssetBalance', `account/${account}/balance/asset:${assetHash}`);
-      await query('myLiquidityBalance', `account/${account}/balance/liquidity:${assetHash}`);
-    }
-  };
-
-  useEffect(() => {
-    if (!dexPoolPrefill?.hash) return;
-
-    const hash = dexPoolPrefill.hash.toLowerCase().replace(/^0x/i, '');
-    setActiveTab('position');
     setPoolAssetHash(hash);
-    setDexPoolPrefill(null);
-    loadPoolAndPosition(hash);
-  }, [dexPoolPrefill, setDexPoolPrefill]);
-
-  const handleLimitSwap = async () => {
-    const assetHashRaw = document.getElementById('limitAssetHash')?.value.trim() || '';
-    const isBuy = limitOrderMode === 'buy';
-    let amountStr = document.getElementById('limitAmount')?.value.trim() || '';
-    const limitHex = document.getElementById('limitEncoded')?.value.trim() || '';
-    let assetDecimalsStr = document.getElementById('limitPriceDecimals')?.value || '8';
-
-    const nonceOverrideRaw = document.getElementById('limitNonceOverride')?.value.trim() || '';
-    let nonceId = getSmartNonce();
-    if (nonceOverrideRaw !== '') {
-      const parsed = parseInt(nonceOverrideRaw);
-      if (!isNaN(parsed)) {
-        nonceId = parsed;
-      }
-    }
-
-    if (!assetHashRaw || !amountStr || !limitHex) {
-      toast.error('Asset Hash, Amount, and Encoded Limit Price are required');
-      return;
-    }
-    if (!isSigningUnlocked) {
-      toast.error(isSessionLocked ? 'Unlock your wallet to place limit orders' : 'Wallet not loaded. Please log in again.');
-      return;
-    }
-
-    setLoading(prev => ({ ...prev, limitSwap: true }));
-    setResults(prev => ({ ...prev, limitSwap: null }));
-
-    try {
-      // Live free-balance check before signing (avoids opaque node "Insufficient token balance")
-      const spendable = await refreshLimitSpendable({ silent: true });
-      if (spendable) {
-        if (!isBuy && spendable.decimals != null) {
-          assetDecimalsStr = String(spendable.decimals);
-        }
-        if (amountExceedsAvailable(amountStr, spendable.available)) {
-          const msg = insufficientFreeBalanceMessage({
-            available: spendable.available,
-            locked: spendable.locked,
-            unit: spendable.unit,
-          });
-          // Cap the form field so the user can retry with free balance
-          const amountInput = document.getElementById('limitAmount');
-          if (amountInput) amountInput.value = spendable.available;
-          setResults((prev) => ({ ...prev, limitSwap: formatSubmitError(msg) }));
-          toast.error(msg);
-          return;
-        }
-      }
-
-      const api = await createWarthogApi(selectedNode);
-      const { nonce, data } = await signAndSubmitTransaction(api, {
-        nonceId,
-        fee: readFormFee('limitOrderFee'),
-        buildSpec: {
-          type: 'LIMIT_SWAP',
-          assetHash: assetHashRaw,
-          isBuy,
-          amount: amountStr,
-          assetDecimals: assetDecimalsStr,
-          limitHex,
-        },
-      });
-
-      setResults(prev => ({ ...prev, limitSwap: formatSubmitResult(data) }));
-      updateNonceAfterSuccess(nonce);
-
-      if (document.getElementById('limitNonceOverride')) {
-        document.getElementById('limitNonceOverride').value = '';
-      }
-
-      toast.success('Limit order submitted — balance may stay locked until the order fills');
-      // Refresh free/locked after successful lock of funds
-      refreshLimitSpendable({ silent: true });
-      refreshBalance?.();
-    } catch (err) {
-      console.error(err);
-      let message = err.message || 'Unknown error';
-      // Map node rejection into the clearer free/locked wording when possible
-      if (/insufficient\s+(token\s+)?balance/i.test(message)) {
-        const spendable = limitSpendable || (await refreshLimitSpendable({ silent: true }));
-        if (spendable) {
-          message = insufficientFreeBalanceMessage({
-            available: spendable.available,
-            locked: spendable.locked,
-            unit: spendable.unit,
-          });
-        }
-      }
-      setResults(prev => ({ ...prev, limitSwap: formatSubmitError(message) }));
-      toast.error('Limit order failed: ' + message);
-    } finally {
-      setLoading(prev => ({ ...prev, limitSwap: false }));
+    await query('poolMarket', `dex/market/${encodeURIComponent(hash)}`);
+    if (account) {
+      await query('myAssetBalance', `account/${account}/balance/asset:${hash}`);
+      await query('myLiquidityBalance', `account/${account}/balance/liquidity:${hash}`);
     }
   };
 
-  const encodeLimitPrice = async () => {
-    const priceStr = document.getElementById('limitPriceHuman')?.value.trim();
-    const decimalsStr = document.getElementById('limitPriceDecimals')?.value.trim() || '8';
+  // ==================== RENDER HELPERS ====================
+  const renderTransactionResult = (result, type) => {
+    if (!result) return null;
+    const isSuccess = isNodeSuccess(result);
+    const txHash = result.data?.txHash || result.txHash || result.data?.hash || null;
 
-    if (!priceStr) {
-      toast.error('Please enter a price');
-      return;
-    }
+    return (
+      <div className={`mt-4 rounded-2xl border p-4 ${isSuccess ? 'bg-emerald-950/40 border-emerald-700' : 'bg-red-950/40 border-red-700'}`}>
+        <div className="flex items-center gap-3 mb-2">
+          <div className={`w-7 h-7 rounded-full flex items-center justify-center text-sm ${isSuccess ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white'}`}>
+            {isSuccess ? '✓' : '!'}
+          </div>
+          <div>
+            <div className={`font-semibold ${isSuccess ? 'text-emerald-400' : 'text-red-400'}`}>
+              {isSuccess ? `${type} Submitted` : `${type} Failed`}
+            </div>
+            <div className="text-xs text-zinc-400">
+              {isSuccess
+                ? 'Sent to node · Check History for confirmation'
+                : (getNodeError(result) || 'The node rejected this transaction')}
+            </div>
+          </div>
+        </div>
+        {txHash && (
+          <div
+            onClick={() => copyToClipboard(txHash)}
+            className="mt-2 p-2 bg-zinc-950 rounded-xl border border-zinc-700 font-mono text-xs text-emerald-400 break-all cursor-pointer hover:text-emerald-300"
+          >
+            {txHash}
+          </div>
+        )}
+        {result.error && <div className="mt-2 text-sm text-red-400">{result.error}</div>}
+      </div>
+    );
+  };
 
+  const renderPoolMarketCard = (result) => {
     try {
-      const { encodeLimitPriceHex } = await import('../utils/encodeLimitPrice.js');
-      let encoded;
-      try {
-        encoded = await encodeLimitPriceHex(priceStr, decimalsStr, { ceil: false });
-      } catch {
-        encoded = await encodeLimitPriceHex(priceStr, decimalsStr, { ceil: true });
+      if (!result || result.code !== 0 || !result.data) {
+        return (
+          <div className="mt-4 p-4 bg-zinc-950 border border-zinc-700 rounded-2xl text-sm text-zinc-400">
+            No pool/market data available.
+          </div>
+        );
       }
 
-      document.getElementById('limitEncoded').value = encoded;
-      toast.success(`Encoded limit: ${encoded}`);
-    } catch (err) {
-      console.error(err);
-      toast.error('Failed to encode price: ' + (err.message || 'Unknown error'));
+      const d = result.data;
+      const asset = d.asset || d.baseAsset || d.market?.asset || {};
+      const liquidity = d.liquidityPool || d.liquidity || d.reserves || d.poolReserves || d.pool || {};
+      const wartReserve = liquidity.wart || liquidity.WART || '0';
+      const assetReserve = liquidity.asset || liquidity[asset.name] || liquidity.assetE8 || '0';
+      const spot = computePoolSpotPrice(d);
+      const priceRaw = d.price || d.spotPrice || d.doubleAdjustedPrice || d.marketPrice;
+      const priceDisplayValue = spot ?? (
+        priceRaw != null
+          ? (typeof priceRaw === 'object' && priceRaw.doubleAdjusted != null
+            ? priceRaw.doubleAdjusted
+            : priceRaw)
+          : null
+      );
+
+      return (
+        <div className={`mt-4 bg-zinc-950 border rounded-2xl overflow-hidden ${liquidityPoolClasses.borderPanel}`}>
+          <div className="px-4 py-3 bg-zinc-900 flex items-center justify-between border-b border-zinc-800">
+            <div className="flex items-center gap-3">
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-white text-xl font-bold ${liquidityPoolClasses.bgSolid}`}>
+                {asset.name?.[0] || 'P'}
+              </div>
+              <div>
+                <div className="text-lg font-semibold text-white">
+                  {asset.name} <span className={liquidityPoolClasses.textFaint}>/ WART</span>
+                </div>
+                <div className="font-mono text-[10px] text-zinc-500">
+                  {asset.decimals || 8} decimals
+                </div>
+              </div>
+            </div>
+            {asset.hash && (
+              <button
+                type="button"
+                onClick={() => copyToClipboard(asset.hash)}
+                className="text-right text-[10px] text-zinc-500 hover:text-zinc-300"
+              >
+                {asset.hash.slice(0, 8)}…{asset.hash.slice(-6)}
+              </button>
+            )}
+          </div>
+          <div className="p-4 grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-3">
+              <div className="text-[9px] uppercase tracking-wider text-zinc-500 mb-1">WART reserve</div>
+              <FormattedNumber value={wartReserve} variant="balance" className="text-xl font-semibold" />
+            </div>
+            <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-3">
+              <div className="text-[9px] uppercase tracking-wider text-zinc-500 mb-1">{asset.name || 'Asset'} reserve</div>
+              <FormattedNumber value={assetReserve} variant="balance" className="text-xl font-semibold" />
+            </div>
+            <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-3">
+              <div className="text-[9px] uppercase tracking-wider text-zinc-500 mb-1">Spot</div>
+              <FormattedNumber value={priceDisplayValue} overrides={{ maxDecimals: 8 }} className="text-xl font-semibold" />
+              <div className="text-[10px] text-zinc-500">WART per {asset.name || 'asset'}</div>
+            </div>
+          </div>
+        </div>
+      );
+    } catch {
+      return (
+        <pre className="mt-4 text-[10px] bg-black/60 p-3 rounded-xl overflow-auto max-h-60 text-zinc-400">
+          {JSON.stringify(result, null, 2)}
+        </pre>
+      );
     }
   };
 
-  const tabs = [
-    { id: 'market', label: 'Market Data' },
-    { id: 'trading', label: 'Trading Activity' },
-    { id: 'deposit', label: 'Liquidity' },
-    { id: 'position', label: 'Pool & Position' },
-    { id: 'limit', label: 'Limit Orders' },
-  ];
+  const renderLiquiditySharesCard = (result) => {
+    try {
+      if (!result || result.code !== 0 || !result.data) return null;
+      const balData = result.data || {};
+      const assetInfo = balData.token || balData.asset || {};
+      const balanceInfo = balData.balance?.total || balData.balance || balData;
+      const assetName = assetInfo.name || 'Pool';
+      return (
+        <div className={`mt-4 border rounded-2xl p-4 ${liquidityPoolClasses.bgPanel} ${liquidityPoolClasses.border}`}>
+          <div className={`text-xs tracking-wider font-medium ${liquidityPoolClasses.text}`}>YOUR LP SHARES</div>
+          <FormattedNumber value={balanceInfo} variant="balance" className="text-3xl font-semibold mt-1 block" />
+          <div className={`text-xs mt-1 ${liquidityPoolClasses.textMuted}`}>{assetName} pool</div>
+        </div>
+      );
+    } catch {
+      return null;
+    }
+  };
 
-  return (
-    <>
-      <div className="dex-tabs flex w-full gap-1 p-1 mb-6 bg-zinc-950 border border-zinc-800 rounded-xl overflow-x-auto scrollbar-hide">
-        {tabs.map((tab) => {
-          const isActive = activeTab === tab.id;
+  const renderOpenOrdersCompact = (result, queriedAssetHash = null) => {
+    if (!result || result.code !== 0) {
+      return (
+        <div className="mt-4 p-6 bg-zinc-950 border border-zinc-700 rounded-2xl text-center text-sm text-zinc-400">
+          Failed to load orders
+        </div>
+      );
+    }
+
+    let assetGroups = [];
+    const rawData = result.data;
+
+    if (Array.isArray(rawData) && rawData.length > 0) {
+      const first = rawData[0];
+      if (first && (first.baseAsset || first.wartToAssetSwaps || first.assetToWartSwaps)) {
+        assetGroups = rawData;
+      } else {
+        assetGroups = [{
+          baseAsset: { name: 'Asset', hash: queriedAssetHash || 'unknown' },
+          wartToAssetSwaps: rawData.filter((o) => o.isBuy !== false),
+          assetToWartSwaps: rawData.filter((o) => o.isBuy === false),
+        }];
+      }
+    } else if (rawData && typeof rawData === 'object' && (rawData.baseAsset || rawData.wartToAssetSwaps)) {
+      assetGroups = [rawData];
+    }
+
+    if (assetGroups.length === 0) {
+      return (
+        <div className="mt-4 p-6 bg-zinc-950 border border-zinc-700 rounded-2xl text-center">
+          <p className="text-zinc-300 font-medium text-sm">No open limit orders</p>
+          <p className="text-xs text-zinc-500 mt-1">Your pending buy/sell orders will appear here.</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="mt-4 space-y-3">
+        {assetGroups.map((assetOrder, idx) => {
+          const asset = assetOrder.baseAsset || {};
+          const buyOrders = assetOrder.wartToAssetSwaps || [];
+          const sellOrders = assetOrder.assetToWartSwaps || [];
           return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-              className={`dex-tab-btn whitespace-nowrap${isActive ? ' dex-tab-btn--active' : ''}`}
-            >
-              {tab.label}
-            </button>
+            <div key={idx} className="bg-zinc-950 border border-zinc-700 rounded-2xl overflow-hidden">
+              <div className="px-3 py-2 bg-zinc-900 border-b border-zinc-700 flex items-center justify-between">
+                <span className="font-semibold text-white">{asset.name || 'Asset'}</span>
+                {asset.hash && (
+                  <button type="button" onClick={() => copyToClipboard(asset.hash)} className="font-mono text-[10px] text-purple-400">
+                    {asset.hash.slice(0, 8)}…{asset.hash.slice(-6)}
+                  </button>
+                )}
+              </div>
+              <div className="p-3 space-y-2 text-sm">
+                {buyOrders.slice(0, 5).map((order, oIdx) => (
+                  <div key={`b${oIdx}`} className="bg-zinc-900 border border-zinc-700 rounded-xl p-2">
+                    <span className={limitOrderBuyClasses.text}>
+                      Buy @ <FormattedNumber value={order.limit?.doubleAdjusted || order.limit} overrides={{ maxDecimals: 8 }} />
+                    </span>
+                    <span className="text-zinc-500 ml-2 text-xs">
+                      <FormattedNumber value={order.filled?.str || order.filled || '0'} variant="balance" />
+                      {' / '}
+                      <FormattedNumber value={order.amount?.str || order.amount || '0'} variant="balance" />
+                    </span>
+                  </div>
+                ))}
+                {sellOrders.slice(0, 5).map((order, oIdx) => (
+                  <div key={`s${oIdx}`} className="bg-zinc-900 border border-zinc-700 rounded-xl p-2">
+                    <span className={limitOrderSellClasses.text}>
+                      Sell @ <FormattedNumber value={order.limit?.doubleAdjusted || order.limit} overrides={{ maxDecimals: 8 }} />
+                    </span>
+                    <span className="text-zinc-500 ml-2 text-xs">
+                      <FormattedNumber value={order.filled?.str || order.filled || '0'} variant="balance" />
+                      {' / '}
+                      <FormattedNumber value={order.amount?.str || order.amount || '0'} variant="balance" />
+                    </span>
+                  </div>
+                ))}
+                {buyOrders.length === 0 && sellOrders.length === 0 && (
+                  <div className="text-xs text-zinc-500">No orders in this group</div>
+                )}
+              </div>
+            </div>
           );
         })}
       </div>
+    );
+  };
 
-      {/* ==================== TAB CONTENTS ==================== */}
+  const swapDisabled = loading.swap || !assetHash;
+  const submitLabel = (() => {
+    if (loading.swap) return orderMode === 'market' ? 'Swapping…' : 'Placing order…';
+    if (!selectedAsset) return 'Select a token';
+    if (!payAmount) return 'Enter an amount';
+    if (orderMode === 'limit' && !limitPrice) return 'Enter limit price';
+    if (orderMode === 'market' && spotPrice == null && !marketLoading) return 'No pool price';
+    if (orderMode === 'market') return payingWart ? 'Buy' : 'Sell';
+    return payingWart ? 'Place buy limit' : 'Place sell limit';
+  })();
 
-      {activeTab === 'market' && (
-        <section className="border-2 border-green-500 rounded-3xl p-8 bg-green-50 dark:bg-green-950 shadow-xl">
-          <h2 className="text-2xl font-bold mb-6">DEX Tools</h2>
-          <p className="mb-6 text-gray-600 dark:text-gray-400">
-            Query decentralized exchange markets and trading data.
-          </p>
+  const pairLabel = selectedAsset?.symbol
+    ? (payingWart ? `WART → ${selectedAsset.symbol}` : `${selectedAsset.symbol} → WART`)
+    : 'Pick a token';
 
-          <h3 className="text-xl font-semibold mb-4 text-green-700 dark:text-green-300">
-            Market Data
-          </h3>
+  // ==================== UI ====================
+  return (
+    <div className="swap-page w-full max-w-lg mx-auto">
+      {/* Mode: Market | Limit — quiet pill tabs */}
+      <div className="dex-tabs flex w-full gap-1.5 p-1 mb-5 bg-zinc-950/80 border border-zinc-800/80 rounded-full">
+        {[
+          { id: 'market', label: 'Market' },
+          { id: 'limit', label: 'Limit' },
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setOrderMode(tab.id)}
+            className={`dex-tab-btn${orderMode === tab.id ? ' dex-tab-btn--active' : ''}`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Swap card */}
+      <div className="swap-card">
+        <div className="px-4 pt-4 pb-3 flex items-start justify-between gap-3 border-b border-zinc-800/70">
           <div>
-              <label className="block text-sm font-medium mb-2">Market Identifier</label>
-              <input id="market" placeholder="market identifier or asset hash" className="input mb-4" />
-              <button
-                onClick={() => query('dexMarket', `dex/market/${encodeURIComponent(document.getElementById('market').value)}`)}
-                disabled={loading.dexMarket}
-                className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
-              >
-                {loading.dexMarket ? 'Querying...' : 'Query Market'}
-              </button>
-              
-              {results.dexMarket && renderPoolMarketCard(results.dexMarket)}
+            <h2 className="text-base font-semibold tracking-tight !text-zinc-100 !mb-0.5">
+              {orderMode === 'market' ? 'Swap' : 'Limit order'}
+            </h2>
+            <p className="text-[11px] text-zinc-600 tabular-nums">{pairLabel}</p>
           </div>
-        </section>
-      )}
-
-      {activeTab === 'trading' && (
-        <section className="border-2 border-orange-500 rounded-3xl p-8 bg-orange-50 dark:bg-orange-950 shadow-xl">
-          <h3 className="text-xl font-semibold mb-6 text-orange-700 dark:text-orange-300">
-            Trading Activity
-          </h3>
-          <p className="text-sm text-orange-600 dark:text-orange-400 mb-6">
-            Uses your connected wallet address
-          </p>
-
-          <div className="space-y-8">
-            <div>
-              <button
-                onClick={() => query('openOrders', `account/${account}/open_orders`)}
-                disabled={loading.openOrders || !account}
-                className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
-              >
-                {loading.openOrders ? 'Loading...' : 'View All Open Orders'}
-              </button>
-              {results.openOrders && renderOpenOrdersCompact(results.openOrders)}
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-2">Open Orders for Specific Asset</label>
-              <input id="assetForOrders" placeholder="asset identifier" className="input mb-3" />
-              <button
-                onClick={() => query('openOrdersAsset', `account/${account}/open_orders/${encodeURIComponent(document.getElementById('assetForOrders').value)}`)}
-                disabled={!account}
-                className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
-              >
-                Query Asset Orders
-              </button>
-              {results.openOrdersAsset && renderOpenOrdersCompact(
-                results.openOrdersAsset, 
-                document.getElementById('assetForOrders')?.value.trim()
-              )}
-
-              {results.openOrdersAsset && (
-                <details className="mt-3 text-xs">
-                  <summary className="cursor-pointer text-orange-400 hover:text-orange-300">Show raw node response (for debugging)</summary>
-                  <pre className="mt-2 p-3 bg-black/60 rounded-xl text-[10px] text-orange-300 overflow-auto max-h-64 border border-orange-900">
-                    {JSON.stringify(results.openOrdersAsset, null, 2)}
-                  </pre>
-                </details>
-              )}
-            </div>
-
-            <div>
-              <button
-                onClick={() => query('mempool', `account/${account}/mempool`)}
-                disabled={loading.mempool || !account}
-                className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
-              >
-                {loading.mempool ? 'Loading...' : 'View Mempool'}
-              </button>
-              {results.mempool && (
-                <pre className="result mt-4 text-xs">{JSON.stringify(results.mempool, null, 2)}</pre>
-              )}
-            </div>
-          </div>
-        </section>
-      )}
-
-      {activeTab === 'deposit' && (
-        <div>
-          <div className="flex items-center gap-2 mb-6">
-            <button
-              type="button"
-              onClick={() => setLiquidityMode('deposit')}
-              className={`compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1${
-                liquidityMode === 'deposit' ? ' compact-btn--active' : ''
-              }`}
-            >
-              Deposit
-            </button>
-            <button
-              type="button"
-              onClick={() => setLiquidityMode('withdraw')}
-              className={`compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1${
-                liquidityMode === 'withdraw' ? ' compact-btn--active' : ''
-              }`}
-            >
-              Withdraw
-            </button>
-          </div>
-
-          {liquidityMode === 'deposit' ? (
-            <section className="border-2 border-cyan-500 rounded-3xl p-8 bg-cyan-50 dark:bg-cyan-950 shadow-xl">
-              <h3 className="text-xl font-semibold mb-6 text-cyan-700 dark:text-cyan-300">
-                Liquidity Deposit (Asset → WART Pool)
-              </h3>
-              <p className="text-sm text-cyan-600 dark:text-cyan-400 mb-6">
-                Deposit asset tokens + WART into the asset&apos;s liquidity pool. You receive LP shares representing your pool ownership.
-              </p>
-
-              <div>
-                <label className="block text-sm font-medium mb-2">Asset Hash (64 hex chars, no 0x)</label>
-                <input id="liquidityAssetHash" placeholder="e.g. 0e4825efffa294610d2ac376713e3bcc9b53d378e823834b64e5df01f75d3b0c" className="input mb-3 font-mono text-sm" />
-
-                <label className="block text-sm font-medium mb-2">Asset Amount (in token units)</label>
-                <input id="liquidityAssetAmount" type="number" step="any" placeholder="e.g. 1000" className="input mb-3" />
-
-                <label className="block text-sm font-medium mb-2">Asset Decimals / Precision</label>
-                <input id="liquidityDecimals" type="number" defaultValue="8" className="input mb-3" />
-
-                <label className="block text-sm font-medium mb-2">WART Amount to Deposit</label>
-                <input id="liquidityWartAmount" type="number" step="any" placeholder="e.g. 10.0" className="input mb-3" />
-
-                <label className="block text-sm font-medium mb-2">Fee (WART)</label>
-                <input key={`liquidityDepositFee-${feeFieldKey}`} id="liquidityDepositFee" type="text" inputMode="decimal" defaultValue={suggestedTxFee} placeholder={suggestedTxFee} className="input mb-3" />
-
-                <label className="block text-sm font-medium mb-2 text-amber-400">
-                  Nonce Override (only if duplicate nonce error)
-                </label>
-                <input id="liquidityNonceOverride" type="number" placeholder="Leave empty for auto" className="input mb-6" />
-
-                <button
-                  onClick={handleLiquidityDeposit}
-                  disabled={loading.liquidityDeposit}
-                  className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
-                >
-                  {loading.liquidityDeposit ? 'Depositing Liquidity...' : 'Deposit Liquidity'}
-                </button>
-
-                {results.liquidityDeposit && renderTransactionResult(results.liquidityDeposit, 'Liquidity Deposit')}
+          <div className="text-right">
+            {spotPrice != null ? (
+              <div className="text-[11px] text-zinc-500 tabular-nums">
+                <span className="text-zinc-600 block text-[10px] uppercase tracking-wide mb-0.5">Spot</span>
+                <span className="text-zinc-300">
+                  {formatAssetPrice(spotPrice, 8)}
+                </span>
+                <span className="text-zinc-600"> WART</span>
               </div>
-            </section>
-          ) : (
-            <section className="border-2 border-amber-500 rounded-3xl p-8 bg-amber-50 dark:bg-amber-950 shadow-xl">
-              <h3 className="text-xl font-semibold mb-6 text-amber-700 dark:text-amber-300">
-                Liquidity Withdrawal (LP Shares → Asset + WART)
-              </h3>
-              <p className="text-sm text-amber-600 dark:text-amber-400 mb-6">
-                Redeem LP shares from a pool to receive your proportional asset tokens and WART back. Use Pool &amp; Position to look up your share balance first.
-              </p>
-
-              <div>
-                <label className="block text-sm font-medium mb-2">Asset Hash (64 hex chars, no 0x)</label>
-                <input id="liquidityWithdrawAssetHash" placeholder="Same hash as the pool you deposited into" className="input mb-3 font-mono text-sm" />
-
-                <label className="block text-sm font-medium mb-2">LP Shares to Redeem</label>
-                <input id="liquidityWithdrawShares" type="number" step="any" placeholder="e.g. 1.5" className="input mb-3" />
-
-                <label className="block text-sm font-medium mb-2">Fee (WART)</label>
-                <input key={`liquidityWithdrawFee-${feeFieldKey}`} id="liquidityWithdrawFee" type="text" inputMode="decimal" defaultValue={suggestedTxFee} placeholder={suggestedTxFee} className="input mb-3" />
-
-                <label className="block text-sm font-medium mb-2 text-amber-400">
-                  Nonce Override (only if duplicate nonce error)
-                </label>
-                <input id="liquidityWithdrawNonceOverride" type="number" placeholder="Leave empty for auto" className="input mb-6" />
-
-                <button
-                  onClick={handleLiquidityWithdraw}
-                  disabled={loading.liquidityWithdraw}
-                  className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
-                >
-                  {loading.liquidityWithdraw ? 'Withdrawing Liquidity...' : 'Withdraw Liquidity'}
-                </button>
-
-                {results.liquidityWithdraw && renderTransactionResult(results.liquidityWithdraw, 'Liquidity Withdrawal')}
-              </div>
-            </section>
-          )}
+            ) : marketLoading ? (
+              <div className="text-[11px] text-zinc-600">Loading price…</div>
+            ) : selectedAsset ? (
+              <div className="text-[11px] text-zinc-600">No pool price</div>
+            ) : null}
+          </div>
         </div>
-      )}
 
-      {activeTab === 'position' && (
-        <section className="border-2 border-emerald-500 rounded-3xl p-8 bg-emerald-50 dark:bg-emerald-950 shadow-xl">
-          <h3 className="text-xl font-semibold mb-6 text-emerald-700 dark:text-emerald-300">
-            Pool Info &amp; My Liquidity Position
-          </h3>
-          <p className="text-sm text-emerald-600 dark:text-emerald-400 mb-6">
-            After your liquidity deposit confirms on-chain, paste the Asset Hash here to view the updated pool state and your position.
-          </p>
-
-          <div className="flex flex-col md:flex-row gap-3 mb-6">
-            <input
-              id="poolAssetHash"
-              value={poolAssetHash}
-              onChange={(e) => setPoolAssetHash(e.target.value.trim())}
-              placeholder="Paste the same Asset Hash you deposited into"
-              className="input flex-1 font-mono text-sm"
-            />
-            <button
-              type="button"
-              onClick={() => loadPoolAndPosition()}
-              disabled={loading.poolMarket || loading.myAssetBalance || loading.myLiquidityBalance}
-              className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1 self-end whitespace-nowrap"
-            >
-              {loading.poolMarket || loading.myAssetBalance || loading.myLiquidityBalance ? 'Loading…' : 'Load Pool & My Position'}
-            </button>
+        {!selectedAsset && (
+          <div className="swap-empty-banner mt-3">
+            No tracked tokens yet. Add assets on <span className="text-zinc-300">Overview</span>,
+            or open Advanced and paste an asset hash.
           </div>
+        )}
 
-          {results.poolMarket && renderPoolMarketCard(results.poolMarket)}
-          {results.myAssetBalance && renderPositionCard(results.myAssetBalance)}
-          {results.myLiquidityBalance && renderLiquiditySharesCard(results.myLiquidityBalance)}
-
-          {results.poolMarket?.code === 0 && (
-            <div className="mt-8">
-              <div className="flex items-center gap-2 mb-4">
+        <div className="p-4 space-y-2">
+          {/* You pay */}
+          <div className="swap-panel">
+            <div className="flex items-start justify-between gap-3 mb-2">
+              <span className="text-xs text-zinc-500 shrink-0 pt-0.5">You pay</span>
+              {displayPayAvailable && (
                 <button
                   type="button"
-                  onClick={() => setPositionPoolMode('deposit')}
-                  className={`compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1${
-                    positionPoolMode === 'deposit' ? ' compact-btn--active' : ''
-                  }`}
+                  onClick={fillMax}
+                  className="swap-balance-btn"
+                  title="Use available balance"
                 >
-                  Deposit
+                  <span className="text-zinc-500">Available </span>
+                  <span className="text-zinc-300 tabular-nums">
+                    <FormattedNumber value={displayPayAvailable.available} variant="balance" className="!text-zinc-300" />
+                  </span>
+                  <span className="text-zinc-500"> {displayPayAvailable.unit}</span>
+                  {displayPayAvailable.hasLocked ? (
+                    <span className="block text-[10px] text-zinc-600 mt-0.5">
+                      Locked{' '}
+                      <span className="text-amber-500/80 tabular-nums">
+                        <FormattedNumber value={displayPayAvailable.locked} variant="balance" className="!text-amber-500/80" />
+                      </span>
+                    </span>
+                  ) : null}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setPositionPoolMode('withdraw')}
-                  className={`compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1${
-                    positionPoolMode === 'withdraw' ? ' compact-btn--active' : ''
-                  }`}
-                >
-                  Withdraw
-                </button>
-              </div>
-
-              {positionPoolMode === 'deposit' ? (
-                <section className="border border-emerald-700 rounded-3xl p-6 bg-emerald-950/30">
-                  <h4 className="text-lg font-semibold mb-2 text-emerald-300">
-                    Deposit into {results.poolMarket?.data?.baseAsset?.name || 'this'} pool
-                  </h4>
-                  <p className="text-sm text-emerald-400/80 mb-4">
-                    Add asset tokens + WART to this pool using the loaded asset hash above. You receive LP shares for your deposit.
-                  </p>
-
-                  <label className="block text-sm font-medium mb-2">Asset Amount (in token units)</label>
-                  <input id="positionPoolAssetAmount" type="number" step="any" placeholder="e.g. 1000" className="input mb-3" />
-
-                  <label className="block text-sm font-medium mb-2">Asset Decimals / Precision</label>
-                  <input
-                    id="positionPoolDecimals"
-                    type="number"
-                    defaultValue={results.poolMarket?.data?.baseAsset?.decimals ?? 8}
-                    key={`position-decimals-${poolAssetHash}`}
-                    className="input mb-3"
-                  />
-
-                  <label className="block text-sm font-medium mb-2">WART Amount to Deposit</label>
-                  <input id="positionPoolWartAmount" type="number" step="any" placeholder="e.g. 10.0" className="input mb-3" />
-
-                  <label className="block text-sm font-medium mb-2">Fee (WART)</label>
-                  <input key={`positionPoolDepositFee-${feeFieldKey}`} id="positionPoolDepositFee" type="text" inputMode="decimal" defaultValue={suggestedTxFee} placeholder={suggestedTxFee} className="input mb-3" />
-
-                  <label className="block text-sm font-medium mb-2 text-amber-400">
-                    Nonce Override (only if duplicate nonce error)
-                  </label>
-                  <input id="positionPoolNonceOverride" type="number" placeholder="Leave empty for auto" className="input mb-6" />
-
-                  <button
-                    type="button"
-                    onClick={handlePositionPoolDeposit}
-                    disabled={loading.liquidityDeposit}
-                    className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
-                  >
-                    {loading.liquidityDeposit ? 'Depositing Liquidity…' : 'Deposit Liquidity'}
-                  </button>
-
-                  {results.liquidityDeposit && renderTransactionResult(results.liquidityDeposit, 'Liquidity Deposit')}
-                </section>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                inputMode="decimal"
+                value={payAmount}
+                onChange={(e) => setPayAmount(e.target.value)}
+                placeholder="0"
+                className="flex-1 min-w-0 bg-transparent text-3xl font-semibold text-white outline-none placeholder:text-zinc-700 tracking-tight"
+              />
+              <button type="button" onClick={fillMax} className="swap-chip-btn">
+                MAX
+              </button>
+              {payingWart ? (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-full bg-zinc-950/80 border border-zinc-700/80">
+                  <span className="w-6 h-6 rounded-full bg-zinc-700 text-zinc-200 text-xs font-bold flex items-center justify-center">W</span>
+                  <span className="font-semibold text-zinc-100 text-sm">WART</span>
+                </div>
               ) : (
-                <section className="border-2 border-amber-500 rounded-3xl p-6 bg-amber-50 dark:bg-amber-950 shadow-xl">
-                  <h4 className="text-lg font-semibold mb-2 text-amber-700 dark:text-amber-300">
-                    Withdraw from {results.poolMarket?.data?.baseAsset?.name || 'this'} pool
-                  </h4>
-                  <p className="text-sm text-amber-600 dark:text-amber-400 mb-4">
-                    Redeem LP shares to receive underlying {results.poolMarket?.data?.baseAsset?.name || 'asset'} + WART from this pool.
-                  </p>
-
-                  <label className="block text-sm font-medium mb-2">LP Shares to Redeem</label>
-                  <div className="flex flex-col sm:flex-row gap-3 mb-3">
-                    <input id="liquidityWithdrawShares" type="number" step="any" placeholder="LP shares to redeem" className="input flex-1" />
-                    <button
-                      type="button"
-                      onClick={fillWithdrawSharesFromBalance}
-                      className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1 self-end whitespace-nowrap"
-                    >
-                      Use my full balance
-                    </button>
-                  </div>
-
-                  <label className="block text-sm font-medium mb-2">Fee (WART)</label>
-                  <input key={`liquidityWithdrawFee-${feeFieldKey}`} id="liquidityWithdrawFee" type="text" inputMode="decimal" defaultValue={suggestedTxFee} placeholder={suggestedTxFee} className="input mb-3" />
-
-                  <label className="block text-sm font-medium mb-2 text-amber-400">
-                    Nonce Override (only if duplicate nonce error)
-                  </label>
-                  <input id="positionPoolWithdrawNonceOverride" type="number" placeholder="Leave empty for auto" className="input mb-6" />
-
-                  <button
-                    type="button"
-                    onClick={handleLiquidityWithdraw}
-                    disabled={loading.liquidityWithdraw}
-                    className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
-                  >
-                    {loading.liquidityWithdraw ? 'Withdrawing…' : 'Withdraw Liquidity'}
-                  </button>
-
-                  {results.liquidityWithdraw && renderTransactionResult(results.liquidityWithdraw, 'Liquidity Withdrawal')}
-                </section>
+                <button
+                  type="button"
+                  onClick={() => setShowTokenPicker(true)}
+                  className="swap-token-btn"
+                >
+                  <span className="w-6 h-6 rounded-full bg-zinc-700 text-zinc-200 text-xs font-bold flex items-center justify-center">
+                    {(selectedAsset?.symbol || '?')[0]}
+                  </span>
+                  <span>{selectedAsset?.symbol || 'Select'}</span>
+                  <span className="text-zinc-500 text-xs">▾</span>
+                </button>
               )}
             </div>
-          )}
+          </div>
 
-          {!results.poolMarket && !results.myAssetBalance && !results.myLiquidityBalance && (
-            <div className="text-sm text-gray-500 italic bg-emerald-950/50 p-4 rounded-2xl">
-              Enter the Asset Hash you deposited liquidity into, then click the button above.<br />
-              You will see the current pool reserves + your personal balance/position.
-            </div>
-          )}
-        </section>
-      )}
-
-      {activeTab === 'limit' && (
-        <div>
-          <div className="flex items-center gap-2 mb-6">
+          {/* Flip */}
+          <div className="flex justify-center -my-1 relative z-10">
             <button
               type="button"
-              onClick={() => setLimitOrderMode('buy')}
-              className={`compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1${
-                limitOrderMode === 'buy' ? ' compact-btn--active' : ''
-              }`}
+              onClick={flipDirection}
+              className="swap-flip-btn"
+              title="Flip direction"
+              aria-label="Flip swap direction"
             >
-              Buy
-            </button>
-            <button
-              type="button"
-              onClick={() => setLimitOrderMode('sell')}
-              className={`compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1${
-                limitOrderMode === 'sell' ? ' compact-btn--active' : ''
-              }`}
-            >
-              Sell
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4" />
+              </svg>
             </button>
           </div>
 
-          {limitOrderMode === 'buy' ? (
-            <section className="border-2 border-emerald-500 rounded-3xl p-8 bg-emerald-50 dark:bg-emerald-950 shadow-xl">
-              <h3 className="text-xl font-semibold mb-6 text-emerald-700 dark:text-emerald-300">
-                Limit Buy Order (WART → Asset)
-              </h3>
-              <p className="text-sm text-emerald-600 dark:text-emerald-400 mb-6">
-                Offer WART at your limit price to buy the asset when the pool matches. Use the price encoder to generate the 6-character limit hex.
-              </p>
-
-              <div>
-                <label className="block text-sm font-medium mb-2">Asset Hash (64 hex chars, no 0x)</label>
-                <input id="limitAssetHash" placeholder="e.g. 0e4825efffa294610d2ac376713e3bcc9b53d378e823834b64e5df01f75d3b0c" className="input mb-3 font-mono text-sm" />
-
-                {renderLimitSpendableCard()}
-
-                <label className="block text-sm font-medium mb-2">Amount (in WART)</label>
-                <div className="flex flex-col sm:flex-row gap-3 mb-4">
-                  <input id="limitAmount" type="number" step="any" placeholder="e.g. 1.0" className="input flex-1 !mb-0" />
-                  <button
-                    type="button"
-                    onClick={fillLimitAmountFromAvailable}
-                    className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1 self-end whitespace-nowrap"
-                  >
-                    Use available
-                  </button>
+          {/* You receive */}
+          <div className="swap-panel">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs text-zinc-500">You receive</span>
+              {orderMode === 'market' && (
+                <span className="text-[10px] text-zinc-600">Estimate · {slippagePct}% slip</span>
+              )}
+              {orderMode === 'limit' && limitPrice && (
+                <span className="text-[10px] text-zinc-600">At your limit</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="flex-1 min-w-0 text-3xl font-semibold text-white tracking-tight tabular-nums">
+                {receiveEstimate != null ? (
+                  <FormattedNumber value={receiveEstimate} overrides={{ maxDecimals: 8 }} className="!text-white" />
+                ) : (
+                  <span className="text-zinc-700">0</span>
+                )}
+              </div>
+              {!payingWart ? (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-full bg-zinc-950/80 border border-zinc-700/80">
+                  <span className="w-6 h-6 rounded-full bg-zinc-700 text-zinc-200 text-xs font-bold flex items-center justify-center">W</span>
+                  <span className="font-semibold text-zinc-100 text-sm">WART</span>
                 </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowTokenPicker(true)}
+                  className="swap-token-btn"
+                >
+                  <span className="w-6 h-6 rounded-full bg-zinc-700 text-zinc-200 text-xs font-bold flex items-center justify-center">
+                    {(selectedAsset?.symbol || '?')[0]}
+                  </span>
+                  <span>{selectedAsset?.symbol || 'Select'}</span>
+                  <span className="text-zinc-500 text-xs">▾</span>
+                </button>
+              )}
+            </div>
+          </div>
 
-                <div className="bg-zinc-900 border border-emerald-700 p-4 rounded-2xl mb-4">
-                  <div className="text-sm font-medium text-emerald-300 mb-3">
-                    Quick Limit Price Encoder
-                  </div>
-
-                  <div className="flex flex-col md:flex-row gap-3 items-end">
-                    <div className="flex-1">
-                      <label className="text-xs text-gray-400 block mb-1.5">Price</label>
-                      <input
-                        id="limitPriceHuman"
-                        type="text"
-                        placeholder="e.g. 0.0005"
-                        className="w-full bg-black border border-zinc-700 focus:border-emerald-500 text-white px-4 py-3 rounded-xl outline-none"
-                      />
-                    </div>
-
-                    <div className="w-full md:w-28">
-                      <label className="text-xs text-gray-400 block mb-1.5">Decimals</label>
-                      <input
-                        id="limitPriceDecimals"
-                        type="number"
-                        defaultValue="8"
-                        className="w-full bg-black border border-zinc-700 focus:border-emerald-500 text-white px-4 py-3 rounded-xl outline-none"
-                      />
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={encodeLimitPrice}
-                      className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1 self-end whitespace-nowrap"
-                    >
-                      Encode
-                    </button>
-                  </div>
-
-                  <p className="text-xs text-gray-500 mt-2">
-                    Enter human price + decimals → click Encode
-                  </p>
-                </div>
-
-                <label className="block text-sm font-medium mb-2">Encoded Limit (exactly 6 hex characters)</label>
-                <input id="limitEncoded" placeholder="e.g. c0e74d" maxLength={6} className="input mb-3 font-mono" />
-
-                <label className="block text-sm font-medium mb-2">Fee (WART)</label>
+          {/* Limit price field (limit mode only) */}
+          {orderMode === 'limit' && (
+            <div className="swap-panel">
+              <label className="text-xs text-zinc-500 block mb-2">
+                Limit price <span className="text-zinc-600">(WART per {selectedAsset?.symbol || 'token'})</span>
+              </label>
+              <div className="flex items-center gap-2">
                 <input
-                  key={`limitOrderFee-${feeFieldKey}`}
-                  id="limitOrderFee"
                   type="text"
                   inputMode="decimal"
-                  defaultValue={suggestedTxFee}
-                  placeholder={suggestedTxFee}
-                  className="input mb-3"
+                  value={limitPrice}
+                  onChange={(e) => setLimitPrice(e.target.value)}
+                  placeholder={spotPrice != null ? formatAssetPrice(spotPrice, 8) : '0.0'}
+                  className="flex-1 min-w-0 bg-transparent text-xl font-semibold text-white outline-none placeholder:text-zinc-700 tracking-tight"
                 />
-                <p className="text-xs text-zinc-500 -mt-2 mb-3">{feeHint}</p>
-
-                <label className="block text-sm font-medium mb-2 text-amber-400">
-                  Nonce Override (only if duplicate nonce error)
-                </label>
-                <input id="limitNonceOverride" type="number" placeholder="Leave empty for auto" className="input mb-6" />
-
-                <button
-                  onClick={handleLimitSwap}
-                  disabled={loading.limitSwap}
-                  className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
-                >
-                  {loading.limitSwap ? 'Submitting Buy Order…' : 'Submit Buy Limit Order'}
-                </button>
-
-                {results.limitSwap && renderTransactionResult(results.limitSwap, 'Buy Limit Order')}
-              </div>
-            </section>
-          ) : (
-            <section className="border-2 border-rose-500 rounded-3xl p-8 bg-rose-50 dark:bg-rose-950 shadow-xl">
-              <h3 className="text-xl font-semibold mb-6 text-rose-700 dark:text-rose-300">
-                Limit Sell Order (Asset → WART)
-              </h3>
-              <p className="text-sm text-rose-600 dark:text-rose-400 mb-6">
-                Offer asset tokens at your limit price to sell for WART when the pool matches. Use the price encoder to generate the 6-character limit hex.
-              </p>
-
-              <div>
-                <label className="block text-sm font-medium mb-2">Asset Hash (64 hex chars, no 0x)</label>
-                <div className="flex flex-col sm:flex-row gap-3 mb-3">
-                  <input
-                    id="limitAssetHash"
-                    placeholder="e.g. 0e4825efffa294610d2ac376713e3bcc9b53d378e823834b64e5df01f75d3b0c"
-                    className="input flex-1 !mb-0 font-mono text-sm"
-                    onBlur={() => {
-                      if (limitOrderMode === 'sell') refreshLimitSpendable({ silent: true });
-                    }}
-                  />
+                {spotPrice != null && (
                   <button
                     type="button"
-                    onClick={() => refreshLimitSpendable()}
-                    disabled={limitSpendableLoading}
-                    className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1 self-end whitespace-nowrap"
+                    onClick={() => setLimitPrice(String(spotPrice))}
+                    className="swap-chip-btn"
                   >
-                    {limitSpendableLoading ? 'Loading…' : 'Check balance'}
+                    Use spot
                   </button>
-                </div>
-
-                {renderLimitSpendableCard()}
-
-                <label className="block text-sm font-medium mb-2">Amount (in asset units)</label>
-                <div className="flex flex-col sm:flex-row gap-3 mb-4">
-                  <input id="limitAmount" type="number" step="any" placeholder="e.g. 1000" className="input flex-1 !mb-0" />
-                  <button
-                    type="button"
-                    onClick={fillLimitAmountFromAvailable}
-                    className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1 self-end whitespace-nowrap"
-                  >
-                    Use available
-                  </button>
-                </div>
-
-                <div className="bg-zinc-900 border border-rose-700 p-4 rounded-2xl mb-4">
-                  <div className="text-sm font-medium text-rose-300 mb-3">
-                    Quick Limit Price Encoder
-                  </div>
-
-                  <div className="flex flex-col md:flex-row gap-3 items-end">
-                    <div className="flex-1">
-                      <label className="text-xs text-gray-400 block mb-1.5">Price</label>
-                      <input
-                        id="limitPriceHuman"
-                        type="text"
-                        placeholder="e.g. 0.0005"
-                        className="w-full bg-black border border-zinc-700 focus:border-rose-500 text-white px-4 py-3 rounded-xl outline-none"
-                      />
-                    </div>
-
-                    <div className="w-full md:w-28">
-                      <label className="text-xs text-gray-400 block mb-1.5">Decimals</label>
-                      <input
-                        id="limitPriceDecimals"
-                        type="number"
-                        defaultValue="8"
-                        className="w-full bg-black border border-zinc-700 focus:border-rose-500 text-white px-4 py-3 rounded-xl outline-none"
-                      />
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={encodeLimitPrice}
-                      className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1 self-end whitespace-nowrap"
-                    >
-                      Encode
-                    </button>
-                  </div>
-
-                  <p className="text-xs text-gray-500 mt-2">
-                    Enter human price + decimals → click Encode
-                  </p>
-                </div>
-
-                <label className="block text-sm font-medium mb-2">Encoded Limit (exactly 6 hex characters)</label>
-                <input id="limitEncoded" placeholder="e.g. c0e74d" maxLength={6} className="input mb-3 font-mono" />
-
-                <label className="block text-sm font-medium mb-2">Fee (WART)</label>
-                <input
-                  key={`limitOrderFee-${feeFieldKey}`}
-                  id="limitOrderFee"
-                  type="text"
-                  inputMode="decimal"
-                  defaultValue={suggestedTxFee}
-                  placeholder={suggestedTxFee}
-                  className="input mb-3"
-                />
-                <p className="text-xs text-zinc-500 -mt-2 mb-3">{feeHint}</p>
-
-                <label className="block text-sm font-medium mb-2 text-amber-400">
-                  Nonce Override (only if duplicate nonce error)
-                </label>
-                <input id="limitNonceOverride" type="number" placeholder="Leave empty for auto" className="input mb-6" />
-
-                <button
-                  onClick={handleLimitSwap}
-                  disabled={loading.limitSwap}
-                  className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"
-                >
-                  {loading.limitSwap ? 'Submitting Sell Order…' : 'Submit Sell Limit Order'}
-                </button>
-
-                {results.limitSwap && renderTransactionResult(results.limitSwap, 'Sell Limit Order')}
+                )}
               </div>
-            </section>
+            </div>
+          )}
+
+          {/* Summary */}
+          <div className="swap-summary space-y-1.5 text-[11px] text-zinc-500">
+            {orderMode === 'market' && effectiveLimitPrice != null && (
+              <div className="flex justify-between gap-3">
+                <span>Max price (slippage)</span>
+                <span className="text-zinc-400 tabular-nums shrink-0">
+                  {formatAssetPrice(effectiveLimitPrice, 8)} WART
+                </span>
+              </div>
+            )}
+            {orderMode === 'limit' && effectiveLimitPrice != null && (
+              <div className="flex justify-between gap-3">
+                <span>Your limit</span>
+                <span className="text-zinc-400 tabular-nums shrink-0">
+                  {formatAssetPrice(effectiveLimitPrice, 8)} / {selectedAsset?.symbol || 'token'}
+                </span>
+              </div>
+            )}
+            <div className="flex justify-between gap-3">
+              <span>Network fee</span>
+              <span className="text-zinc-400 tabular-nums shrink-0">{txFee || suggestedTxFee} WART</span>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleSwap}
+            disabled={swapDisabled || submitLabel === 'Select a token' || submitLabel === 'Enter an amount' || submitLabel === 'Enter limit price' || submitLabel === 'No pool price'}
+            className="swap-cta-btn"
+          >
+            {submitLabel}
+          </button>
+
+          {results.swap && renderTransactionResult(
+            results.swap,
+            orderMode === 'market'
+              ? (payingWart ? 'Market Buy' : 'Market Sell')
+              : (payingWart ? 'Limit Buy' : 'Limit Sell'),
           )}
         </div>
-      )}
+      </div>
 
-    </>
+      <p className="swap-hint">
+        {orderMode === 'market'
+          ? 'Market uses pool spot ± slippage so the order can fill right away.'
+          : 'Limit rests on the book until matched. Locked balance frees when filled or cancelled.'}
+      </p>
+
+      {/* Advanced */}
+      <div className="swap-advanced">
+        <button
+          type="button"
+          onClick={() => setShowAdvanced((v) => !v)}
+          className="swap-advanced-btn"
+          aria-expanded={showAdvanced}
+        >
+          <span className={`swap-advanced-chevron${showAdvanced ? ' is-open' : ''}`} aria-hidden>
+            ▶
+          </span>
+          <span className="flex-1 text-left">
+            <span className="block font-medium text-zinc-300 text-sm">Advanced</span>
+            <span className="block text-[11px] text-zinc-600 mt-0.5">
+              Fee, slippage, liquidity, hashes &amp; pool tools
+            </span>
+          </span>
+          <span className="text-[11px] text-zinc-600 shrink-0">{showAdvanced ? 'Hide' : 'Show'}</span>
+        </button>
+
+        {showAdvanced && (
+          <div className="px-3 sm:px-4 pb-4 border-t border-zinc-800/80 space-y-3 pt-3">
+            {/* Trade settings */}
+            <div className="swap-adv-section">
+              <div className="swap-adv-title">
+                <span className="swap-adv-title-dot" />
+                Trade settings
+              </div>
+
+              {orderMode === 'market' && (
+                <div className="swap-adv-field">
+                  <span className="swap-adv-label">Slippage tolerance</span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {[1, 3, 5, 10].map((s) => (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => setSlippagePct(String(s))}
+                        className={`swap-chip-btn${String(slippagePct) === String(s) ? ' swap-chip-btn--active' : ''}`}
+                      >
+                        {s}%
+                      </button>
+                    ))}
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={slippagePct}
+                      onChange={(e) => setSlippagePct(e.target.value)}
+                      className="input !mb-0 w-20 text-sm"
+                      aria-label="Custom slippage percent"
+                    />
+                  </div>
+                  <p className="swap-adv-hint">How far past spot you accept so a market order can fill.</p>
+                </div>
+              )}
+
+              <div className="swap-adv-field">
+                <span className="swap-adv-label">Network fee (WART)</span>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={txFee}
+                  onChange={(e) => setTxFee(e.target.value)}
+                  className="input !mb-0 text-sm"
+                />
+                <p className="swap-adv-hint">{feeHint}</p>
+              </div>
+
+              <div className="swap-adv-field">
+                <span className="swap-adv-label">Nonce override <span className="text-zinc-600 font-normal">(optional)</span></span>
+                <input
+                  type="number"
+                  value={nonceOverride}
+                  onChange={(e) => setNonceOverride(e.target.value)}
+                  placeholder="Leave empty for auto"
+                  className="input !mb-0 text-sm"
+                />
+                <p className="swap-adv-hint">Only if you hit a duplicate-nonce error.</p>
+              </div>
+
+              <div className="swap-adv-field">
+                <span className="swap-adv-label">Asset hash</span>
+                <div className="swap-input-row">
+                  <input
+                    type="text"
+                    value={manualHashInput}
+                    onChange={(e) => setManualHashInput(e.target.value)}
+                    placeholder="64 hex characters"
+                    className="input !mb-0 font-mono text-xs"
+                  />
+                  <button type="button" onClick={applyManualHash} className="swap-chip-btn">
+                    Use
+                  </button>
+                </div>
+                <p className="swap-adv-hint">
+                  Tokens in the picker come from Overview tracked assets. Paste any hash here to trade a pool that isn’t tracked yet.
+                </p>
+              </div>
+
+              <div className="swap-adv-field">
+                <span className="swap-adv-label">Token decimals</span>
+                <input
+                  type="number"
+                  value={assetDecimals}
+                  onChange={(e) => setAssetDecimals(parseInt(e.target.value, 10) || 8)}
+                  className="input !mb-0 text-sm w-28"
+                />
+                <p className="swap-adv-hint">Usually filled from the market; override only if encoding looks wrong.</p>
+              </div>
+            </div>
+
+            {/* Tools */}
+            <div className="swap-adv-section swap-adv-tools">
+              <div className="swap-adv-title">
+                <span className="swap-adv-title-dot" />
+                Tools
+              </div>
+
+              <div className="dex-tabs flex w-full gap-1 p-1 overflow-x-auto scrollbar-hide">
+                {[
+                  { id: 'orders', label: 'Orders' },
+                  { id: 'liquidity', label: 'Liquidity' },
+                  { id: 'pool', label: 'Pool' },
+                  { id: 'market', label: 'Market' },
+                ].map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setAdvancedSubTab(t.id)}
+                    className={`dex-tab-btn whitespace-nowrap${advancedSubTab === t.id ? ' dex-tab-btn--active' : ''}`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+
+              {advancedSubTab === 'orders' && (
+                <div className="swap-adv-pane space-y-3">
+                  <p className="lead">View open limit orders for this wallet (or a single asset).</p>
+                  <div className="swap-adv-actions">
+                    <button
+                      type="button"
+                      onClick={() => query('openOrders', `account/${account}/open_orders`)}
+                      disabled={loading.openOrders || !account}
+                      className="swap-chip-btn"
+                    >
+                      {loading.openOrders ? 'Loading…' : 'All open orders'}
+                    </button>
+                  </div>
+                  {results.openOrders && renderOpenOrdersCompact(results.openOrders)}
+                  <div className="swap-adv-field !mb-0">
+                    <span className="swap-adv-label">Orders for asset</span>
+                    <div className="swap-input-row">
+                      <input id="assetForOrders" placeholder="asset hash" defaultValue={assetHash} className="input !mb-0 font-mono text-xs" />
+                      <button
+                        type="button"
+                        onClick={() => query(
+                          'openOrdersAsset',
+                          `account/${account}/open_orders/${encodeURIComponent(document.getElementById('assetForOrders').value)}`,
+                        )}
+                        disabled={!account}
+                        className="swap-chip-btn"
+                      >
+                        Query
+                      </button>
+                    </div>
+                  </div>
+                  {results.openOrdersAsset && renderOpenOrdersCompact(
+                    results.openOrdersAsset,
+                    document.getElementById('assetForOrders')?.value?.trim(),
+                  )}
+                </div>
+              )}
+
+              {advancedSubTab === 'liquidity' && (
+                <div className="swap-adv-pane">
+                  <div className="flex gap-2 mb-3">
+                    <button
+                      type="button"
+                      onClick={() => setLiquidityMode('deposit')}
+                      className={`swap-chip-btn${liquidityMode === 'deposit' ? ' swap-chip-btn--active' : ''}`}
+                    >
+                      Deposit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLiquidityMode('withdraw')}
+                      className={`swap-chip-btn${liquidityMode === 'withdraw' ? ' swap-chip-btn--active' : ''}`}
+                    >
+                      Withdraw
+                    </button>
+                  </div>
+
+                  {liquidityMode === 'deposit' ? (
+                    <div className="space-y-2">
+                      <p className="lead">Add asset + WART to the pool and receive LP shares.</p>
+                      <input id="liquidityAssetHash" defaultValue={assetHash} placeholder="Asset hash" className="input font-mono text-xs" />
+                      <input id="liquidityAssetAmount" type="number" step="any" placeholder="Asset amount" className="input" />
+                      <input id="liquidityDecimals" type="number" defaultValue={assetDecimals} placeholder="Decimals" className="input" />
+                      <input id="liquidityWartAmount" type="number" step="any" placeholder="WART amount" className="input" />
+                      <input id="liquidityDepositFee" type="text" inputMode="decimal" defaultValue={suggestedTxFee} placeholder="Fee (WART)" className="input" />
+                      <input id="liquidityNonceOverride" type="number" placeholder="Nonce override (optional)" className="input" />
+                      <div className="swap-adv-actions">
+                        <button
+                          type="button"
+                          onClick={handleLiquidityDeposit}
+                          disabled={loading.liquidityDeposit}
+                          className="swap-chip-btn"
+                        >
+                          {loading.liquidityDeposit ? 'Depositing…' : 'Deposit liquidity'}
+                        </button>
+                      </div>
+                      {results.liquidityDeposit && renderTransactionResult(results.liquidityDeposit, 'Liquidity Deposit')}
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="lead">Redeem LP shares for underlying asset + WART.</p>
+                      <input id="liquidityWithdrawAssetHash" defaultValue={assetHash || poolAssetHash} placeholder="Asset hash" className="input font-mono text-xs" />
+                      <input id="liquidityWithdrawShares" type="number" step="any" placeholder="LP shares" className="input" />
+                      <input id="liquidityWithdrawFee" type="text" inputMode="decimal" defaultValue={suggestedTxFee} placeholder="Fee (WART)" className="input" />
+                      <input id="liquidityWithdrawNonceOverride" type="number" placeholder="Nonce override (optional)" className="input" />
+                      <div className="swap-adv-actions">
+                        <button type="button" onClick={fillWithdrawFromLpBalance} className="swap-chip-btn">
+                          Fill from position
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleLiquidityWithdraw}
+                          disabled={loading.liquidityWithdraw}
+                          className="swap-chip-btn"
+                        >
+                          {loading.liquidityWithdraw ? 'Withdrawing…' : 'Withdraw liquidity'}
+                        </button>
+                      </div>
+                      {results.liquidityWithdraw && renderTransactionResult(results.liquidityWithdraw, 'Liquidity Withdrawal')}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {advancedSubTab === 'pool' && (
+                <div className="swap-adv-pane space-y-3">
+                  <p className="lead">Load reserves, spot, and your LP shares for a pool.</p>
+                  <div className="swap-adv-field !mb-0">
+                    <span className="swap-adv-label">Pool asset hash</span>
+                    <div className="swap-input-row">
+                      <input
+                        id="poolAssetHash"
+                        value={poolAssetHash || assetHash}
+                        onChange={(e) => setPoolAssetHash(e.target.value)}
+                        placeholder="64 hex chars"
+                        className="input !mb-0 font-mono text-xs"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => loadPoolAndPosition()}
+                        disabled={loading.poolMarket}
+                        className="swap-chip-btn"
+                      >
+                        {loading.poolMarket ? '…' : 'Load'}
+                      </button>
+                    </div>
+                  </div>
+                  {results.poolMarket && renderPoolMarketCard(results.poolMarket)}
+                  {results.myLiquidityBalance && renderLiquiditySharesCard(results.myLiquidityBalance)}
+
+                  {results.poolMarket?.code === 0 && (
+                    <div className="pt-1 border-t border-zinc-800/80">
+                      <div className="flex gap-2 mb-3 mt-3">
+                        <button
+                          type="button"
+                          onClick={() => setPositionPoolMode('deposit')}
+                          className={`swap-chip-btn${positionPoolMode === 'deposit' ? ' swap-chip-btn--active' : ''}`}
+                        >
+                          Deposit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPositionPoolMode('withdraw')}
+                          className={`swap-chip-btn${positionPoolMode === 'withdraw' ? ' swap-chip-btn--active' : ''}`}
+                        >
+                          Withdraw
+                        </button>
+                      </div>
+                      {positionPoolMode === 'deposit' ? (
+                        <div className="space-y-2">
+                          <input id="positionPoolAssetAmount" type="number" step="any" placeholder="Asset amount" className="input" />
+                          <input id="positionPoolDecimals" type="number" defaultValue={results.poolMarket?.data?.baseAsset?.decimals ?? assetDecimals} className="input" />
+                          <input id="positionPoolWartAmount" type="number" step="any" placeholder="WART amount" className="input" />
+                          <input id="positionPoolDepositFee" type="text" inputMode="decimal" defaultValue={suggestedTxFee} className="input" />
+                          <input id="positionPoolNonceOverride" type="number" placeholder="Nonce override" className="input" />
+                          <div className="swap-adv-actions">
+                            <button
+                              type="button"
+                              onClick={handlePositionPoolDeposit}
+                              disabled={loading.liquidityDeposit}
+                              className="swap-chip-btn"
+                            >
+                              {loading.liquidityDeposit ? 'Depositing…' : 'Deposit into pool'}
+                            </button>
+                          </div>
+                          {results.liquidityDeposit && renderTransactionResult(results.liquidityDeposit, 'Liquidity Deposit')}
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          <button type="button" onClick={fillWithdrawFromLpBalance} className="swap-chip-btn">
+                            Fill withdraw form from LP balance
+                          </button>
+                          <p className="swap-adv-hint">Then switch to Liquidity → Withdraw to redeem.</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {advancedSubTab === 'market' && (
+                <div className="swap-adv-pane space-y-3">
+                  <p className="lead">Query raw market data for any asset pool.</p>
+                  <div className="swap-adv-field !mb-0">
+                    <span className="swap-adv-label">Market / asset hash</span>
+                    <div className="swap-input-row">
+                      <input id="market" defaultValue={assetHash} placeholder="asset hash" className="input !mb-0 font-mono text-xs" />
+                      <button
+                        type="button"
+                        onClick={() => query('dexMarket', `dex/market/${encodeURIComponent(document.getElementById('market').value)}`)}
+                        disabled={loading.dexMarket}
+                        className="swap-chip-btn"
+                      >
+                        {loading.dexMarket ? '…' : 'Query'}
+                      </button>
+                    </div>
+                  </div>
+                  {results.dexMarket && renderPoolMarketCard(results.dexMarket)}
+                  {marketInfo && !results.dexMarket && (
+                    <p className="swap-adv-hint">
+                      The pair above already has live spot from this pool.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Token picker modal */}
+      {showTokenPicker && (
+        <div className="modal-overlay swap-page" style={{ zIndex: 1100 }} onClick={() => setShowTokenPicker(false)}>
+          <div className="modal-content max-w-md" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-lg font-semibold mb-1 !text-zinc-100">Select token</h2>
+            <p className="text-xs text-zinc-500 mb-4 leading-relaxed">
+              Shows assets you’ve tracked on Overview (with a fetched balance).
+              Warthog pools are always <span className="text-zinc-400">token ↔ WART</span>.
+            </p>
+
+            {tokenOptions.length === 0 ? (
+              <div className="p-4 rounded-xl border border-dashed border-zinc-700 bg-zinc-900/50 text-sm text-zinc-400 mb-4 leading-relaxed">
+                No tracked assets yet. On Overview, add a token by hash, or paste a hash below / in Advanced.
+              </div>
+            ) : (
+              <div className="space-y-1.5 max-h-64 overflow-y-auto mb-4">
+                {tokenOptions.map((t) => (
+                  <button
+                    key={t.hash}
+                    type="button"
+                    onClick={() => selectToken(t)}
+                    className={`swap-token-row${selectedAsset?.hash === t.hash ? ' swap-token-row--active' : ''}`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="w-8 h-8 rounded-full bg-zinc-700 text-zinc-200 text-sm font-bold flex items-center justify-center flex-shrink-0">
+                        {t.symbol[0]}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="font-semibold text-white truncate">{t.symbol}</div>
+                        <div className="font-mono text-[10px] text-zinc-500 truncate">{t.hash.slice(0, 12)}…</div>
+                      </div>
+                    </div>
+                    <div className="text-right text-xs tabular-nums text-zinc-400 flex-shrink-0 ml-2">
+                      <FormattedNumber value={t.available} variant="balance" className="!text-zinc-400" />
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="border-t border-zinc-800 pt-3">
+              <label className="block text-xs text-zinc-400 mb-1">Or paste asset hash</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={manualHashInput}
+                  onChange={(e) => setManualHashInput(e.target.value)}
+                  placeholder="64 hex characters"
+                  className="input !mb-0 flex-1 font-mono text-xs"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    applyManualHash();
+                    setShowTokenPicker(false);
+                  }}
+                  className="swap-chip-btn"
+                >
+                  Use
+                </button>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowTokenPicker(false)}
+              className="swap-cta-btn !mt-4"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 };
 
