@@ -471,34 +471,34 @@ const WalletSetup = () => {
               <strong>Critical:</strong> Write your seed phrase and private key on paper and store them offline. Never share them. Anyone with this information can steal your funds.
             </div>
             {walletData.mnemonic && (
-              <div className="result">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-medium text-amber-400">SEED PHRASE (SAVE THIS SECURELY)</span>
+              <div className="result min-w-0">
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+                  <span className="text-xs font-medium text-amber-400 min-w-0">SEED PHRASE (SAVE THIS SECURELY)</span>
                   <button type="button" onClick={() => copyToClipboard(walletData.mnemonic, 'Seed phrase copied')} className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !mt-0 !px-3 !py-1">COPY</button>
                 </div>
-                <pre onClick={() => copyToClipboard(walletData.mnemonic, 'Seed phrase copied')} className="cursor-pointer select-all">{walletData.mnemonic}</pre>
+                <pre onClick={() => copyToClipboard(walletData.mnemonic, 'Seed phrase copied')} className="cursor-pointer select-all whitespace-pre-wrap break-words [overflow-wrap:anywhere] max-w-full">{walletData.mnemonic}</pre>
               </div>
             )}
-            <div className="result">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs font-medium text-red-400">PRIVATE KEY — NEVER SHARE</span>
+            <div className="result min-w-0">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+                <span className="text-xs font-medium text-red-400 min-w-0">PRIVATE KEY — NEVER SHARE</span>
                 <button type="button" onClick={() => copyToClipboard(walletData.privateKey, 'Private key copied')} className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !mt-0 !px-3 !py-1">COPY</button>
               </div>
-              <pre onClick={() => copyToClipboard(walletData.privateKey, 'Private key copied')} className="cursor-pointer select-all">{walletData.privateKey}</pre>
+              <pre onClick={() => copyToClipboard(walletData.privateKey, 'Private key copied')} className="cursor-pointer select-all whitespace-pre-wrap break-all [overflow-wrap:anywhere] max-w-full">{walletData.privateKey}</pre>
             </div>
-            <div className="result">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs font-medium text-zinc-400">Public Key</span>
+            <div className="result min-w-0">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+                <span className="text-xs font-medium text-zinc-400 min-w-0">Public Key</span>
                 <button type="button" onClick={() => copyToClipboard(walletData.publicKey, 'Public key copied')} className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !mt-0 !px-3 !py-1">COPY</button>
               </div>
-              <pre onClick={() => copyToClipboard(walletData.publicKey)} className="cursor-pointer select-all text-xs">{walletData.publicKey}</pre>
+              <pre onClick={() => copyToClipboard(walletData.publicKey)} className="cursor-pointer select-all text-xs whitespace-pre-wrap break-all [overflow-wrap:anywhere] max-w-full">{walletData.publicKey}</pre>
             </div>
-            <div className="result">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs font-medium text-emerald-400">Address</span>
+            <div className="result min-w-0">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+                <span className="text-xs font-medium text-emerald-400 min-w-0">Address</span>
                 <button type="button" onClick={() => copyToClipboard(walletData.address, 'Address copied')} className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !mt-0 !px-3 !py-1">COPY</button>
               </div>
-              <pre onClick={() => copyToClipboard(walletData.address, 'Address copied')} className="cursor-pointer select-all font-mono text-sm">{walletData.address}</pre>
+              <pre onClick={() => copyToClipboard(walletData.address, 'Address copied')} className="cursor-pointer select-all font-mono text-sm whitespace-pre-wrap break-all [overflow-wrap:anywhere] max-w-full">{walletData.address}</pre>
             </div>
 
             <div className="rounded-xl border border-zinc-700 bg-zinc-950/80 px-4 py-3 text-sm text-zinc-300 space-y-2 mt-1">
