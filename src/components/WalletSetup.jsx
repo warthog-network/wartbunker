@@ -474,7 +474,7 @@ const WalletSetup = () => {
               <div className="result">
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs font-medium text-amber-400">SEED PHRASE (SAVE THIS SECURELY)</span>
-                  <button onClick={() => copyToClipboard(walletData.mnemonic, 'Seed phrase copied')} className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 hover:text-white">COPY</button>
+                  <button type="button" onClick={() => copyToClipboard(walletData.mnemonic, 'Seed phrase copied')} className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !mt-0 !px-3 !py-1">COPY</button>
                 </div>
                 <pre onClick={() => copyToClipboard(walletData.mnemonic, 'Seed phrase copied')} className="cursor-pointer select-all">{walletData.mnemonic}</pre>
               </div>
@@ -482,21 +482,21 @@ const WalletSetup = () => {
             <div className="result">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-xs font-medium text-red-400">PRIVATE KEY — NEVER SHARE</span>
-                <button onClick={() => copyToClipboard(walletData.privateKey, 'Private key copied')} className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 hover:text-white">COPY</button>
+                <button type="button" onClick={() => copyToClipboard(walletData.privateKey, 'Private key copied')} className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !mt-0 !px-3 !py-1">COPY</button>
               </div>
               <pre onClick={() => copyToClipboard(walletData.privateKey, 'Private key copied')} className="cursor-pointer select-all">{walletData.privateKey}</pre>
             </div>
             <div className="result">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-xs font-medium text-zinc-400">Public Key</span>
-                <button onClick={() => copyToClipboard(walletData.publicKey, 'Public key copied')} className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 hover:text-white">COPY</button>
+                <button type="button" onClick={() => copyToClipboard(walletData.publicKey, 'Public key copied')} className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !mt-0 !px-3 !py-1">COPY</button>
               </div>
               <pre onClick={() => copyToClipboard(walletData.publicKey)} className="cursor-pointer select-all text-xs">{walletData.publicKey}</pre>
             </div>
             <div className="result">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-xs font-medium text-emerald-400">Address</span>
-                <button onClick={() => copyToClipboard(walletData.address, 'Address copied')} className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 hover:text-white">COPY</button>
+                <button type="button" onClick={() => copyToClipboard(walletData.address, 'Address copied')} className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !mt-0 !px-3 !py-1">COPY</button>
               </div>
               <pre onClick={() => copyToClipboard(walletData.address, 'Address copied')} className="cursor-pointer select-all font-mono text-sm">{walletData.address}</pre>
             </div>
@@ -588,7 +588,7 @@ const WalletSetup = () => {
                 type="button"
                 onClick={handleDownloadWalletFile}
                 disabled={!downloadPassword}
-                className="mt-2 w-full"
+                className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !mt-2 !px-3 !py-1 !w-full"
               >
                 Download Encrypted Wallet File
               </button>
@@ -609,25 +609,28 @@ const WalletSetup = () => {
               <div className="error"><p>{error}</p></div>
             )}
 
-            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+            <div className="flex flex-wrap items-center gap-2 mt-2">
               <button
+                type="button"
                 onClick={handleUseNow}
                 disabled={!consentToClose}
-                style={{ flex: 1 }}
+                className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !mt-0 !px-3 !py-1 flex-1"
               >
                 Use Wallet Now
               </button>
               <button
+                type="button"
                 onClick={handleSaveWallet}
                 disabled={!consentToClose || !saveWalletConsent || !walletName || !password || password !== confirmPassword}
-                style={{ flex: 1 }}
+                className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !mt-0 !px-3 !py-1 flex-1"
               >
                 Save in This Browser
               </button>
             </div>
             <button
+              type="button"
               onClick={() => { setShowModal(false); setError(null); }}
-              style={{ marginTop: '0.25rem', background: 'transparent', color: '#888', border: '1px solid #444' }}
+              className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !mt-2 !px-3 !py-1 !w-full"
             >
               Cancel
             </button>
