@@ -41,7 +41,19 @@ export function formatSubmitResult(data) {
 
 /** Shape a failed submit result for transaction result cards. */
 export function formatSubmitError(message) {
-  return { code: -1, error: message };
+  const text =
+    typeof message === 'string'
+      ? message
+      : message?.message != null
+        ? String(message.message)
+        : message != null
+          ? String(message)
+          : 'Unknown error';
+  // Never surface the literal "undefined"/"null" from bad String() coercion.
+  if (!text || text === 'undefined' || text === 'null' || text === 'string undefined') {
+    return { code: -1, error: 'Transaction failed — check inputs and try again' };
+  }
+  return { code: -1, error: text };
 }
 
 /** GET a node path and return the legacy `{ code, data, error }` response shape. */

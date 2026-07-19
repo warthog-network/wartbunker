@@ -5,6 +5,7 @@ import FormattedNumber from './FormattedNumber.jsx';
 import { useNumberDisplay } from './NumberDisplayContext.jsx';
 import {
   createWarthogApi,
+  DEFAULT_TX_FEE,
   formatSubmitError,
   formatSubmitResult,
   getNodeData,
@@ -44,6 +45,9 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const selectedNode = propSelectedNode || contextSelectedNode || DEFAULT_NODE_URL;
   const wallet = propWallet || readPublicSession();
   const account = wallet?.address || '';
+  /** Always a usable fee string for forms + submit (context may load async). */
+  const effectiveSuggestedFee =
+    (typeof suggestedTxFee === 'string' && suggestedTxFee.trim()) || DEFAULT_TX_FEE;
 
   const toast = useToast();
   const {
@@ -60,7 +64,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const [payAmount, setPayAmount] = useState('');
   const [limitPrice, setLimitPrice] = useState(''); // WART per 1 asset
   const [slippagePct, setSlippagePct] = useState(String(DEFAULT_MARKET_SLIPPAGE_PCT));
-  const [txFee, setTxFee] = useState(suggestedTxFee);
+  const [txFee, setTxFee] = useState(effectiveSuggestedFee);
   const [nonceOverride, setNonceOverride] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showTokenPicker, setShowTokenPicker] = useState(false);
@@ -84,12 +88,23 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const [poolAssetHash, setPoolAssetHash] = useState('');
 
   const feeHint = nodeMinFeeStr
-    ? `Node minimum: ${nodeMinFeeStr} WART. Suggested: ${suggestedTxFee} WART.`
-    : `Suggested: ${suggestedTxFee} WART.`;
+    ? `Node minimum: ${nodeMinFeeStr} WART. Suggested: ${effectiveSuggestedFee} WART.`
+    : `Suggested: ${effectiveSuggestedFee} WART.`;
+
+  /** Resolve a fee string for submit without calling methods on undefined. */
+  const resolveFormFee = (raw) => {
+    const fromInput = raw != null && raw !== ''
+      ? String(raw).trim().replace(',', '.')
+      : '';
+    if (fromInput && fromInput !== 'undefined' && fromInput !== 'null') {
+      return fromInput;
+    }
+    return effectiveSuggestedFee;
+  };
 
   useEffect(() => {
-    setTxFee(suggestedTxFee);
-  }, [suggestedTxFee]);
+    setTxFee(effectiveSuggestedFee);
+  }, [effectiveSuggestedFee]);
 
   useEffect(() => {
     import('../utils/encodeLimitPrice.js').catch(() => {});
@@ -505,10 +520,14 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
         if (!Number.isNaN(parsed)) nonceId = parsed;
       }
 
+      if (!limitHex || typeof limitHex !== 'string' || limitHex.length !== 6) {
+        throw new Error('Failed to encode limit price — try a different price or amount');
+      }
+
       const api = await createWarthogApi(selectedNode);
       const { nonce, data } = await signAndSubmitTransaction(api, {
         nonceId,
-        fee: (txFee || suggestedTxFee).toString().trim().replace(',', '.') || suggestedTxFee,
+        fee: resolveFormFee(txFee),
         buildSpec: {
           type: 'LIMIT_SWAP',
           assetHash,
@@ -536,7 +555,14 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       loadMarket(assetHash);
     } catch (err) {
       console.error(err);
-      let message = err.message || 'Unknown error';
+      let message =
+        (typeof err?.message === 'string' && err.message) ||
+        (typeof err === 'string' ? err : null) ||
+        'Unknown error';
+      // Guard against garbage like "undefined" from String(undefined) fee paths
+      if (message === 'undefined' || message === 'null' || message === 'string undefined') {
+        message = 'Swap failed — check fee, amount, and wallet unlock state, then try again';
+      }
       if (/insufficient\s+(token\s+)?balance/i.test(message)) {
         const spendable = paySpendable || (await refreshPaySpendable({ silent: true }));
         if (spendable) {
@@ -584,7 +610,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       const feeRaw = document.getElementById('liquidityDepositFee')?.value?.trim().replace(',', '.');
       const { nonce, data } = await signAndSubmitTransaction(api, {
         nonceId,
-        fee: feeRaw || suggestedTxFee,
+        fee: resolveFormFee(feeRaw),
         buildSpec: {
           type: 'LIQUIDITY_DEPOSIT',
           assetHash: assetHashRaw,
@@ -632,7 +658,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       const feeRaw = document.getElementById('liquidityWithdrawFee')?.value?.trim().replace(',', '.');
       const { nonce, data } = await signAndSubmitTransaction(api, {
         nonceId,
-        fee: feeRaw || suggestedTxFee,
+        fee: resolveFormFee(feeRaw),
         buildSpec: {
           type: 'LIQUIDITY_WITHDRAW',
           assetHash: assetHashRaw,
@@ -680,7 +706,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       const feeRaw = document.getElementById('positionPoolDepositFee')?.value?.trim().replace(',', '.');
       const { nonce, data } = await signAndSubmitTransaction(api, {
         nonceId,
-        fee: feeRaw || suggestedTxFee,
+        fee: resolveFormFee(feeRaw),
         buildSpec: {
           type: 'LIQUIDITY_DEPOSIT',
           assetHash: assetHashRaw,
@@ -1195,7 +1221,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
             )}
             <div className="flex justify-between gap-3">
               <span>Network fee</span>
-              <span className="text-zinc-400 tabular-nums shrink-0">{txFee || suggestedTxFee} WART</span>
+              <span className="text-zinc-400 tabular-nums shrink-0">{txFee || effectiveSuggestedFee} WART</span>
             </div>
           </div>
 
@@ -1423,7 +1449,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                       <input id="liquidityAssetAmount" type="number" step="any" placeholder="Asset amount" className="input" />
                       <input id="liquidityDecimals" type="number" defaultValue={assetDecimals} placeholder="Decimals" className="input" />
                       <input id="liquidityWartAmount" type="number" step="any" placeholder="WART amount" className="input" />
-                      <input id="liquidityDepositFee" type="text" inputMode="decimal" defaultValue={suggestedTxFee} placeholder="Fee (WART)" className="input" />
+                      <input id="liquidityDepositFee" type="text" inputMode="decimal" defaultValue={effectiveSuggestedFee} placeholder="Fee (WART)" className="input" />
                       <input id="liquidityNonceOverride" type="number" placeholder="Nonce override (optional)" className="input" />
                       <div className="swap-adv-actions">
                         <button
@@ -1442,7 +1468,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                       <p className="lead">Redeem LP shares for underlying asset + WART.</p>
                       <input id="liquidityWithdrawAssetHash" defaultValue={assetHash || poolAssetHash} placeholder="Asset hash" className="input font-mono text-xs" />
                       <input id="liquidityWithdrawShares" type="number" step="any" placeholder="LP shares" className="input" />
-                      <input id="liquidityWithdrawFee" type="text" inputMode="decimal" defaultValue={suggestedTxFee} placeholder="Fee (WART)" className="input" />
+                      <input id="liquidityWithdrawFee" type="text" inputMode="decimal" defaultValue={effectiveSuggestedFee} placeholder="Fee (WART)" className="input" />
                       <input id="liquidityWithdrawNonceOverride" type="number" placeholder="Nonce override (optional)" className="input" />
                       <div className="swap-adv-actions">
                         <button type="button" onClick={fillWithdrawFromLpBalance} className="swap-chip-btn">
@@ -1512,7 +1538,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                           <input id="positionPoolAssetAmount" type="number" step="any" placeholder="Asset amount" className="input" />
                           <input id="positionPoolDecimals" type="number" defaultValue={results.poolMarket?.data?.baseAsset?.decimals ?? assetDecimals} className="input" />
                           <input id="positionPoolWartAmount" type="number" step="any" placeholder="WART amount" className="input" />
-                          <input id="positionPoolDepositFee" type="text" inputMode="decimal" defaultValue={suggestedTxFee} className="input" />
+                          <input id="positionPoolDepositFee" type="text" inputMode="decimal" defaultValue={effectiveSuggestedFee} className="input" />
                           <input id="positionPoolNonceOverride" type="number" placeholder="Nonce override" className="input" />
                           <div className="swap-adv-actions">
                             <button

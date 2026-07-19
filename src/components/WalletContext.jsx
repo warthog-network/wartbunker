@@ -2,7 +2,12 @@ import React, { createContext, useContext, useState, useEffect, useLayoutEffect,
 import axios from 'axios';
 import { encryptWallet, decryptWallet, normalizeDecryptedWallet } from '../utils/warthogWalletUtils';
 import { clearLegacyAutoMinePrefs, isFakeMineAllowed } from '../utils/nodeAccess';
-import { createWarthogApi, normalizeAssetHash } from '../utils/warthogClient.js';
+import {
+  createWarthogApi,
+  DEFAULT_TX_FEE,
+  fetchNodeTxFees,
+  normalizeAssetHash,
+} from '../utils/warthogClient.js';
 import { DEFAULT_NODE_URL, isDefiNode, isMainnetNode, resolveSavedNodeUrl } from '../utils/presetNodes.js';
 import { persistSelectedNode, resolveLiveNode } from '../utils/nodeFailover.js';
 import {
@@ -66,6 +71,10 @@ export const WalletProvider = ({ children }) => {
   const [currentWalletName, setCurrentWalletName] = useState(null);
   const [isSigningUnlocked, setIsSigningUnlocked] = useState(false);
   const autoLockCallbackRef = useRef(null);
+  /** Node minimum fee display string (e.g. "0.00000001"). */
+  const [nodeMinFeeStr, setNodeMinFeeStr] = useState(null);
+  /** Suggested fee for forms / swap (max of DEFAULT_TX_FEE and node min). */
+  const [suggestedTxFee, setSuggestedTxFee] = useState(DEFAULT_TX_FEE);
 
   // NEW: Asset balances (live fetched data)
   const [assetBalances, setAssetBalances] = useState([]);
@@ -176,6 +185,29 @@ export const WalletProvider = ({ children }) => {
       fetchBalanceAndNonce(wallet.address);
     }
   }, [wallet, selectedNode, refreshTrigger]);
+
+  // Keep min/suggested fees in sync with the selected node (used by Swap, Send, Asset forms).
+  useEffect(() => {
+    if (!selectedNode) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const api = await createWarthogApi(selectedNode);
+        const fees = await fetchNodeTxFees(api);
+        if (cancelled) return;
+        setNodeMinFeeStr(fees.minFeeStr);
+        setSuggestedTxFee(fees.suggestedFeeStr || DEFAULT_TX_FEE);
+      } catch (err) {
+        if (cancelled) return;
+        console.warn('Could not fetch node min fee:', err?.message || err);
+        setNodeMinFeeStr(null);
+        setSuggestedTxFee(DEFAULT_TX_FEE);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedNode]);
 
   // Prefetch history via explorer indexer (node fallback) so History tab is warm on open.
   useEffect(() => {
@@ -601,6 +633,8 @@ export const WalletProvider = ({ children }) => {
     activateWalletSession,
     clearSigningSession,
     registerAutoLockCallback,
+    nodeMinFeeStr,
+    suggestedTxFee,
   };
 
   return (

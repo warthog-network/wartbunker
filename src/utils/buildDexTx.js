@@ -62,6 +62,9 @@ export async function buildLimitSwapTx(ctx, account, {
   }
 
   const { Funds, TokenPrecision, Wart, Price } = await import('warthog-js');
+  if (limitHex == null || typeof limitHex !== 'string') {
+    throw new Error('Limit price is missing — re-enter price and try again');
+  }
   const limit = Price.fromHex(limitHex.trim().replace(/^0x/i, '').toLowerCase());
   if (!limit) {
     throw new Error('Limit price must be exactly 6 hex characters');
