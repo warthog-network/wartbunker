@@ -38,7 +38,7 @@ const ToolsPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       { id: 'numbers', label: 'Number Display' },
     ];
     if (wallet) {
-      options.push({ id: 'mobile', label: 'Mobile Transfer' });
+      options.push({ id: 'mobile', label: 'Export QR' });
     }
     if (isDefi) {
       options.push(
@@ -52,6 +52,9 @@ const ToolsPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const resolvedTool = toolOptions.some((t) => t.id === activeTool)
     ? activeTool
     : 'validate';
+
+  const activeToolLabel =
+    toolOptions.find((t) => t.id === resolvedTool)?.label || resolvedTool;
 
   const handleValidateAddress = async () => {
     setIsValidating(true);
@@ -85,23 +88,52 @@ const ToolsPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     <section>
       <h2>Tools</h2>
       <p className="text-sm text-zinc-400 mb-4">
-        Utility helpers for address checks, display preferences, dev mining, and DEX tooling.
+        Utility helpers for address checks, display preferences, mobile export QR, dev mining, and DEX tooling.
       </p>
 
-      <div className="flex items-center gap-2 mb-6 flex-wrap">
-        {toolOptions.map((tool) => (
-          <button
-            key={tool.id}
-            type="button"
-            onClick={() => setActiveTool(tool.id)}
-            className={`compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1${
-              resolvedTool === tool.id ? ' compact-btn--active' : ''
-            }`}
+      <details className="group border border-zinc-800 rounded-xl overflow-hidden bg-zinc-950/50 mb-6">
+        <summary className="cursor-pointer list-none flex items-center justify-between gap-3 px-3 py-2.5 hover:bg-zinc-900/80 transition-colors select-none">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="group-open:rotate-90 inline-block transition text-zinc-500 text-[10px] flex-shrink-0">
+              ▶
+            </span>
+            <div className="min-w-0">
+              <div className="text-xs text-zinc-300">Tool</div>
+              <div className="text-[10px] text-zinc-500 truncate">
+                Choose a utility to open below
+              </div>
+            </div>
+          </div>
+          <span
+            className="compact-btn compact-btn--active !mx-0 !my-0 !px-3 !py-1 flex-shrink-0 pointer-events-none"
+            aria-hidden="true"
           >
-            {tool.label}
-          </button>
-        ))}
-      </div>
+            {activeToolLabel}
+          </span>
+        </summary>
+        <div className="px-3 pb-3 pt-2 border-t border-zinc-800">
+          <div
+            className="flex flex-wrap items-center gap-1.5"
+            role="tablist"
+            aria-label="Tools"
+          >
+            {toolOptions.map((tool) => (
+              <button
+                key={tool.id}
+                type="button"
+                role="tab"
+                aria-selected={resolvedTool === tool.id}
+                onClick={() => setActiveTool(tool.id)}
+                className={`compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1${
+                  resolvedTool === tool.id ? ' compact-btn--active' : ''
+                }`}
+              >
+                {tool.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </details>
 
       {resolvedTool === 'validate' && (
         <div className="bg-zinc-950 border border-zinc-700 rounded-2xl p-5">

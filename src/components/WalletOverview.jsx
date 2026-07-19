@@ -6,7 +6,8 @@ import FormattedNumber from './FormattedNumber.jsx';
 import SpendableBalanceDisplay from './SpendableBalanceDisplay.jsx';
 import ConfirmDialog from './ConfirmDialog';
 import AddressQrModal from './AddressQrModal';
-import WalletQrExportModal from './WalletQrExportModal';
+import BalanceCardAccess from './BalanceCardAccess';
+import DexPage from './DexPage';
 import { isValidAssetHash } from '../utils/warthogFormat';
 import { createWarthogApi, getNodeData } from '../utils/warthogClient.js';
 import {
@@ -84,7 +85,7 @@ const WalletOverview = ({ onLogout }) => {
   const [cancelConfirm, setCancelConfirm] = useState(null);
   const [cancelSpeedUp, setCancelSpeedUp] = useState(false);
   const [showAddressQr, setShowAddressQr] = useState(false);
-  const [showWalletExportQr, setShowWalletExportQr] = useState(false);
+  const [homeTradeExpanded, setHomeTradeExpanded] = useState(true);
 
   const hasPositiveBalance = (balanceInfo) => {
     if (!balanceInfo) return false;
@@ -132,12 +133,6 @@ const WalletOverview = ({ onLogout }) => {
     }).catch(() => {
       toast.error('Failed to copy to clipboard');
     });
-  };
-
-  const abbreviateAddress = (address) => {
-    if (!address) return '';
-    if (address.length <= 11) return address;
-    return `${address.slice(0, 5)}…${address.slice(-5)}`;
   };
 
   const enrichOpenOrders = async (ordersData) => {
@@ -453,125 +448,137 @@ const WalletOverview = ({ onLogout }) => {
   };
   // ============================================================
 
+  const balanceLoading = balance === null;
+
+  const scrollToHomeSwap = () => {
+    setHomeTradeExpanded(true);
+    requestAnimationFrame(() => {
+      const el = document.getElementById('home-swap');
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  };
+
+  // Guest / no session: same Home card shell, guided access only (no empty balance)
   if (!wallet) {
     return (
-      <section>
-        <p className="text-zinc-400 text-sm">Please log in to view your wallet.</p>
+      <section className="!p-0 !bg-transparent !border-0 !shadow-none !mb-0">
+        <div className="space-y-3">
+          <div className="relative overflow-hidden rounded-2xl border border-zinc-700 bg-gradient-to-br from-zinc-800/90 via-zinc-900 to-zinc-950 min-w-0">
+            <div className="absolute -top-10 -right-10 w-40 h-40 rounded-full bg-zinc-500/10 blur-3xl pointer-events-none" />
+            <div className="absolute bottom-0 left-0 w-28 h-28 rounded-full bg-zinc-600/8 blur-2xl pointer-events-none" />
+            <div className="relative px-3 py-3.5 sm:px-4 sm:py-4 min-w-0">
+              <BalanceCardAccess />
+            </div>
+          </div>
+        </div>
       </section>
     );
   }
 
-  const balanceLoading = balance === null;
-
   return (
     <section className="!p-0 !bg-transparent !border-0 !shadow-none !mb-0">
-      {/* Page header */}
-      <div className="mb-5">
-        <h2 className="!mb-1">Wallet Overview</h2>
-        <p className="text-xs text-zinc-500">Your balances, assets, and open orders</p>
-      </div>
+      <div className="space-y-3">
+        {/* Balance card — floats on its own */}
+        <div className="relative overflow-hidden rounded-2xl border border-zinc-700 bg-gradient-to-br from-zinc-800/90 via-zinc-900 to-zinc-950 min-w-0">
+          <div className="absolute -top-10 -right-10 w-40 h-40 rounded-full bg-zinc-500/10 blur-3xl pointer-events-none" />
+          <div className="absolute bottom-0 left-0 w-28 h-28 rounded-full bg-zinc-600/8 blur-2xl pointer-events-none" />
 
-      <div className="space-y-4">
-        {/* Balance hero */}
-        <div className="relative overflow-hidden rounded-2xl border border-zinc-700/80 bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-950 min-w-0">
-          <div className="absolute -top-10 -right-10 w-40 h-40 rounded-full bg-[#FDB913]/8 blur-3xl pointer-events-none" />
-          <div className="absolute bottom-0 left-0 w-28 h-28 rounded-full bg-orange-500/5 blur-2xl pointer-events-none" />
-
-          <div className="relative p-5 min-w-0">
-            <div className="mb-4 min-w-0">
-              {currentWalletName && (
-                <div className="flex items-center gap-1.5 text-[10px] text-zinc-500 mb-2">
-                  <span className="inline-block w-1 h-1 rounded-full bg-[#FDB913]/80 flex-shrink-0" />
-                  <span>
-                    Saved as{' '}
+          <div className="relative px-3 py-3.5 sm:px-4 sm:py-4 min-w-0">
+            <div className="flex items-center justify-between gap-2 mb-3 min-w-0">
+              <div className="min-w-0 flex items-center gap-2">
+                {currentWalletName ? (
+                  <span className="text-[10px] text-zinc-400 truncate">
+                    <span className="text-zinc-500">Wallet</span>{' '}
                     <span className="font-mono text-[#FDB913]">{currentWalletName}</span>
                   </span>
-                </div>
-              )}
-              <div className="relative min-w-0">
-                <button
-                  onClick={refreshBalance}
-                  className="refresh-balance-btn absolute top-0 right-0 z-10 flex flex-shrink-0 items-center gap-1 px-2 py-1 text-[10px] font-medium text-zinc-400 bg-zinc-800/80 hover:bg-zinc-700 border border-zinc-600/50 rounded-lg transition-colors !m-0"
-                  title="Refresh balance"
-                >
-                  <span className="text-[#FDB913] text-[11px] leading-none">⟳</span>
-                  Refresh
-                </button>
-                {balanceLoading ? (
-                  <div className="h-9 w-36 bg-zinc-800/80 rounded-lg animate-pulse mt-5" />
                 ) : (
-                  <SpendableBalanceDisplay
-                    available={balanceAvailable ?? balance}
-                    locked={balanceLocked}
-                    total={balance}
-                    unit="WART"
-                    layout="hero"
-                    unitClassName="text-sm font-medium text-[#FDB913]"
-                  />
+                  <span className="text-[10px] uppercase tracking-[0.14em] text-zinc-400 font-semibold">Balance</span>
                 )}
               </div>
-              <div className="text-sm text-zinc-400 mt-1 tabular-nums">
-                {balanceLoading ? (
-                  <span className="inline-block h-4 w-20 bg-zinc-800/60 rounded animate-pulse" />
-                ) : (
-                  <>≈ ${usdBalance || '—'} USD</>
-                )}
-              </div>
+              <button
+                onClick={refreshBalance}
+                className="refresh-balance-btn flex flex-shrink-0 items-center gap-1 px-2 py-1 text-[10px] font-medium text-zinc-300 bg-zinc-700/70 hover:bg-zinc-600 border border-zinc-500/60 rounded-lg transition-colors !m-0"
+                title="Refresh balance"
+              >
+                <span className="text-[#FDB913] text-[11px] leading-none">⟳</span>
+                Refresh
+              </button>
             </div>
 
-            <div className="flex flex-nowrap items-center gap-3 min-w-0">
+            <div className="min-w-0 mb-1">
+              {balanceLoading ? (
+                <div className="h-9 w-36 bg-zinc-800/80 rounded-lg animate-pulse" />
+              ) : (
+                <SpendableBalanceDisplay
+                  available={balanceAvailable ?? balance}
+                  locked={balanceLocked}
+                  total={balance}
+                  unit="WART"
+                  layout="hero"
+                  unitClassName="text-sm font-medium text-[#FDB913]"
+                />
+              )}
+            </div>
+            <div className="text-sm text-zinc-300 mb-4 tabular-nums">
+              {balanceLoading ? (
+                <span className="inline-block h-4 w-20 bg-zinc-700/60 rounded animate-pulse" />
+              ) : (
+                <>≈ ${usdBalance || '—'} USD</>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3 min-w-0">
               <button
+                type="button"
                 onClick={() => setCurrentTab('send')}
                 className="flex-shrink-0 py-3 px-5 wallet-action-btn !m-0 font-semibold whitespace-nowrap"
               >
-                Send WART
+                Send
               </button>
               <button
                 type="button"
                 onClick={() => setShowAddressQr(true)}
-                className="icon-square-btn"
-                title="Show address QR code"
-                aria-label="Show address QR code"
+                className="flex-shrink-0 py-3 px-5 wallet-action-btn !m-0 font-semibold whitespace-nowrap"
+                title="Show receive address QR"
               >
-                <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 4h6v6H4V4zm10 0h6v6h-6V4zM4 14h6v6H4v-6zm10 3h2m2 0h2m-6 3h2m2 0h2" />
-                </svg>
+                Receive
               </button>
-              <button
-                type="button"
-                onClick={() => setShowWalletExportQr(true)}
-                disabled={!isSigningUnlocked}
-                className="icon-square-btn"
-                title={isSigningUnlocked ? 'Export wallet to mobile app (QR)' : 'Unlock wallet to export to mobile'}
-                aria-label="Export wallet to mobile app"
-              >
-                <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 18h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                </svg>
-              </button>
-              <div className="min-w-0 flex-1 flex justify-center overflow-hidden">
-                <span
-                  className="max-w-full truncate whitespace-nowrap font-mono text-[11px] text-zinc-400 hover:text-[#E79300] cursor-pointer transition-colors text-center"
-                  title={`${wallet.address} — click to copy`}
-                  onClick={() => copyToClipboard(wallet.address)}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      copyToClipboard(wallet.address);
-                    }
-                  }}
-                >
-                  <span className="sm:hidden">{abbreviateAddress(wallet.address)}</span>
-                  <span className="hidden sm:inline">{wallet.address}</span>
-                </span>
-              </div>
             </div>
           </div>
         </div>
 
-        {/* Your Assets — collapsible shell; list/drag/send/add unchanged inside */}
+        {/* Trade / swap — transparent shell so leafy page bg shows through the glass card */}
+        {isTestnetNode(selectedNode) && (
+          <details
+            id="home-swap"
+            className="group/trade bg-transparent border-0 rounded-2xl overflow-visible min-w-0"
+            open={homeTradeExpanded}
+            onToggle={(e) => {
+              const next = e.currentTarget.open;
+              if (next !== homeTradeExpanded) setHomeTradeExpanded(next);
+            }}
+          >
+            <summary className="cursor-pointer list-none flex items-center justify-between gap-3 px-3 py-2.5 sm:px-1 select-none mb-1">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="group-open/trade:rotate-90 inline-block transition text-zinc-500 text-[10px] flex-shrink-0">
+                  ▶
+                </span>
+                <div className="min-w-0">
+                  <div className="text-[10px] uppercase tracking-[0.14em] text-zinc-300 font-semibold">Trade</div>
+                  <p className="text-[11px] text-zinc-500 mt-0.5">Market, limit &amp; pool</p>
+                </div>
+              </div>
+              <span className="text-[10px] text-zinc-500 flex-shrink-0 hidden sm:inline">
+                {homeTradeExpanded ? 'Hide' : 'Show'}
+              </span>
+            </summary>
+            <div className="min-w-0">
+              <DexPage selectedNode={selectedNode} wallet={wallet} embedded />
+            </div>
+          </details>
+        )}
+
+        {/* Your Assets — neutral shell (no yellow trim); blue title accent */}
         <details className="group bg-zinc-950 border border-zinc-700 rounded-2xl overflow-hidden" open>
           <summary className="cursor-pointer list-none flex items-center justify-between gap-3 px-4 py-3 bg-zinc-900/80 border-b border-zinc-700 hover:bg-zinc-900 transition-colors select-none">
             <div className="flex items-center gap-2 min-w-0">
@@ -594,7 +601,7 @@ const WalletOverview = ({ onLogout }) => {
             )}
           </summary>
 
-          <div className="p-4">
+          <div className="px-2.5 py-3 sm:px-3 sm:py-3.5">
             {orderedAssets.length > 0 ? (
               <div className="space-y-2 mb-4">
                 {orderedAssets.map((asset, index) => (
@@ -791,7 +798,7 @@ const WalletOverview = ({ onLogout }) => {
             </div>
           </summary>
 
-          <div className="p-4">
+          <div className="px-2.5 py-3 sm:px-3 sm:py-3.5">
             <div className="flex items-center gap-2 flex-wrap mb-4">
               <button
                 type="button"
@@ -1014,7 +1021,7 @@ const WalletOverview = ({ onLogout }) => {
               </div>
             </summary>
 
-            <div className="p-4">
+            <div className="px-2.5 py-3 sm:px-3 sm:py-3.5">
               <div className="flex items-center gap-2 flex-wrap mb-4">
                 <button
                   type="button"
@@ -1098,11 +1105,11 @@ const WalletOverview = ({ onLogout }) => {
                                 hash: position.hash,
                                 name: position.name,
                               });
-                              setCurrentTab('dex');
+                              scrollToHomeSwap();
                             }}
                             className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1"
                           >
-                            Manage on Swap
+                            Trade on Home
                           </button>
                         </div>
                       </div>
@@ -1123,13 +1130,15 @@ const WalletOverview = ({ onLogout }) => {
 
       </div>
 
-      <div className="mt-10 pt-2">
+      <div className="mt-6 pt-1 flex items-center justify-between gap-3">
         <button
+          type="button"
           onClick={onLogout}
-          className="wallet-action-btn !mx-0 !mb-0 py-3 px-5 font-semibold"
+          className="compact-btn hover:!text-red-300 !text-zinc-400 !border-zinc-600 !mx-0 !my-0 !px-3 !py-1"
         >
           Logout
         </button>
+        <span className="text-[10px] text-zinc-500">Streamlined home · balance + swap</span>
       </div>
 
       <ConfirmDialog
@@ -1174,13 +1183,6 @@ const WalletOverview = ({ onLogout }) => {
         address={wallet?.address}
         onClose={() => setShowAddressQr(false)}
         onCopy={(addr) => copyToClipboard(addr)}
-      />
-
-      <WalletQrExportModal
-        open={showWalletExportQr}
-        wallet={wallet}
-        isSigningUnlocked={isSigningUnlocked}
-        onClose={() => setShowWalletExportQr(false)}
       />
     </section>
   );

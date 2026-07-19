@@ -13,13 +13,13 @@
 
   --primary: #FDB913;
   --primary-hover: #E79300;
-  --accent-light: #333333;
-  --text-primary: #ffffff;
-  --text-muted: #cccccc;
-  --bg-card: #0a0a0a;
-  --bg-section: #1a1a1a;
-  --border: #333333;
-  --shadow: 0 4px 12px -2px rgba(0, 123, 255, 0.12);
+  --accent-light: #3f3f46;
+  --text-primary: #fafafa;
+  --text-muted: #d4d4d8;
+  --bg-card: #141416;
+  --bg-section: #1c1c20;
+  --border: #3f3f46;
+  --shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.45);
 }
 
 
@@ -68,12 +68,13 @@ button:focus-visible {
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --primary: #F25C05;
+    --primary: #FDB913;
     --primary-hover: #E79300;
-    --text-primary: #ffffff;
-    --bg-card: #000000;
-    --bg-section: #0f0f0f;
-    --border: #222222;
-    --shadow: 0 4px 12px -2px rgba(242, 92, 5, 0.18);
+    --text-primary: #fafafa;
+    --text-muted: #d4d4d8;
+    --bg-card: #141416;
+    --bg-section: #1c1c20;
+    --border: #3f3f46;
+    --shadow: 0 4px 16px -4px rgba(0, 0, 0, 0.55);
   }
 }

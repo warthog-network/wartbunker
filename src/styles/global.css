@@ -3,12 +3,13 @@
 /* Subtle tropical foliage — page backdrop only (cards stay opaque) */
 html {
   min-height: 100%;
-  background-color: #000000;
+  background-color: #0a0a0b;
 }
 
 body {
   min-height: 100vh;
   background-color: transparent;
+  color: #f4f4f5;
   position: relative;
   isolation: isolate;
 }
@@ -19,11 +20,11 @@ body::before {
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  background-color: #040404;
+  background-color: #0c0c0e;
   background-image: url('/bg-tropical.jpg');
   background-repeat: repeat;
   background-size: 480px auto;
   background-position: center top;
-  opacity: 0.085;
-  filter: grayscale(0.45) saturate(0.32) brightness(0.62);
+  opacity: 0.1;
+  filter: grayscale(0.35) saturate(0.4) brightness(0.72);
 }

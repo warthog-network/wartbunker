@@ -27,25 +27,24 @@ export default function AddressQrModal({ open, address, onClose, onCopy }) {
             {address}
           </p>
 
-          {onCopy ? (
+          <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+            {onCopy ? (
+              <button
+                type="button"
+                onClick={() => onCopy(address)}
+                className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1"
+              >
+                Copy address
+              </button>
+            ) : null}
             <button
               type="button"
-              onClick={() => onCopy(address)}
-              className="mt-3 text-xs font-medium text-[#E79300] hover:text-[#FDB913] transition-colors"
+              onClick={onClose}
+              className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1"
             >
-              Copy address
+              Close
             </button>
-          ) : null}
-        </div>
-
-        <div className="p-4 border-t border-zinc-800 bg-zinc-900">
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-full py-3 text-sm font-medium text-zinc-300 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-950 rounded-2xl border border-zinc-700 transition-colors"
-          >
-            Close
-          </button>
+          </div>
         </div>
       </div>
     </div>

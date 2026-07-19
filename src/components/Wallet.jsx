@@ -3,7 +3,6 @@ import { WalletProvider, useWallet } from './WalletContext';
 import { ToastProvider, useToast } from './Toast';
 import { NumberDisplayProvider } from './NumberDisplayContext.jsx';
 import WalletOverview from './WalletOverview';
-import WalletSetup from './WalletSetup';
 import SendTransactionPage from './SendTransactionPage';
 import TransactionHistoryPage from './TransactionHistoryPage';
 import ToolsPage from './ToolsPage';
@@ -178,30 +177,51 @@ const WalletContent = () => {
 
   // Close mobile menu when tab changes
   const handleTabChange = (tabKey) => {
+    // Guest users stay on Home (balance-card access) or Network
+    if (!isLoggedIn && tabKey !== 'overview' && tabKey !== 'network' && tabKey !== 'node') {
+      setCurrentTab('overview');
+      setIsMobileMenuOpen(false);
+      return;
+    }
     setCurrentTab(tabKey);
     setIsMobileMenuOpen(false);
   };
 
-  if (!isLoggedIn) {
-    return <WalletSetup />;
-  }
+  // Always land guests on overview (guided balance card)
+  useEffect(() => {
+    if (!isLoggedIn && currentTab !== 'overview' && currentTab !== 'network' && currentTab !== 'node') {
+      setCurrentTab('overview');
+    }
+  }, [isLoggedIn, currentTab, setCurrentTab]);
 
   const isTestnet = selectedNode && isDefiNode(selectedNode);
 
-  const tabs = [
-    { key: 'overview', label: 'Overview' },
-    { key: 'send', label: 'Send' },
-    { key: 'history', label: 'History' },
-    ...(isTestnet ? [
-      { key: 'assets', label: 'Assets' },
-      { key: 'dex', label: 'Swap' },
-    ] : []),
-    { key: 'tools', label: 'Tools' },
-    { key: 'network', label: 'Network' },
-    { key: 'gated', label: 'Gated' },
-  ];
+  // Logged-in: full nav. Guest: Home + Network only (access is on the balance card).
+  const tabs = isLoggedIn
+    ? [
+        { key: 'overview', label: 'Home' },
+        { key: 'send', label: 'Send' },
+        { key: 'history', label: 'History' },
+        ...(isTestnet ? [{ key: 'assets', label: 'Assets' }] : []),
+        { key: 'tools', label: 'Tools' },
+        { key: 'network', label: 'Network' },
+        { key: 'gated', label: 'Gated' },
+      ]
+    : [
+        { key: 'overview', label: 'Home' },
+        { key: 'network', label: 'Network' },
+      ];
 
   const renderTabContent = () => {
+    if (!isLoggedIn) {
+      switch (currentTab) {
+        case 'network':
+        case 'node':
+          return <NodeSelectionPage onNodeChange={setSelectedNode} />;
+        default:
+          return <WalletOverview onLogout={handleLogout} />;
+      }
+    }
     switch (currentTab) {
       case 'overview': return <WalletOverview onLogout={handleLogout} />;
       case 'send': return <SendTransactionPage wallet={wallet} selectedNode={selectedNode} />;
@@ -280,15 +300,15 @@ const WalletContent = () => {
         </div>
       )}
 
-      {/* Desktop Tabs (≥ 768px) — compact so all tabs incl. DEX fit in the container */}
-      <div className="desktop-tabs relative pb-1 mb-5 border-b border-zinc-800">
-        <div className="flex gap-1 overflow-x-auto scrollbar-hide px-0.5">
+      {/* Desktop Tabs (≥ 768px) — compact; brand hairline under nav */}
+      <div className="desktop-tabs relative pb-1 mb-4 border-b border-[#E79300]/35">
+        <div className="flex gap-1 overflow-x-auto scrollbar-hide px-0">
           {tabs.map(tab => {
-            const isActive = currentTab === tab.key;
+            const isActive = currentTab === tab.key || (tab.key === 'network' && currentTab === 'node');
             return (
               <button
                 key={tab.key}
-                onClick={() => setCurrentTab(tab.key)}
+                onClick={() => handleTabChange(tab.key)}
                 className={`wallet-tab-btn whitespace-nowrap${isActive ? ' wallet-tab-btn--active' : ''}`}
               >
                 {tab.label}
@@ -335,12 +355,18 @@ const WalletContent = () => {
               Unlock &quot;{currentWalletName}&quot;
             </button>
           )}
-          <button
-            onClick={handleLogout}
-            className="wallet-action-btn w-full py-5 font-semibold min-h-[56px] !m-0"
-          >
-            Logout
-          </button>
+          {isLoggedIn ? (
+            <button
+              onClick={handleLogout}
+              className="wallet-action-btn w-full py-5 font-semibold min-h-[56px] !m-0"
+            >
+              Logout
+            </button>
+          ) : (
+            <p className="text-xs text-zinc-500 text-center leading-relaxed">
+              Open a wallet from the Home balance card to unlock Send, History, and more.
+            </p>
+          )}
         </div>
       </div>
 

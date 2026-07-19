@@ -356,7 +356,7 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
 
   const [results, setResults] = useState({});
   const [loading, setLoading] = useState({});
-  const [activeTab, setActiveTab] = useState('create');
+  const [activeTab, setActiveTab] = useState('search');
   const [searchLookupMode, setSearchLookupMode] = useState('name');
 
   // ==================== SMART NONCE HANDLING ====================
@@ -528,15 +528,15 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   };
 
   const tabs = [
-    { id: 'create', label: 'Create Asset' },
     { id: 'search', label: 'Search & Lookup' },
+    { id: 'create', label: 'Create Asset' },
   ];
 
   return (
     <div className="space-y-8">
       <h2 className="text-3xl font-bold">Asset Tools</h2>
       <p className="mb-6 text-gray-600 dark:text-gray-400">
-        Create, search, and look up assets on the DeFi testnet. Send assets from the Send tab.
+        Search and look up assets on the DeFi testnet, or create a new one. Send assets from the Send tab.
       </p>
 
       {/* SUB TABS - consistent with DexPage styling */}
