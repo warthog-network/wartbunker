@@ -1,15 +1,31 @@
 import React, { useState } from 'react';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
-import { encryptWallet, decryptWallet } from '../utils/warthogWalletUtils';
+import { encryptWallet, decryptWallet, downloadWallet } from '../utils/warthogWalletUtils';
 import WarthogBrandHeader from './WarthogBrandHeader.jsx';
+
+function getSavedWallets() {
+  try {
+    if (typeof localStorage === 'undefined') return [];
+    return Object.keys(localStorage)
+      .filter((key) => key.startsWith('warthogWallet_'))
+      .map((key) => key.replace('warthogWallet_', ''));
+  } catch {
+    return [];
+  }
+}
 
 const WalletSetup = () => {
   const { setCurrentTab, activateWalletSession } = useWallet();
   const toast = useToast();
 
   const savedWallets = getSavedWallets();
-  const [walletAction, setWalletAction] = useState('create');
+  const hasSavedWallets = savedWallets.length > 0;
+
+  // Single action menu: default to login when this browser already has named wallets.
+  const [walletAction, setWalletAction] = useState(() =>
+    hasSavedWallets ? 'login' : 'create',
+  );
   const [mnemonic, setMnemonic] = useState('');
   const [privateKeyInput, setPrivateKeyInput] = useState('');
   const [wordCount, setWordCount] = useState('12');
@@ -24,7 +40,23 @@ const WalletSetup = () => {
   const [consentToClose, setConsentToClose] = useState(false);
   const [error, setError] = useState(null);
   const [walletName, setWalletName] = useState('');
-  const [selectedSavedWallet, setSelectedSavedWallet] = useState('');
+  const [selectedSavedWallet, setSelectedSavedWallet] = useState(() =>
+    hasSavedWallets ? savedWallets[0] : '',
+  );
+  const [downloadPassword, setDownloadPassword] = useState('');
+
+  const handleActionChange = (value) => {
+    setWalletAction(value);
+    setError(null);
+    setPassword('');
+    setConfirmPassword('');
+    setMnemonic('');
+    setPrivateKeyInput('');
+    setUploadedFile(null);
+    if (value === 'login' && savedWallets.length > 0 && !selectedSavedWallet) {
+      setSelectedSavedWallet(savedWallets[0]);
+    }
+  };
 
   const handleWalletAction = async () => {
     setError(null);
@@ -83,7 +115,7 @@ const WalletSetup = () => {
         wallet = await generateWallet(wordCount, pathType);
       } else if (walletAction === 'derive') {
         if (!mnemonic) {
-          setError('Please enter a mnemonic phrase');
+          setError('Please enter a seed phrase');
           return;
         }
         wallet = await deriveWallet(mnemonic, wordCount, pathType);
@@ -98,6 +130,12 @@ const WalletSetup = () => {
       if (wallet) {
         setWalletData(wallet);
         setShowModal(true);
+        setSaveWalletConsent(false);
+        setConsentToClose(false);
+        setWalletName('');
+        setPassword('');
+        setConfirmPassword('');
+        setDownloadPassword('');
       }
     } catch (err) {
       setError(err.message);
@@ -117,9 +155,23 @@ const WalletSetup = () => {
       setCurrentTab('overview');
       setShowModal(false);
       setError(null);
-      toast.success(`Wallet saved as "${name}"`);
+      toast.success(`Wallet saved as "${name}" in this browser`);
     } catch (err) {
       setError('Failed to save wallet: ' + err.message);
+    }
+  };
+
+  const handleDownloadWalletFile = () => {
+    if (!downloadPassword) {
+      setError('Enter a password to encrypt the wallet file before downloading');
+      return;
+    }
+    try {
+      downloadWallet(walletData, downloadPassword);
+      setError(null);
+      toast.success('Encrypted wallet file downloaded (warthog_wallet.txt)');
+    } catch (err) {
+      setError('Failed to download wallet file: ' + err.message);
     }
   };
 
@@ -167,38 +219,41 @@ const WalletSetup = () => {
     acceptWalletFile(e.dataTransfer.files?.[0] ?? null);
   };
 
+  const primaryButtonLabel =
+    walletAction === 'create'
+      ? 'Create Wallet'
+      : walletAction === 'derive'
+        ? 'Recover Wallet'
+        : walletAction === 'import'
+          ? 'Import Wallet'
+          : walletAction === 'login'
+            ? 'Login to Wallet'
+            : 'Decrypt Wallet & Login';
+
   return (
     <div className="container">
       <WarthogBrandHeader className="mb-5" />
 
       <section>
-        <h2>Login to Existing Wallet</h2>
-        <p className="mb-4 text-gray-600 dark:text-gray-400">
-          If you have a saved encrypted wallet file, use the button below to login.
+        <h2>Wallet Access</h2>
+        <p className="mb-4 text-sm text-zinc-400">
+          {hasSavedWallets
+            ? 'Saved wallets were found in this browser. Choose an action below — login is selected by default.'
+            : 'No saved wallets in this browser yet. Create one, or recover with a seed phrase, private key, or encrypted file.'}
         </p>
-        <button
-          onClick={() => { setWalletAction('load'); setError(null); }}
-          className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-2xl transition-colors w-full mb-6"
-        >
-          Login with Encrypted Wallet File
-        </button>
-      </section>
-
-      <section>
-        <h2>Wallet Setup</h2>
 
         <div className="form-group">
           <label>Action:</label>
           <select
             value={walletAction}
-            onChange={(e) => { setWalletAction(e.target.value); setError(null); }}
+            onChange={(e) => handleActionChange(e.target.value)}
             className="input"
           >
-            <option value="create">Create New Wallet</option>
-            <option value="derive">Derive from Mnemonic</option>
-            <option value="import">Import Private Key</option>
             <option value="login">Login to Saved Wallet</option>
-            <option value="load">Login with Encrypted File</option>
+            <option value="create">Create New Wallet</option>
+            <option value="derive">Recover from Seed Phrase</option>
+            <option value="import">Import Private Key</option>
+            <option value="load">Login with Encrypted Wallet File</option>
           </select>
         </div>
 
@@ -239,9 +294,14 @@ const WalletSetup = () => {
                 </div>
               ) : (
                 <p className="text-sm text-zinc-500 mt-1">
-                  No saved wallets yet. Create a wallet and save it for quick login.
+                  No saved wallets in this browser. Create a wallet and choose &quot;Save in this browser&quot;,
+                  or switch to &quot;Login with Encrypted Wallet File&quot; if you have a download.
                 </p>
               )}
+              <p className="text-xs text-zinc-500 mt-2">
+                Named wallets live only in this browser&apos;s storage (not a downloadable file).
+                To use another device or browser, download an encrypted wallet file when you create/save a wallet.
+              </p>
             </div>
             <div className="form-group">
               <label>Password:</label>
@@ -260,6 +320,10 @@ const WalletSetup = () => {
 
         {walletAction === 'load' && (
           <>
+            <p className="text-sm text-zinc-400 mb-3">
+              Use a portable <span className="text-zinc-200">warthog_wallet.txt</span> file you previously downloaded.
+              This is different from wallets saved only in this browser — files can be moved to another PC or browser.
+            </p>
             <div className="form-group">
               <label>Upload Wallet File:</label>
               <div
@@ -307,7 +371,7 @@ const WalletSetup = () => {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Enter password"
+                placeholder="Enter password used to encrypt the file"
                 className="input"
                 autoComplete="current-password"
               />
@@ -321,15 +385,18 @@ const WalletSetup = () => {
               <label>Word Count:</label>
               <select value={wordCount} onChange={(e) => setWordCount(e.target.value)} className="input">
                 <option value="12">12 words</option>
-                <option value="24">24 words</option>
+                <option value="24">24 words (more secure)</option>
               </select>
             </div>
             <div className="form-group">
               <label>Path Type:</label>
               <select value={pathType} onChange={(e) => setPathType(e.target.value)} className="input">
-                <option value="hardened">Hardened (BIP44)</option>
+                <option value="hardened">Hardened, BIP44 (Default)</option>
                 <option value="legacy">Legacy</option>
               </select>
+              <p className="text-xs text-zinc-500 mt-1.5">
+                Not sure? Keep <span className="text-zinc-400">Hardened, BIP44 (Default)</span>. Only choose Legacy if you already use that path elsewhere.
+              </p>
             </div>
           </>
         )}
@@ -337,11 +404,11 @@ const WalletSetup = () => {
         {walletAction === 'derive' && (
           <>
             <div className="form-group">
-              <label>Mnemonic:</label>
+              <label>Seed Phrase:</label>
               <textarea
                 value={mnemonic}
                 onChange={(e) => setMnemonic(e.target.value)}
-                placeholder="Enter your 12 or 24 word mnemonic"
+                placeholder="Enter your 12 or 24 word seed phrase"
                 className="input"
                 rows="4"
               />
@@ -350,15 +417,18 @@ const WalletSetup = () => {
               <label>Word Count:</label>
               <select value={wordCount} onChange={(e) => setWordCount(e.target.value)} className="input">
                 <option value="12">12 words</option>
-                <option value="24">24 words</option>
+                <option value="24">24 words (more secure)</option>
               </select>
             </div>
             <div className="form-group">
               <label>Path Type:</label>
               <select value={pathType} onChange={(e) => setPathType(e.target.value)} className="input">
-                <option value="hardened">Hardened (BIP44)</option>
+                <option value="hardened">Hardened, BIP44 (Default)</option>
                 <option value="legacy">Legacy</option>
               </select>
+              <p className="text-xs text-zinc-500 mt-1.5">
+                Use the same path type you used when the wallet was created.
+              </p>
             </div>
           </>
         )}
@@ -379,21 +449,18 @@ const WalletSetup = () => {
 
         <button
           onClick={handleWalletAction}
-          disabled={(walletAction === 'load' && (!password || !uploadedFile)) || (walletAction === 'login' && (!password || !selectedSavedWallet))}
+          disabled={
+            (walletAction === 'load' && (!password || !uploadedFile))
+            || (walletAction === 'login' && (!password || !selectedSavedWallet || savedWallets.length === 0))
+          }
           className="px-4 py-2 text-sm font-medium text-white bg-zinc-700 rounded-lg hover:bg-zinc-800 focus:ring-4 focus:outline-none focus:ring-zinc-300 transition-colors duration-200 dark:bg-zinc-600 dark:hover:bg-zinc-700 dark:focus:ring-zinc-800 w-full"
         >
-          {walletAction === 'create'
-            ? 'Create Wallet'
-            : walletAction === 'derive'
-            ? 'Derive Wallet'
-            : walletAction === 'import'
-            ? 'Import Wallet'
-            : walletAction === 'login'
-            ? 'Login to Wallet'
-            : 'Decrypt Wallet & Login'}
+          {primaryButtonLabel}
         </button>
 
-        {error && <div className="error"><p>{error}</p></div>}
+        {error && !showModal && (
+          <div className="error"><p>{error}</p></div>
+        )}
       </section>
 
       {showModal && walletData && (
@@ -406,10 +473,10 @@ const WalletSetup = () => {
             {walletData.mnemonic && (
               <div className="result">
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-medium text-amber-400">MNEMONIC (SAVE THIS SECURELY)</span>
-                  <button onClick={() => copyToClipboard(walletData.mnemonic, 'Mnemonic copied')} className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 hover:text-white">COPY</button>
+                  <span className="text-xs font-medium text-amber-400">SEED PHRASE (SAVE THIS SECURELY)</span>
+                  <button onClick={() => copyToClipboard(walletData.mnemonic, 'Seed phrase copied')} className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 hover:text-white">COPY</button>
                 </div>
-                <pre onClick={() => copyToClipboard(walletData.mnemonic, 'Mnemonic copied')} className="cursor-pointer select-all">{walletData.mnemonic}</pre>
+                <pre onClick={() => copyToClipboard(walletData.mnemonic, 'Seed phrase copied')} className="cursor-pointer select-all">{walletData.mnemonic}</pre>
               </div>
             )}
             <div className="result">
@@ -433,6 +500,26 @@ const WalletSetup = () => {
               </div>
               <pre onClick={() => copyToClipboard(walletData.address, 'Address copied')} className="cursor-pointer select-all font-mono text-sm">{walletData.address}</pre>
             </div>
+
+            <div className="rounded-xl border border-zinc-700 bg-zinc-950/80 px-4 py-3 text-sm text-zinc-300 space-y-2 mt-1">
+              <p className="font-medium text-zinc-100">Where can this wallet be saved?</p>
+              <ul className="list-disc pl-5 space-y-1.5 text-zinc-400 text-[13px] leading-relaxed">
+                <li>
+                  <span className="text-zinc-200">This browser only</span> — encrypted in local storage and shown under
+                  &quot;Login to Saved Wallet&quot; next time you open Bunker <em>in this same browser</em>.
+                  It is <strong className="font-medium text-zinc-300">not</strong> the same as a downloaded file.
+                </li>
+                <li>
+                  <span className="text-zinc-200">Encrypted wallet file</span> — download <span className="font-mono text-zinc-300">warthog_wallet.txt</span>.
+                  You can move that file to another PC or browser and open it with
+                  &quot;Login with Encrypted Wallet File&quot;.
+                </li>
+                <li>
+                  Seed phrase / private key (above) are the ultimate backup. Mnemonic is never stored in the browser or file — only the keys needed to spend.
+                </li>
+              </ul>
+            </div>
+
             <div className="form-group">
               <label>
                 <input
@@ -440,11 +527,15 @@ const WalletSetup = () => {
                   checked={saveWalletConsent}
                   onChange={(e) => setSaveWalletConsent(e.target.checked)}
                 />
-                I consent to save the wallet encrypted with a password (optional)
+                Save in this browser (encrypted with a password)
               </label>
             </div>
             {saveWalletConsent && (
               <>
+                <p className="text-xs text-zinc-500 -mt-1 mb-2">
+                  The wallet will be saved in your browser and will be detected the next time you try to login here.
+                  Clearing site data or using a different browser will not show it — download a file backup if you need portability.
+                </p>
                 <div className="form-group">
                   <label>Wallet Name:</label>
                   <input
@@ -463,6 +554,7 @@ const WalletSetup = () => {
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="Enter password"
                     className="input"
+                    autoComplete="new-password"
                   />
                 </div>
                 <div className="form-group">
@@ -473,10 +565,35 @@ const WalletSetup = () => {
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     placeholder="Confirm password"
                     className="input"
+                    autoComplete="new-password"
                   />
                 </div>
               </>
             )}
+
+            <div className="form-group border-t border-zinc-800 pt-3 mt-1">
+              <label className="text-zinc-300">Optional: download encrypted wallet file</label>
+              <p className="text-xs text-zinc-500 mb-2">
+                Portable backup you can copy to another device. Use a strong password — anyone with the file and password can access the wallet.
+              </p>
+              <input
+                type="password"
+                value={downloadPassword}
+                onChange={(e) => setDownloadPassword(e.target.value)}
+                placeholder="Password to encrypt the file"
+                className="input"
+                autoComplete="new-password"
+              />
+              <button
+                type="button"
+                onClick={handleDownloadWalletFile}
+                disabled={!downloadPassword}
+                className="mt-2 w-full"
+              >
+                Download Encrypted Wallet File
+              </button>
+            </div>
+
             <div className="form-group">
               <label>
                 <input
@@ -487,6 +604,10 @@ const WalletSetup = () => {
                 I have saved the seed phrase / private key securely (required)
               </label>
             </div>
+
+            {error && showModal && (
+              <div className="error"><p>{error}</p></div>
+            )}
 
             <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
               <button
@@ -501,11 +622,11 @@ const WalletSetup = () => {
                 disabled={!consentToClose || !saveWalletConsent || !walletName || !password || password !== confirmPassword}
                 style={{ flex: 1 }}
               >
-                Save Named Wallet
+                Save in This Browser
               </button>
             </div>
             <button
-              onClick={() => setShowModal(false)}
+              onClick={() => { setShowModal(false); setError(null); }}
               style={{ marginTop: '0.25rem', background: 'transparent', color: '#888', border: '1px solid #444' }}
             >
               Cancel
@@ -516,16 +637,5 @@ const WalletSetup = () => {
     </div>
   );
 };
-
-function getSavedWallets() {
-  try {
-    if (typeof localStorage === 'undefined') return [];
-    return Object.keys(localStorage)
-      .filter((key) => key.startsWith('warthogWallet_'))
-      .map((key) => key.replace('warthogWallet_', ''));
-  } catch {
-    return [];
-  }
-}
 
 export default WalletSetup;

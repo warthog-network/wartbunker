@@ -359,7 +359,7 @@ const WalletContent = () => {
           <div className="modal-content">
             <h2>Name &amp; Save This Wallet</h2>
             <p className="text-sm mb-3 text-zinc-300">
-              This wallet isn't tagged with an account name yet. Give it a name and password so you can select it easily from "Login to Saved Wallet" next time.
+              This wallet isn&apos;t tagged with an account name yet. Give it a name and password so it is saved in this browser and appears under &quot;Login to Saved Wallet&quot; next time you open Bunker here.
             </p>
             {promptError && <div className="error"><p>{promptError}</p></div>}
             <div className="form-group">
@@ -397,7 +397,8 @@ const WalletContent = () => {
               <button onClick={handleSkipNamePrompt} style={{ flex: 1, background: '#3f3f46' }}>Skip for Now</button>
             </div>
             <p className="text-[10px] text-zinc-500 mt-3">
-              This stores an encrypted copy (private key only) in localStorage under your chosen name. Mnemonic is never saved. Skip if you prefer loading from file each time.
+              Stores an encrypted copy (private key only) in this browser under your chosen name — not a downloadable file.
+              Seed phrase is never saved. Skip if you prefer loading from an encrypted wallet file each time.
             </p>
           </div>
         </div>
