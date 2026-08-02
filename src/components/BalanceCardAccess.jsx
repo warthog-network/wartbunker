@@ -21,6 +21,7 @@ import {
   unlockEnvelopeWith2fa,
   passkeyLabel,
 } from '../utils/passkeyWallet.js';
+import { paintPasskeyWaiting, clearPasskeyWaiting } from '../utils/passkeyUi.js';
 
 setPasskeyProductName('WartBunker');
 
@@ -210,10 +211,9 @@ const BalanceCardAccess = () => {
         setError('2FA wallet: enter password, then confirm with passkey');
         return;
       }
-      setIsBusy(true);
-      setAwaitingPasskey(true);
       setError(null);
       try {
+        await paintPasskeyWaiting(setAwaitingPasskey, setIsBusy);
         const decrypted = await unlockEnvelopeWith2fa(info.envelope, password, decryptWallet);
         await finishSession(decrypted, selectedSavedWallet);
         toast.success(`Welcome back, ${selectedSavedWallet} (2FA)`);
@@ -221,8 +221,7 @@ const BalanceCardAccess = () => {
         const msg = err?.message || 'Unknown error';
         setError(msg === 'Invalid password' ? 'Invalid password — try again' : `Login failed: ${msg}`);
       } finally {
-        setAwaitingPasskey(false);
-        setIsBusy(false);
+        clearPasskeyWaiting(setAwaitingPasskey, setIsBusy);
       }
       return;
     }
@@ -264,18 +263,16 @@ const BalanceCardAccess = () => {
       setError('This wallet requires password + passkey. Enter password, then tap Unlock (2FA).');
       return;
     }
-    setIsBusy(true);
-    setAwaitingPasskey(true);
     setError(null);
     try {
+      await paintPasskeyWaiting(setAwaitingPasskey, setIsBusy);
       const decrypted = await decryptWithPasskey(info.envelope.passkey);
       await finishSession(decrypted, selectedSavedWallet);
       toast.success(`Welcome back, ${selectedSavedWallet}`);
     } catch (err) {
       setError(err?.message || 'Passkey unlock failed');
     } finally {
-      setAwaitingPasskey(false);
-      setIsBusy(false);
+      clearPasskeyWaiting(setAwaitingPasskey, setIsBusy);
     }
   };
 
@@ -456,10 +453,13 @@ const BalanceCardAccess = () => {
       setSecureStep('save');
       return;
     }
-    setIsBusy(true);
-    if (wantPasskey) setAwaitingPasskey(true);
     setError(null);
     try {
+      if (wantPasskey) {
+        await paintPasskeyWaiting(setAwaitingPasskey, setIsBusy);
+      } else {
+        await paintPasskeyWaiting(setIsBusy);
+      }
       const result = await saveWalletBlob(walletData, name, {
         password: wantPassword ? password : null,
         withPasskey: wantPasskey,
@@ -486,8 +486,7 @@ const BalanceCardAccess = () => {
           : `Failed to save: ${msg}`,
       );
     } finally {
-      setAwaitingPasskey(false);
-      setIsBusy(false);
+      clearPasskeyWaiting(setAwaitingPasskey, setIsBusy);
     }
   };
 

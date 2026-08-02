@@ -3,6 +3,7 @@ import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
 import { validateWarthogAddressInput } from '../utils/warthogFormat.js';
 import { DEFAULT_NODE_URL, isDefiNode, resolveSavedNodeUrl } from '../utils/presetNodes.js';
+import { paintPasskeyWaiting, clearPasskeyWaiting } from '../utils/passkeyUi.js';
 import DexPriceChartsTool from './DexPriceChartsTool.jsx';
 import DexVolumeGeneratorTool from './DexVolumeGeneratorTool.jsx';
 import NumberDisplaySettings from './NumberDisplaySettings.jsx';
@@ -97,8 +98,8 @@ const ToolsPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       toast.error('Unlock your wallet first');
       return;
     }
-    setPasskeyBusy(true);
     try {
+      await paintPasskeyWaiting(setPasskeyBusy);
       const ok = await enablePasskeyOnCurrentWallet({ preferFingerprint: false, require2fa: false });
       if (ok) {
         toast.success(
@@ -108,7 +109,7 @@ const ToolsPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
         toast.error('Could not enable passkey');
       }
     } finally {
-      setPasskeyBusy(false);
+      clearPasskeyWaiting(setPasskeyBusy);
     }
   };
 

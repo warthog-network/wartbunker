@@ -18,6 +18,7 @@ import {
   isWebAuthnAvailable,
   inspectWalletBlob,
 } from '../utils/passkeyWallet.js';
+import { paintPasskeyWaiting, clearPasskeyWaiting } from '../utils/passkeyUi.js';
 
 const WalletContent = () => {
   const {
@@ -115,8 +116,8 @@ const WalletContent = () => {
   const handleUpdate = () => window.location.reload();
 
   const handleEnablePasskey = async () => {
-    setPasskeyBusy(true);
     try {
+      await paintPasskeyWaiting(setPasskeyBusy);
       const ok = await enablePasskeyOnCurrentWallet({
         preferFingerprint: false,
         require2fa: false,
@@ -141,7 +142,7 @@ const WalletContent = () => {
         toast.error('Could not enable passkey — see error above');
       }
     } finally {
-      setPasskeyBusy(false);
+      clearPasskeyWaiting(setPasskeyBusy);
     }
   };
 
@@ -152,8 +153,8 @@ const WalletContent = () => {
         setUnlockPromptError('2FA: enter password, then confirm with passkey');
         return;
       }
-      setPasskeyBusy(true);
       try {
+        await paintPasskeyWaiting(setPasskeyBusy);
         const ok = await unlockWallet?.(unlockPassword);
         if (ok) {
           toast.success(currentWalletName ? `Unlocked "${currentWalletName}" (2FA)` : 'Wallet unlocked');
@@ -164,13 +165,13 @@ const WalletContent = () => {
           setUnlockPromptError('Unlock failed — check password and passkey');
         }
       } finally {
-        setPasskeyBusy(false);
+        clearPasskeyWaiting(setPasskeyBusy);
       }
       return;
     }
     if (usePasskey) {
-      setPasskeyBusy(true);
       try {
+        await paintPasskeyWaiting(setPasskeyBusy);
         const ok = await unlockWallet?.(null, { usePasskey: true });
         if (ok) {
           toast.success(currentWalletName ? `Unlocked "${currentWalletName}"` : 'Wallet unlocked');
@@ -181,7 +182,7 @@ const WalletContent = () => {
           setUnlockPromptError('Passkey unlock failed');
         }
       } finally {
-        setPasskeyBusy(false);
+        clearPasskeyWaiting(setPasskeyBusy);
       }
       return;
     }
