@@ -37,16 +37,24 @@ export const isLocalNode = (node) => {
 
 /**
  * Whether browser requests should go through /api/proxy (matches warthog.network website).
- * Only loopback nodes on an HTTP page connect directly; all other hosts use the proxy so
- * HTTPS deployments can reach plain-HTTP nodes (e.g. http://104.251.219.14:3001).
+ *
+ * - Public nodes: always proxy so HTTPS sites can reach plain-HTTP peers.
+ * - Loopback / private LAN: connect directly (server proxy must not hit internal nets).
+ * - Exception: loopback over plain http:// while the page is https — browser mixed-content
+ *   blocks direct access; proxy also cannot reach the user's machine, so still "use proxy"
+ *   only for error path consistency (request will fail closed with a clear guard).
  */
 export const shouldUseNodeProxy = (node) => {
-  if (!isLoopbackNode(node)) return true;
-  if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
-    const n = String(node).trim().toLowerCase();
-    if (n.startsWith('http://')) return true;
+  // Private / loopback / .local → prefer direct browser connection
+  if (isLocalNode(node)) {
+    if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+      const n = String(node).trim().toLowerCase();
+      // https page + http://localhost cannot work via proxy either; keep prior signal
+      if (n.startsWith('http://') && isLoopbackNode(node)) return true;
+    }
+    return false;
   }
-  return false;
+  return true;
 };
 
 /** True only for nodes running locally (safe for debug/fakemine). */

@@ -1,5 +1,6 @@
 import { ethers, SigningKey } from 'ethers';
 import { isLocalNode } from '../../utils/nodeAccess.js';
+import { validateProxyNodeBase } from '../../utils/proxyGuards.js';
 import { deriveWarthogAddress } from '../../utils/warthogWalletUtils.js';
 
 import { DEFAULT_NODE_URL } from '../../utils/presetNodes.js';
@@ -39,6 +40,14 @@ export async function POST({ request }) {
       }), { status: 400, headers: { 'Content-Type': 'application/json' } });
     }
 
+    const safeNode = validateProxyNodeBase(node);
+    if (!safeNode.ok) {
+      return new Response(JSON.stringify({
+        success: false,
+        error: 'Refusing to query an unsafe or private nodeBase for server-side gating',
+      }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+    }
+
     if (!message || !signature) {
       return new Response(JSON.stringify({
         success: false,
@@ -66,7 +75,7 @@ export async function POST({ request }) {
       }), { status: 401, headers: { 'Content-Type': 'application/json' } });
     }
 
-    const balanceUrl = `${node.replace(/\/$/, '')}/account/${cleanAddress}/balance/asset:${cleanAsset}`;
+    const balanceUrl = `${safeNode.origin}/account/${cleanAddress}/balance/asset:${cleanAsset}`;
     const nodeRes = await fetch(balanceUrl, {
       headers: { 'Cache-Control': 'no-cache' },
     });

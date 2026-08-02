@@ -1,15 +1,48 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useWallet } from './WalletContext';
 import { useToast } from './Toast';
-import { encryptWallet, decryptWallet, downloadWallet } from '../utils/warthogWalletUtils';
+import {
+  encryptWallet,
+  decryptWallet,
+  downloadWallet,
+  normalizeDecryptedWallet,
+} from '../utils/warthogWalletUtils';
+import {
+  setPasskeyProductName,
+  isWebAuthnAvailable,
+  hasPlatformAuthenticator,
+  inspectWalletBlob,
+  authBadgeForBlob,
+  tryParseEnvelope,
+  serializeEnvelope,
+  envelopeWithPassword,
+  buildEnvelopeWithPasskey,
+  decryptWithPasskey,
+  unlockEnvelopeWith2fa,
+  passkeyLabel,
+} from '../utils/passkeyWallet.js';
 
-function getSavedWallets() {
+setPasskeyProductName('WartBunker');
+
+function listSavedWalletEntries() {
   try {
     if (typeof localStorage === 'undefined') return [];
     return Object.keys(localStorage)
       .filter((key) => key.startsWith('warthogWallet_'))
-      .map((key) => key.replace('warthogWallet_', ''))
-      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+      .map((key) => {
+        const name = key.replace('warthogWallet_', '');
+        const raw = localStorage.getItem(key);
+        const info = inspectWalletBlob(raw);
+        return {
+          name,
+          authBadge: authBadgeForBlob(raw),
+          hasPasskey: info.hasPasskey,
+          hasPassword: info.hasPassword,
+          require2fa: info.require2fa,
+          addressHint: info.addressHint || '',
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
   } catch {
     return [];
   }
@@ -65,8 +98,10 @@ const BalanceCardAccess = () => {
   const { setCurrentTab, activateWalletSession } = useWallet();
   const toast = useToast();
 
-  const savedWallets = useMemo(() => getSavedWallets(), []);
-  const hasSavedWallets = savedWallets.length > 0;
+  const [savedEntries, setSavedEntries] = useState(() => listSavedWalletEntries());
+  const savedWallets = useMemo(() => savedEntries.map((e) => e.name), [savedEntries]);
+  const hasSavedWallets = savedEntries.length > 0;
+  const refreshSaved = () => setSavedEntries(listSavedWalletEntries());
 
   // hub | login | create | have | derive | import | load
   const [path, setPath] = useState('hub');
@@ -85,10 +120,17 @@ const BalanceCardAccess = () => {
   const [error, setError] = useState(null);
   const [walletName, setWalletName] = useState('');
   const [selectedSavedWallet, setSelectedSavedWallet] = useState(() =>
-    hasSavedWallets ? savedWallets[0] : '',
+    hasSavedWallets ? savedEntries[0].name : '',
   );
   const [downloadPassword, setDownloadPassword] = useState('');
   const [isBusy, setIsBusy] = useState(false);
+  const [passkeysSupported, setPasskeysSupported] = useState(false);
+  const [platformAuthAvailable, setPlatformAuthAvailable] = useState(false);
+  /** Device-only biometrics opt-in (default off → password managers OK) */
+  const [preferFingerprint, setPreferFingerprint] = useState(false);
+  /** Optional 2FA: require password AND passkey */
+  const [require2fa, setRequire2fa] = useState(false);
+  const [enablePasskeyOnSave, setEnablePasskeyOnSave] = useState(true);
 
   useEffect(() => {
     if (!showModal) return undefined;
@@ -102,6 +144,30 @@ const BalanceCardAccess = () => {
     };
   }, [showModal]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const ok = isWebAuthnAvailable();
+    setPasskeysSupported(ok);
+    if (!ok) return undefined;
+    (async () => {
+      const platform = await hasPlatformAuthenticator();
+      if (!cancelled) {
+        setPlatformAuthAvailable(platform);
+        // Do not force platform-only; leave preferFingerprint false for password managers
+        setEnablePasskeyOnSave(ok);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const selectedEntry = savedEntries.find((e) => e.name === selectedSavedWallet) || null;
+  const selectedHasPasskey = Boolean(selectedEntry?.hasPasskey);
+  const selectedHasPassword = selectedEntry ? selectedEntry.hasPassword !== false : true;
+  const selectedRequire2fa = Boolean(selectedEntry?.require2fa);
+  const fpLabel = passkeyLabel(platformAuthAvailable);
+
   const goPath = (next) => {
     setPath(next);
     setError(null);
@@ -110,29 +176,57 @@ const BalanceCardAccess = () => {
     setMnemonic('');
     setPrivateKeyInput('');
     setUploadedFile(null);
-    if (next === 'login' && savedWallets.length > 0 && !selectedSavedWallet) {
-      setSelectedSavedWallet(savedWallets[0]);
+    if (next === 'login' || next === 'hub') refreshSaved();
+    if (next === 'login' && savedEntries.length > 0 && !selectedSavedWallet) {
+      setSelectedSavedWallet(savedEntries[0].name);
     }
   };
 
   const finishSession = async (wallet, name = null) => {
-    await activateWalletSession(wallet, name);
+    const normalized = await normalizeDecryptedWallet(wallet);
+    await activateWalletSession(normalized, name);
     setCurrentTab('overview');
   };
 
   const handleLogin = async () => {
-    if (!selectedSavedWallet || !password) {
-      setError('Select a wallet and enter its password');
+    if (!selectedSavedWallet) {
+      setError('Select a wallet');
+      return;
+    }
+    const encrypted = localStorage.getItem(`warthogWallet_${selectedSavedWallet}`);
+    if (!encrypted) {
+      setError('Selected wallet not found in this browser');
+      return;
+    }
+    const info = inspectWalletBlob(encrypted);
+
+    if (info.require2fa) {
+      if (!password) {
+        setError('2FA wallet: enter password, then confirm with passkey');
+        return;
+      }
+      setIsBusy(true);
+      setError(null);
+      try {
+        const decrypted = await unlockEnvelopeWith2fa(info.envelope, password, decryptWallet);
+        await finishSession(decrypted, selectedSavedWallet);
+        toast.success(`Welcome back, ${selectedSavedWallet} (2FA)`);
+      } catch (err) {
+        const msg = err?.message || 'Unknown error';
+        setError(msg === 'Invalid password' ? 'Invalid password — try again' : `Login failed: ${msg}`);
+      } finally {
+        setIsBusy(false);
+      }
+      return;
+    }
+
+    if (!password) {
+      setError('Enter password, or use passkey unlock');
       return;
     }
     setIsBusy(true);
     setError(null);
     try {
-      const encrypted = localStorage.getItem(`warthogWallet_${selectedSavedWallet}`);
-      if (!encrypted) {
-        setError('Selected wallet not found in this browser');
-        return;
-      }
       const decrypted = decryptWallet(encrypted, password);
       await finishSession(decrypted, selectedSavedWallet);
       toast.success(`Welcome back, ${selectedSavedWallet}`);
@@ -142,6 +236,94 @@ const BalanceCardAccess = () => {
     } finally {
       setIsBusy(false);
     }
+  };
+
+  const handleLoginPasskey = async () => {
+    if (!selectedSavedWallet) {
+      setError('Select a wallet');
+      return;
+    }
+    const encrypted = localStorage.getItem(`warthogWallet_${selectedSavedWallet}`);
+    if (!encrypted) {
+      setError('Selected wallet not found in this browser');
+      return;
+    }
+    const info = inspectWalletBlob(encrypted);
+    if (!info.hasPasskey || !info.envelope?.passkey) {
+      setError('This wallet has no passkey unlock — use password, or enable passkey after unlock');
+      return;
+    }
+    if (info.require2fa) {
+      setError('This wallet requires password + passkey. Enter password, then tap Unlock (2FA).');
+      return;
+    }
+    setIsBusy(true);
+    setError(null);
+    try {
+      const decrypted = await decryptWithPasskey(info.envelope.passkey);
+      await finishSession(decrypted, selectedSavedWallet);
+      toast.success(`Welcome back, ${selectedSavedWallet}`);
+    } catch (err) {
+      setError(err?.message || 'Passkey unlock failed');
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const saveWalletBlob = async (data, name, {
+    password: pwd,
+    withPasskey,
+    twoFactor,
+    preferFp = preferFingerprint,
+  } = {}) => {
+    const trimmed = String(name || '').trim();
+    if (!trimmed) throw new Error('Wallet name is required');
+    const existing = localStorage.getItem(`warthogWallet_${trimmed}`);
+    const prevEnv = tryParseEnvelope(existing);
+
+    let passwordCipher = null;
+    if (pwd) {
+      passwordCipher = encryptWallet(data, pwd);
+    } else if (prevEnv?.password) {
+      passwordCipher = prevEnv.password;
+    } else if (existing && !prevEnv) {
+      // legacy / v2 password-only blob
+      passwordCipher = existing;
+    }
+
+    if (withPasskey) {
+      const { envelope, mode } = await buildEnvelopeWithPasskey(data, {
+        displayName: trimmed,
+        existingPasswordCipher: passwordCipher,
+        previousEnvelope: prevEnv,
+        require2fa: Boolean(twoFactor) && Boolean(passwordCipher || pwd),
+        preferFingerprint: preferFp,
+      });
+      // If 2FA requested but password was only just set in this call:
+      if (twoFactor && pwd) {
+        envelope.password = encryptWallet(data, pwd);
+        envelope.require2fa = true;
+      }
+      localStorage.setItem(`warthogWallet_${trimmed}`, serializeEnvelope(envelope));
+      return { mode, require2fa: Boolean(envelope.require2fa) };
+    }
+
+    if (!pwd && !passwordCipher) {
+      throw new Error('Password or passkey required to save');
+    }
+    if (pwd) {
+      const cipher = encryptWallet(data, pwd);
+      if (prevEnv?.passkey) {
+        const next = envelopeWithPassword(data, cipher, prevEnv, {
+          require2fa: Boolean(twoFactor),
+        });
+        localStorage.setItem(`warthogWallet_${trimmed}`, serializeEnvelope(next));
+      } else {
+        localStorage.setItem(`warthogWallet_${trimmed}`, cipher);
+      }
+      return { mode: null, require2fa: false };
+    }
+    throw new Error('Nothing to save');
   };
 
   const handleLoadFile = async () => {
@@ -209,21 +391,91 @@ const BalanceCardAccess = () => {
   };
 
   const handleSaveWallet = async () => {
-    if (!saveWalletConsent || !walletName || !password || password !== confirmPassword) {
-      setError('Provide a name, matching passwords, and consent to save');
+    if (!saveWalletConsent || !walletName.trim()) {
+      setError('Provide a name and consent to save');
+      return;
+    }
+    const wantPasskey = enablePasskeyOnSave && passkeysSupported;
+    const wantPassword = Boolean(password);
+    if (!wantPasskey && !wantPassword) {
+      setError('Set a password and/or enable passkey unlock');
+      return;
+    }
+    if (wantPassword && password !== confirmPassword) {
+      setError('Passwords do not match');
+      return;
+    }
+    if (require2fa && (!wantPassword || !wantPasskey)) {
+      setError('2FA needs both a password and passkey unlock');
       return;
     }
     setIsBusy(true);
     try {
-      const encrypted = encryptWallet(walletData, password);
       const name = walletName.trim();
-      localStorage.setItem(`warthogWallet_${name}`, encrypted);
+      const result = await saveWalletBlob(walletData, name, {
+        password: wantPassword ? password : null,
+        withPasskey: wantPasskey,
+        twoFactor: require2fa,
+        preferFp: preferFingerprint,
+      });
       await finishSession(walletData, name);
       setShowModal(false);
       setError(null);
-      toast.success(`Saved as "${name}" in this browser`);
+      refreshSaved();
+      if (result.require2fa) {
+        toast.success(`Saved “${name}” · password + passkey (2FA)`);
+      } else if (wantPasskey && wantPassword) {
+        toast.success(`Saved “${name}” · passkey or password`);
+      } else if (wantPasskey) {
+        toast.success(`Saved “${name}” · passkey unlock`);
+      } else {
+        toast.success(`Saved as "${name}" in this browser`);
+      }
     } catch (err) {
-      setError('Failed to save wallet: ' + err.message);
+      setError('Failed to save wallet: ' + (err?.message || err));
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleCreateWithPasskey = async () => {
+    const name = String(walletName || '').trim();
+    if (!name) {
+      setError('Enter a short wallet name first (e.g. main)');
+      return;
+    }
+    if (!passkeysSupported) {
+      setError('Passkey unlock needs HTTPS and a modern browser');
+      return;
+    }
+    if (require2fa && (!password || password !== confirmPassword)) {
+      setError('2FA needs a matching password as well');
+      return;
+    }
+    setIsBusy(true);
+    setError(null);
+    try {
+      const { generateWallet } = await import('../utils/warthogWallet.js');
+      const wallet = await generateWallet(wordCount, pathType);
+      setWalletData(wallet);
+      await saveWalletBlob(wallet, name, {
+        password: require2fa || password ? password : null,
+        withPasskey: true,
+        twoFactor: require2fa,
+        preferFp: preferFingerprint,
+      });
+      await finishSession(wallet, name);
+      setShowModal(true);
+      setSaveWalletConsent(false);
+      setConsentToClose(false);
+      refreshSaved();
+      toast.success(
+        require2fa
+          ? `Created “${name}” with password + passkey (2FA)`
+          : `Created “${name}” with ${fpLabel.toLowerCase()}`,
+      );
+    } catch (err) {
+      setError(err?.message || 'Failed to create wallet with passkey');
     } finally {
       setIsBusy(false);
     }
@@ -277,8 +529,11 @@ const BalanceCardAccess = () => {
     consentToClose
     && saveWalletConsent
     && walletName.trim()
-    && password
-    && password === confirmPassword
+    && (
+      (enablePasskeyOnSave && passkeysSupported)
+      || (password && password === confirmPassword)
+    )
+    && !(require2fa && !(password && (enablePasskeyOnSave && passkeysSupported)))
     && !isBusy;
 
   const pathTitle = {
@@ -293,10 +548,16 @@ const BalanceCardAccess = () => {
 
   const pathHint = {
     hub: hasSavedWallets
-      ? 'Unlock a wallet saved in this browser, or start another path.'
-      : 'Create a new wallet, or restore one you already have.',
-    login: 'Choose a saved wallet and enter its password.',
-    create: 'Generate keys in this browser. You’ll back up the seed next.',
+      ? 'Unlock with passkey or password, or start another path.'
+      : 'Create with passkey (password manager or this device; optional password / 2FA).',
+    login: selectedRequire2fa
+      ? '2FA: enter password, then confirm with passkey.'
+      : selectedHasPasskey
+        ? 'Tap Unlock with passkey, or use password if you set one.'
+        : 'Choose a saved wallet and enter its password. You can add a passkey after unlock.',
+    create: passkeysSupported
+      ? 'Recommended: passkey (password manager OK). Optional password, optional 2FA.'
+      : 'Generate keys in this browser. You’ll back up the seed next.',
     have: 'How do you want to restore access?',
     derive: 'Enter the 12 or 24 word phrase for this wallet.',
     import: 'Paste the 64-character private key.',
@@ -328,7 +589,8 @@ const BalanceCardAccess = () => {
               <button type="button" className="bca-path bca-path--primary" onClick={() => goPath('login')}>
                 <span className="bca-path__label">Unlock saved wallet</span>
                 <span className="bca-path__meta">
-                  {savedWallets.length} in this browser
+                  {savedEntries.length} in this browser
+                  {savedEntries.some((e) => e.hasPasskey) ? ' · passkey ready' : ''}
                 </span>
               </button>
             )}
@@ -338,7 +600,9 @@ const BalanceCardAccess = () => {
               onClick={() => goPath('create')}
             >
               <span className="bca-path__label">Create new wallet</span>
-              <span className="bca-path__meta">Fresh seed phrase</span>
+              <span className="bca-path__meta">
+                {passkeysSupported ? 'passkey · optional 2FA' : 'Fresh seed phrase'}
+              </span>
             </button>
             <button type="button" className="bca-path" onClick={() => goPath('have')}>
               <span className="bca-path__label">
@@ -379,51 +643,113 @@ const BalanceCardAccess = () => {
             <div className="bca-field">
               <span className="bca-label">Wallet</span>
               <div className="bca-paths" role="listbox" aria-label="Saved wallets">
-                {savedWallets.map((name) => {
-                  const selected = selectedSavedWallet === name;
+                {savedEntries.map((entry) => {
+                  const selected = selectedSavedWallet === entry.name;
                   return (
                     <button
-                      key={name}
+                      key={entry.name}
                       type="button"
                       role="option"
                       aria-selected={selected}
                       className={`bca-path${selected ? ' bca-path--primary' : ''}`}
-                      onClick={() => { setSelectedSavedWallet(name); setError(null); }}
+                      onClick={() => { setSelectedSavedWallet(entry.name); setError(null); }}
                       disabled={isBusy}
                     >
-                      <span className="bca-path__label font-mono">{name}</span>
+                      <span className="bca-path__label font-mono">{entry.name}</span>
                       <span className="bca-path__meta">
-                        {selected ? 'Selected' : 'Saved in this browser'}
+                        {entry.authBadge}
+                        {entry.addressHint ? ` · ${entry.addressHint}` : ''}
+                        {selected ? ' · selected' : ''}
                       </span>
                     </button>
                   );
                 })}
               </div>
             </div>
-            <PasswordField
-              id="bca-login-pw"
-              label="Password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-              placeholder="Wallet password"
-              autoFocus
-              disabled={isBusy}
-            />
-            <button
-              type="button"
-              className="wallet-action-btn bca-cta"
-              disabled={isBusy || !password || !selectedSavedWallet}
-              onClick={handleLogin}
-            >
-              {isBusy ? 'Unlocking…' : 'Unlock'}
-            </button>
+
+            {selectedRequire2fa ? (
+              <>
+                <p className="bca-hint" style={{ margin: 0 }}>
+                  2FA is on: password <strong>and</strong> {fpLabel.toLowerCase()}.
+                </p>
+                <PasswordField
+                  id="bca-login-pw"
+                  label="Password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+                  placeholder="Wallet password"
+                  autoFocus
+                  disabled={isBusy}
+                />
+                <button
+                  type="button"
+                  className="wallet-action-btn bca-cta"
+                  disabled={isBusy || !password || !selectedSavedWallet || !passkeysSupported}
+                  onClick={handleLogin}
+                >
+                  {isBusy ? 'Unlocking…' : 'Unlock with password + passkey'}
+                </button>
+              </>
+            ) : (
+              <>
+                {selectedHasPasskey && passkeysSupported && (
+                  <button
+                    type="button"
+                    className="wallet-action-btn bca-cta"
+                    disabled={isBusy || !selectedSavedWallet}
+                    onClick={handleLoginPasskey}
+                  >
+                    {isBusy ? 'Waiting for passkey…' : 'Unlock with passkey'}
+                  </button>
+                )}
+                {selectedHasPassword && (
+                  <>
+                    {selectedHasPasskey && (
+                      <p className="bca-hint" style={{ margin: '0.35rem 0 0' }}>Or use password</p>
+                    )}
+                    <PasswordField
+                      id="bca-login-pw"
+                      label="Password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+                      placeholder="Wallet password"
+                      autoFocus={!selectedHasPasskey}
+                      disabled={isBusy}
+                    />
+                    <button
+                      type="button"
+                      className="wallet-action-btn bca-cta"
+                      disabled={isBusy || !password || !selectedSavedWallet}
+                      onClick={handleLogin}
+                    >
+                      {isBusy ? 'Unlocking…' : 'Unlock with password'}
+                    </button>
+                  </>
+                )}
+              </>
+            )}
           </div>
         )}
 
         {/* ── Create ── */}
         {path === 'create' && (
           <div className="bca-form">
+            <div className="bca-field">
+              <label className="bca-label" htmlFor="bca-wname-create">Wallet name</label>
+              <input
+                id="bca-wname-create"
+                type="text"
+                className="input"
+                value={walletName}
+                onChange={(e) => setWalletName(e.target.value)}
+                placeholder="e.g. main"
+                disabled={isBusy}
+                autoComplete="off"
+                autoFocus
+              />
+            </div>
             <div className="bca-field">
               <label className="bca-label" htmlFor="bca-words">Word count</label>
               <select id="bca-words" className="input" value={wordCount} onChange={(e) => setWordCount(e.target.value)} disabled={isBusy}>
@@ -438,6 +764,70 @@ const BalanceCardAccess = () => {
                 <option value="legacy">Legacy</option>
               </select>
             </div>
+            {passkeysSupported && (
+              <>
+                <label className="login-checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={preferFingerprint}
+                    onChange={(e) => setPreferFingerprint(e.target.checked)}
+                    disabled={isBusy || !platformAuthAvailable}
+                  />
+                  Device-only biometrics (leave off for password manager)
+                  {!platformAuthAvailable ? ' — no biometrics on this device' : ''}
+                </label>
+                <label className="login-checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={require2fa}
+                    onChange={(e) => setRequire2fa(e.target.checked)}
+                    disabled={isBusy}
+                  />
+                  Optional 2FA: require password + passkey
+                </label>
+                {require2fa && (
+                  <>
+                    <PasswordField
+                      id="bca-create-2fa-pw"
+                      label="Password (for 2FA)"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Strong password"
+                      autoComplete="new-password"
+                      disabled={isBusy}
+                    />
+                    <PasswordField
+                      id="bca-create-2fa-pw2"
+                      label="Confirm password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="Re-enter password"
+                      autoComplete="new-password"
+                      disabled={isBusy}
+                    />
+                  </>
+                )}
+                <button
+                  type="button"
+                  className="wallet-action-btn bca-cta"
+                  disabled={
+                    isBusy
+                    || !walletName.trim()
+                    || (require2fa && (!password || password !== confirmPassword))
+                  }
+                  onClick={handleCreateWithPasskey}
+                >
+                  {isBusy
+                    ? 'Creating…'
+                    : require2fa
+                      ? 'Create with password + passkey'
+                      : 'Create with passkey'}
+                </button>
+                <p className="bca-hint" style={{ margin: 0 }}>
+                  or create without passkey and save with a password next
+                </p>
+              </>
+            )}
             <button
               type="button"
               className="wallet-action-btn bca-cta"
@@ -675,9 +1065,43 @@ const BalanceCardAccess = () => {
                           autoComplete="off"
                         />
                       </div>
+                      {passkeysSupported && (
+                        <>
+                          <label className="login-checkbox-label mb-2">
+                            <input
+                              type="checkbox"
+                              checked={enablePasskeyOnSave}
+                              onChange={(e) => setEnablePasskeyOnSave(e.target.checked)}
+                            />
+                            Enable passkey unlock
+                          </label>
+                          {enablePasskeyOnSave && (
+                            <label className="login-checkbox-label mb-2">
+                              <input
+                                type="checkbox"
+                                checked={preferFingerprint}
+                                onChange={(e) => setPreferFingerprint(e.target.checked)}
+                                disabled={!platformAuthAvailable}
+                              />
+                              Device-only biometrics (leave off for password manager)
+                            </label>
+                          )}
+                          <label className="login-checkbox-label mb-2">
+                            <input
+                              type="checkbox"
+                              checked={require2fa}
+                              onChange={(e) => {
+                                setRequire2fa(e.target.checked);
+                                if (e.target.checked) setEnablePasskeyOnSave(true);
+                              }}
+                            />
+                            Optional 2FA: require password + passkey together
+                          </label>
+                        </>
+                      )}
                       <PasswordField
                         id="bca-save-pw"
-                        label="Password"
+                        label={require2fa ? 'Password (required for 2FA)' : 'Password (optional if passkey is on)'}
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         placeholder="Strong password"

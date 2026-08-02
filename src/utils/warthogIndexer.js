@@ -377,11 +377,30 @@ export function applyIndexerMeta(out, rawMeta) {
 
   if (type === 'liquidity_deposit' || type === 'liquidity_withdrawal') {
     if (meta.asset_name) next.asset = String(meta.asset_name);
+    if (meta.base_amount != null) next.baseAmount = String(meta.base_amount);
+    if (meta.quote_amount != null) next.quoteAmount = String(meta.quote_amount);
+    if (meta.shares != null) next.shares = String(meta.shares);
     if (meta.base_amount != null && meta.quote_amount != null) {
       next.amount = `${meta.base_amount} + ${meta.quote_amount}`;
       next.asset = meta.asset_name ? `${meta.asset_name} / WART` : 'POOL';
+      next.amountSecondary = `${meta.quote_amount} WART`;
     } else if (meta.shares != null && isZeroAmount(next.amount)) {
       next.amount = String(meta.shares);
+    }
+    // Fallback description when summary is sparse (legacy rows pre-backfill)
+    if (!meta.summary || !String(meta.summary).includes('—')) {
+      const asset = meta.asset_name || next.asset || 'ASSET';
+      const verb = type === 'liquidity_deposit' ? 'Liquidity deposit' : 'Liquidity withdrawal';
+      let s = `${verb} on ${asset}`;
+      if (meta.base_amount != null && meta.quote_amount != null) {
+        s += ` — ${meta.base_amount} ${asset} / ${meta.quote_amount} WART`;
+      }
+      if (meta.shares != null) {
+        s += type === 'liquidity_deposit'
+          ? ` → ${meta.shares} LP shares`
+          : ` (${meta.shares} LP shares)`;
+      }
+      if (s !== `${verb} on ${asset}`) next.description = s;
     }
   }
 

@@ -1,98 +1,71 @@
-const https = require('https');
 const fetch = require('node-fetch');
+const { buildSafeProxyTarget } = require('./proxyTargetGuards.cjs');
 
-const agent = new https.Agent({
-  rejectUnauthorized: false,
-});
-
-const isFakeMineNodePath = (nodePath) =>
-  /^debug\/fakemine(?:\/|$)/i.test(String(nodePath || '').replace(/^\//, ''));
-
-const isFakeMineAllowed = (node) => {
-  if (!node) return false;
-  try {
-    const host = new URL(node).hostname.toLowerCase();
-    return host === 'localhost' || host === '127.0.0.1';
-  } catch {
-    const n = String(node).toLowerCase();
-    return n.includes('localhost') || n.includes('127.0.0.1');
-  }
+const CORS_HEADERS = {
+  'Content-Type': 'application/json',
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Cache-Control': 'no-cache',
 };
 
-exports.handler = async (event, context) => {
-  const { httpMethod, queryStringParameters, body } = event;
+function jsonResponse(statusCode, body) {
+  return {
+    statusCode,
+    headers: CORS_HEADERS,
+    body: typeof body === 'string' ? body : JSON.stringify(body),
+  };
+}
+
+exports.handler = async (event) => {
+  const { httpMethod, queryStringParameters = {}, body } = event;
+
+  if (httpMethod === 'OPTIONS') {
+    return { statusCode: 204, headers: CORS_HEADERS, body: '' };
+  }
+
+  if (httpMethod !== 'GET' && httpMethod !== 'POST') {
+    return jsonResponse(405, { code: 1, error: 'Method Not Allowed' });
+  }
+
   const nodePath = queryStringParameters.nodePath;
-  const nodeBase = queryStringParameters.nodeBase || process.env.NODE_BASE || 'https://node.wartscan.io';
+  const nodeBase =
+    queryStringParameters.nodeBase || process.env.NODE_BASE || 'https://node.wartscan.io';
 
-  if (!nodePath) {
-    return { statusCode: 400, body: JSON.stringify({ error: 'Missing nodePath query parameter' }) };
+  const safe = buildSafeProxyTarget(nodeBase, nodePath);
+  if (!safe.ok) {
+    return jsonResponse(safe.status, { code: 1, error: safe.error });
   }
 
-  if (isFakeMineNodePath(nodePath) && !isFakeMineAllowed(nodeBase)) {
-    return {
-      statusCode: 403,
-      body: JSON.stringify({
-        code: 1,
-        error: 'Fake mining is disabled for remote nodes. Use a local node (localhost) for dev mining.',
-      }),
-      headers: {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-      },
-    };
-  }
-
-  const targetUrl = `${nodeBase}/${nodePath}`;
+  const targetUrl = safe.targetUrl;
 
   try {
-    if (httpMethod === 'GET') {
-      const response = await fetch(targetUrl, {
-        headers: { 'Content-Type': 'application/json' },
-        agent: targetUrl.startsWith('https') ? agent : undefined,
-      });
-      const data = await response.text();
-      return {
-        statusCode: response.status,
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-        },
-        body: data,
-      };
-    } else if (httpMethod === 'POST') {
-      const response = await fetch(targetUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body,
-        agent: targetUrl.startsWith('https') ? agent : undefined,
-      });
-      const data = await response.text();
-      return {
-        statusCode: response.status,
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-        },
-        body: data,
-      };
-    } else if (httpMethod === 'OPTIONS') {
-      return {
-        statusCode: 204,
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-        },
-      };
+    const fetchOptions = {
+      method: httpMethod,
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+      },
+      // TLS verification ON (no rejectUnauthorized: false)
+      timeout: 10000,
+    };
+
+    if (httpMethod === 'POST' && body) {
+      fetchOptions.body = body;
     }
-    return { statusCode: 405, body: JSON.stringify({ error: 'Method Not Allowed' }) };
+
+    const response = await fetch(targetUrl, fetchOptions);
+    const data = await response.text();
+    return {
+      statusCode: response.status,
+      headers: CORS_HEADERS,
+      body: data,
+    };
   } catch (err) {
-    console.error(`[${httpMethod}] Proxy error:`, err.message, err.stack);
-    return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
+    console.error(`[${httpMethod}] Proxy error:`, err.message);
+    return jsonResponse(502, {
+      code: 1,
+      error: `Upstream fetch failed: ${err.message || 'network error'}`,
+    });
   }
 };

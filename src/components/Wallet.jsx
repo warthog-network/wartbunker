@@ -14,6 +14,12 @@ import GatedPage from './GatedPage';
 import { isDefiNode } from '../utils/presetNodes.js';
 import { clearWalletSession } from '../utils/sessionWallet.js';
 import WarthogBrandHeader from './WarthogBrandHeader.jsx';
+import {
+  isWebAuthnAvailable,
+  hasPlatformAuthenticator,
+  inspectWalletBlob,
+  passkeyLabel,
+} from '../utils/passkeyWallet.js';
 
 const WalletContent = () => {
   const {
@@ -29,6 +35,7 @@ const WalletContent = () => {
     currentWalletName,
     setCurrentWalletName,
     saveNamedWallet,
+    enablePasskeyOnCurrentWallet,
     lockWallet,
     unlockWallet,
     isSessionLocked,
@@ -50,9 +57,54 @@ const WalletContent = () => {
   const [promptConfirmPassword, setPromptConfirmPassword] = useState('');
   const [promptError, setPromptError] = useState(null);
   const [namePromptDismissed, setNamePromptDismissed] = useState(false);
+  const [promptWithPasskey, setPromptWithPasskey] = useState(true);
+  const [promptRequire2fa, setPromptRequire2fa] = useState(false);
+  const [promptPreferFingerprint, setPromptPreferFingerprint] = useState(false);
   const [showUnlockPrompt, setShowUnlockPrompt] = useState(false);
   const [unlockPassword, setUnlockPassword] = useState('');
   const [unlockPromptError, setUnlockPromptError] = useState(null);
+  const [passkeysSupported, setPasskeysSupported] = useState(false);
+  const [platformAuthAvailable, setPlatformAuthAvailable] = useState(false);
+  const [passkeyBusy, setPasskeyBusy] = useState(false);
+  const [savedAuthInfo, setSavedAuthInfo] = useState({
+    hasPasskey: false,
+    hasPassword: true,
+    require2fa: false,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    const ok = isWebAuthnAvailable();
+    setPasskeysSupported(ok);
+    if (!ok) return undefined;
+    (async () => {
+      const platform = await hasPlatformAuthenticator();
+      if (!cancelled) {
+        setPlatformAuthAvailable(platform);
+        // Leave promptPreferFingerprint false → password manager can save passkey
+        setPromptWithPasskey(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!currentWalletName || typeof localStorage === 'undefined') {
+      setSavedAuthInfo({ hasPasskey: false, hasPassword: true, require2fa: false });
+      return;
+    }
+    const raw = localStorage.getItem(`warthogWallet_${currentWalletName}`);
+    const info = inspectWalletBlob(raw);
+    setSavedAuthInfo({
+      hasPasskey: info.hasPasskey,
+      hasPassword: info.hasPassword,
+      require2fa: info.require2fa,
+    });
+  }, [currentWalletName, showUnlockPrompt, isSessionLocked]);
+
+  const fpLabel = passkeyLabel(platformAuthAvailable);
 
   useEffect(() => {
     registerAutoLockCallback?.(({ hasSavedWallet }) => {
@@ -104,13 +156,36 @@ const WalletContent = () => {
   const handlePromptSaveWallet = async () => {
     setPromptError(null);
     const name = promptWalletName.trim();
-    if (!name || !promptPassword || promptPassword !== promptConfirmPassword) {
-      setPromptError('Please provide a wallet name and matching passwords to save');
+    const wantPasskey = promptWithPasskey && passkeysSupported;
+    if (!name) {
+      setPromptError('Provide a wallet name');
       return;
     }
-    const ok = await saveNamedWallet(name, promptPassword);
+    if (!wantPasskey && !promptPassword) {
+      setPromptError('Set a password and/or enable passkey unlock');
+      return;
+    }
+    if (promptPassword && promptPassword !== promptConfirmPassword) {
+      setPromptError('Passwords do not match');
+      return;
+    }
+    if (promptRequire2fa && (!promptPassword || !wantPasskey)) {
+      setPromptError('2FA needs both a password and passkey');
+      return;
+    }
+    const ok = await saveNamedWallet(name, promptPassword || null, {
+      withPasskey: wantPasskey,
+      require2fa: promptRequire2fa,
+      preferFingerprint: promptPreferFingerprint,
+    });
     if (ok) {
-      toast.success(`Wallet saved as "${name}"`);
+      toast.success(
+        promptRequire2fa
+          ? `Saved “${name}” · password + passkey (2FA)`
+          : wantPasskey
+            ? `Saved “${name}” · ${fpLabel.toLowerCase()}`
+            : `Wallet saved as "${name}"`,
+      );
       setShowNamePrompt(false);
       setPromptWalletName('');
       setPromptPassword('');
@@ -132,8 +207,67 @@ const WalletContent = () => {
     toast.info('Wallet session active. You can name & save it later for easy login.');
   };
 
-  const handleUnlockWallet = async () => {
+  const handleEnablePasskey = async () => {
+    setPasskeyBusy(true);
+    try {
+      const ok = await enablePasskeyOnCurrentWallet({
+        preferFingerprint: false,
+        require2fa: false,
+      });
+      if (ok) {
+        toast.success('Passkey enabled — next login: Unlock with passkey');
+        // refresh badge
+        if (currentWalletName && typeof localStorage !== 'undefined') {
+          try {
+            const raw = localStorage.getItem(`warthogWallet_${currentWalletName}`);
+            const info = inspectWalletBlob(raw);
+            setSavedAuthInfo({
+              hasPasskey: Boolean(info.hasPasskey),
+              hasPassword: info.hasPassword !== false,
+              require2fa: Boolean(info.require2fa),
+            });
+          } catch {
+            /* ignore */
+          }
+        }
+      } else {
+        toast.error('Could not enable passkey — see error above');
+      }
+    } finally {
+      setPasskeyBusy(false);
+    }
+  };
+
+  const handleUnlockWallet = async (usePasskey = false) => {
     setUnlockPromptError(null);
+    if (savedAuthInfo.require2fa) {
+      if (!unlockPassword) {
+        setUnlockPromptError('2FA: enter password, then confirm with passkey');
+        return;
+      }
+      const ok = await unlockWallet?.(unlockPassword);
+      if (ok) {
+        toast.success(currentWalletName ? `Unlocked "${currentWalletName}" (2FA)` : 'Wallet unlocked');
+        setShowUnlockPrompt(false);
+        setUnlockPassword('');
+        setUnlockPromptError(null);
+      } else {
+        setUnlockPromptError('Unlock failed — check password and passkey');
+      }
+      return;
+    }
+    if (usePasskey) {
+      const ok = await unlockWallet?.(null, { usePasskey: true });
+      if (ok) {
+        toast.success(currentWalletName ? `Unlocked "${currentWalletName}"` : 'Wallet unlocked');
+        setShowUnlockPrompt(false);
+        setUnlockPassword('');
+        setUnlockPromptError(null);
+      } else {
+        setUnlockPromptError('Passkey unlock failed');
+      }
+      return;
+    }
     if (!unlockPassword) {
       setUnlockPromptError('Password is required to unlock');
       return;
@@ -284,6 +418,44 @@ const WalletContent = () => {
         </div>
       </div>
 
+      {/* Always-visible passkey CTA when logged in (mobile + desktop) */}
+      {isLoggedIn && isSigningUnlocked && !savedAuthInfo.hasPasskey && (
+        <div
+          className="mb-4 px-3 py-3 rounded-xl border border-amber-600/50 bg-amber-950/30"
+          data-passkey-cta="enable"
+        >
+          <button
+            type="button"
+            className="wallet-action-btn w-full !mx-0 !mb-2 !min-h-[3rem] !text-base !font-bold"
+            disabled={passkeyBusy}
+            data-action="enable-passkey"
+            onClick={handleEnablePasskey}
+          >
+            {passkeyBusy ? 'Waiting for passkey…' : 'Enable passkey'}
+          </button>
+          <p className="text-xs text-zinc-400 m-0 leading-snug">
+            Save a passkey in your password manager or on this device for one-tap unlock next time.
+            Sends do not re-prompt while unlocked.
+          </p>
+        </div>
+      )}
+      {isLoggedIn && savedAuthInfo.hasPasskey && (
+        <div
+          className="mb-4 px-3 py-2.5 rounded-xl border border-emerald-700/40 bg-emerald-950/20 flex flex-wrap items-center justify-between gap-2"
+          data-passkey-cta="enabled"
+        >
+          <span className="text-sm font-semibold text-emerald-400">✓ Passkey enabled</span>
+          <button
+            type="button"
+            className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1"
+            disabled={passkeyBusy || !isSigningUnlocked}
+            onClick={handleEnablePasskey}
+          >
+            {passkeyBusy ? 'Waiting…' : 'Re-enable passkey'}
+          </button>
+        </div>
+      )}
+
       {/* PWA Install / Update (subtle row) */}
       {(deferredPrompt || updateAvailable) && (
         <div className="flex flex-wrap gap-2 mb-4 px-1">
@@ -385,7 +557,7 @@ const WalletContent = () => {
           <div className="modal-content">
             <h2>Name &amp; Save This Wallet</h2>
             <p className="text-sm mb-3 text-zinc-300">
-              This wallet isn&apos;t tagged with an account name yet. Give it a name and password so it is saved in this browser and appears under &quot;Login to Saved Wallet&quot; next time you open Bunker here.
+              Tag this wallet for easy login. Prefer passkey (password manager OK); password and optional 2FA are available too.
             </p>
             {promptError && <div className="error"><p>{promptError}</p></div>}
             <div className="form-group">
@@ -398,8 +570,42 @@ const WalletContent = () => {
                 className="input"
               />
             </div>
+            {passkeysSupported && (
+              <div className="form-group space-y-2">
+                <label className="login-checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={promptWithPasskey}
+                    onChange={(e) => setPromptWithPasskey(e.target.checked)}
+                  />
+                  Enable passkey unlock
+                </label>
+                {promptWithPasskey && (
+                  <label className="login-checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={promptPreferFingerprint}
+                      onChange={(e) => setPromptPreferFingerprint(e.target.checked)}
+                      disabled={!platformAuthAvailable}
+                    />
+                    Device-only biometrics (leave off for password manager)
+                  </label>
+                )}
+                <label className="login-checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={promptRequire2fa}
+                    onChange={(e) => {
+                      setPromptRequire2fa(e.target.checked);
+                      if (e.target.checked) setPromptWithPasskey(true);
+                    }}
+                  />
+                  Optional 2FA: require password + passkey
+                </label>
+              </div>
+            )}
             <div className="form-group">
-              <label>Password:</label>
+              <label>{promptRequire2fa ? 'Password (required for 2FA):' : 'Password (optional if passkey is on):'}</label>
               <input
                 type="password"
                 value={promptPassword}
@@ -423,8 +629,7 @@ const WalletContent = () => {
               <button onClick={handleSkipNamePrompt} style={{ flex: 1, background: '#3f3f46' }}>Skip for Now</button>
             </div>
             <p className="text-[10px] text-zinc-500 mt-3">
-              Stores an encrypted copy (private key only) in this browser under your chosen name — not a downloadable file.
-              Seed phrase is never saved. Skip if you prefer loading from an encrypted wallet file each time.
+              Encrypted copy in this browser under your name. Seed is never stored. Passkey can be stored in a password manager or on this device.
             </p>
           </div>
         </div>
@@ -435,27 +640,52 @@ const WalletContent = () => {
           <div className="modal-content">
             <h2>Unlock Wallet</h2>
             <p className="text-sm mb-3 text-zinc-300">
-              Enter the password for <span className="font-mono text-emerald-400">&quot;{currentWalletName}&quot;</span> to restore the private key into this session.
+              {savedAuthInfo.require2fa
+                ? <>2FA: password + {fpLabel.toLowerCase()} for <span className="font-mono text-emerald-400">&quot;{currentWalletName}&quot;</span>.</>
+                : <>Restore the private key for <span className="font-mono text-emerald-400">&quot;{currentWalletName}&quot;</span>.</>}
             </p>
 
             {unlockPromptError && <div className="error"><p>{unlockPromptError}</p></div>}
 
-            <div className="form-group">
-              <label>Password for &quot;{currentWalletName}&quot;:</label>
-              <input
-                type="password"
-                value={unlockPassword}
-                onChange={(e) => setUnlockPassword(e.target.value)}
-                placeholder="Enter password"
-                className="input"
-                onKeyDown={(e) => { if (e.key === 'Enter') handleUnlockWallet(); }}
-                autoFocus
-              />
-            </div>
+            {savedAuthInfo.hasPasskey && passkeysSupported && !savedAuthInfo.require2fa && (
+              <button
+                type="button"
+                onClick={() => handleUnlockWallet(true)}
+                className="wallet-action-btn w-full !mx-0 !mb-3"
+              >
+                Unlock with passkey
+              </button>
+            )}
+
+            {(savedAuthInfo.hasPassword || savedAuthInfo.require2fa || !savedAuthInfo.hasPasskey) && (
+              <div className="form-group">
+                <label>
+                  {savedAuthInfo.require2fa
+                    ? 'Password (then passkey)'
+                    : `Password for "${currentWalletName}"`}
+                  :
+                </label>
+                <input
+                  type="password"
+                  value={unlockPassword}
+                  onChange={(e) => setUnlockPassword(e.target.value)}
+                  placeholder="Enter password"
+                  className="input"
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleUnlockWallet(false); }}
+                  autoFocus={!savedAuthInfo.hasPasskey || savedAuthInfo.require2fa}
+                />
+              </div>
+            )}
 
             <div className="flex gap-2 mt-4">
-              <button type="button" onClick={handleUnlockWallet} className="wallet-action-btn flex-1 !mx-0 !mb-0">
-                Unlock
+              <button
+                type="button"
+                onClick={() => handleUnlockWallet(false)}
+                className="wallet-action-btn flex-1 !mx-0 !mb-0"
+              >
+                {savedAuthInfo.require2fa
+                  ? 'Unlock with password + passkey'
+                  : 'Unlock with password'}
               </button>
               <button type="button" onClick={handleCancelUnlock} className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1 flex-1">
                 Cancel

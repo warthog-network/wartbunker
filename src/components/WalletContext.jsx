@@ -1,6 +1,19 @@
 import React, { createContext, useContext, useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { encryptWallet, decryptWallet, normalizeDecryptedWallet } from '../utils/warthogWalletUtils';
+import {
+  setPasskeyProductName,
+  inspectWalletBlob,
+  tryParseEnvelope,
+  serializeEnvelope,
+  envelopeWithPassword,
+  buildEnvelopeWithPasskey,
+  decryptWithPasskey,
+  unlockEnvelopeWith2fa,
+  isWebAuthnAvailable,
+} from '../utils/passkeyWallet.js';
+
+setPasskeyProductName('WartBunker');
 import { clearLegacyAutoMinePrefs, isFakeMineAllowed } from '../utils/nodeAccess';
 import {
   createWarthogApi,
@@ -437,13 +450,27 @@ export const WalletProvider = ({ children }) => {
   };
 
   // ==================== NAMED WALLET SAVE (for tagging unsaved logins) ====================
-  const saveNamedWallet = async (name, password) => {
-    if (!wallet || !name || !password) {
-      setError('Cannot save: no active wallet or missing name/password');
+  /**
+   * @param {string} name
+   * @param {string} [password]
+   * @param {{ withPasskey?: boolean, require2fa?: boolean, preferFingerprint?: boolean }} [opts]
+   */
+  const saveNamedWallet = async (name, password, opts = {}) => {
+    const { withPasskey = false, require2fa = false, preferFingerprint = false } = opts;
+    if (!wallet || !name) {
+      setError('Cannot save: no active wallet or missing name');
+      return false;
+    }
+    if (!password && !withPasskey) {
+      setError('Cannot save: provide a password and/or enable passkey');
       return false;
     }
     if (typeof name !== 'string' || name.trim().length === 0) {
       setError('Wallet name is required');
+      return false;
+    }
+    if (require2fa && (!password || !withPasskey)) {
+      setError('2FA needs both password and passkey');
       return false;
     }
     try {
@@ -456,14 +483,54 @@ export const WalletProvider = ({ children }) => {
         walletToSave = await exportWalletFromWorker();
       }
 
-      const encrypted = encryptWallet(walletToSave, password);
-      localStorage.setItem(`warthogWallet_${name.trim()}`, encrypted);
       const trimmed = name.trim();
+      const existing = localStorage.getItem(`warthogWallet_${trimmed}`);
+      const prevEnv = tryParseEnvelope(existing);
+      let passwordCipher = password ? encryptWallet(walletToSave, password) : null;
+      if (!passwordCipher && prevEnv?.password) passwordCipher = prevEnv.password;
+      if (!passwordCipher && existing && !prevEnv) passwordCipher = existing;
+
+      if (withPasskey) {
+        if (!isWebAuthnAvailable()) {
+          setError('Passkey unlock needs HTTPS and a modern browser');
+          return false;
+        }
+        const { envelope } = await buildEnvelopeWithPasskey(walletToSave, {
+          displayName: trimmed,
+          existingPasswordCipher: passwordCipher,
+          previousEnvelope: prevEnv,
+          require2fa: Boolean(require2fa) && Boolean(passwordCipher || password),
+          preferFingerprint,
+        });
+        if (require2fa && password) {
+          envelope.password = encryptWallet(walletToSave, password);
+          envelope.require2fa = true;
+        }
+        localStorage.setItem(`warthogWallet_${trimmed}`, serializeEnvelope(envelope));
+      } else if (password) {
+        const cipher = encryptWallet(walletToSave, password);
+        if (prevEnv?.passkey) {
+          const next = envelopeWithPassword(walletToSave, cipher, prevEnv, {
+            require2fa: Boolean(require2fa),
+          });
+          localStorage.setItem(`warthogWallet_${trimmed}`, serializeEnvelope(next));
+        } else {
+          localStorage.setItem(`warthogWallet_${trimmed}`, cipher);
+        }
+      } else {
+        setError('Nothing to save');
+        return false;
+      }
+
       setCurrentWalletName(trimmed);
       persistPublicSession(wallet, trimmed);
       return true;
     } catch (err) {
-      setError('Failed to save named wallet: ' + err.message);
+      const msg = err?.message || String(err);
+      const nice = /cancel|not allowed|abort/i.test(msg)
+        ? 'Passkey setup cancelled — try again and choose password manager or this device.'
+        : `Failed to save named wallet: ${msg}`;
+      setError(nice);
       return false;
     }
   };
@@ -502,7 +569,13 @@ export const WalletProvider = ({ children }) => {
 
   // ==================== END WATCHED ASSETS ====================
 
-  const unlockWallet = async (password) => {
+  /**
+   * Re-unlock a locked session.
+   * @param {string} [password]
+   * @param {{ usePasskey?: boolean }} [opts]
+   */
+  const unlockWallet = async (password, opts = {}) => {
+    const { usePasskey = false } = opts;
     if (!currentWalletName) {
       setError('No saved wallet name for this session. Log out and use "Login to Saved Wallet" instead.');
       return false;
@@ -519,7 +592,31 @@ export const WalletProvider = ({ children }) => {
     }
 
     try {
-      const decrypted = await normalizeDecryptedWallet(decryptWallet(encrypted, password));
+      const info = inspectWalletBlob(encrypted);
+      let decrypted;
+
+      if (info.require2fa) {
+        if (!password) {
+          setError('2FA wallet: enter password, then confirm with passkey');
+          return false;
+        }
+        decrypted = await normalizeDecryptedWallet(
+          await unlockEnvelopeWith2fa(info.envelope, password, decryptWallet),
+        );
+      } else if (usePasskey || (!password && info.hasPasskey)) {
+        if (!info.hasPasskey || !info.envelope?.passkey) {
+          setError('No passkey unlock on this wallet');
+          return false;
+        }
+        decrypted = await normalizeDecryptedWallet(await decryptWithPasskey(info.envelope.passkey));
+      } else {
+        if (!password) {
+          setError('Password is required to unlock');
+          return false;
+        }
+        decrypted = await normalizeDecryptedWallet(decryptWallet(encrypted, password));
+      }
+
       if (decrypted.address.toLowerCase() !== wallet.address.toLowerCase()) {
         setError('Decrypted wallet does not match the current locked session address.');
         return false;
@@ -530,6 +627,29 @@ export const WalletProvider = ({ children }) => {
       setError(`Unlock failed: ${err?.message || 'Invalid password or corrupted data'}`);
       return false;
     }
+  };
+
+  /**
+   * Enable passkey on the currently unlocked session (existing wallets OK).
+   * Defaults open authenticator so password managers can store the passkey.
+   */
+  const enablePasskeyOnCurrentWallet = async ({
+    password = null,
+    require2fa = false,
+    preferFingerprint = false,
+    name = null,
+  } = {}) => {
+    if (!wallet) {
+      setError('Unlock your wallet first, then enable passkey');
+      return false;
+    }
+    const tag = String(name || currentWalletName || '').trim() || 'Main';
+    if (!currentWalletName) setCurrentWalletName(tag);
+    return saveNamedWallet(tag, password, {
+      withPasskey: true,
+      require2fa,
+      preferFingerprint,
+    });
   };
 
   const isSessionLocked = !!(isLoggedIn && wallet && !isSigningUnlocked && currentWalletName);
@@ -613,6 +733,7 @@ export const WalletProvider = ({ children }) => {
     currentWalletName,
     setCurrentWalletName,
     saveNamedWallet,
+    enablePasskeyOnCurrentWallet,
     fetchBalanceAndNonce,
     refreshBalance,
     // NEW: Asset system

@@ -126,13 +126,12 @@ const WalletOverview = ({ onLogout }) => {
     );
   };
 
-  const copyToClipboard = (text) => {
+  const copyToClipboard = async (text) => {
     if (!text) return;
-    navigator.clipboard.writeText(text).then(() => {
-      toast.success('Copied to clipboard');
-    }).catch(() => {
-      toast.error('Failed to copy to clipboard');
-    });
+    const { copyTextToClipboard } = await import('../utils/copyText.js');
+    const ok = await copyTextToClipboard(text);
+    if (ok) toast.success('Copied to clipboard');
+    else toast.error('Failed to copy to clipboard');
   };
 
   const enrichOpenOrders = async (ordersData) => {
@@ -1182,7 +1181,10 @@ const WalletOverview = ({ onLogout }) => {
         open={showAddressQr}
         address={wallet?.address}
         onClose={() => setShowAddressQr(false)}
-        onCopy={(addr) => copyToClipboard(addr)}
+        onCopy={() => {
+          // Modal already wrote the clipboard; only surface a toast (don't re-copy).
+          toast.success('Address copied');
+        }}
       />
     </section>
   );

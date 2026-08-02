@@ -1,4 +1,4 @@
-import { rejectFakeMineIfRemote, rejectLocalNodeInProxy } from '../../utils/proxyGuards.js';
+import { buildSafeProxyTarget } from '../../utils/proxyGuards.js';
 
 const PROXY_TIMEOUT_MS = 10000;
 
@@ -12,28 +12,23 @@ function jsonError(status, error) {
   });
 }
 
+function rejectionResponse(result) {
+  return new Response(result.body, {
+    status: result.status,
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' },
+  });
+}
+
 async function forwardToNode({ nodeBase, nodePath, method = 'GET', body = null }) {
   if (!nodePath || !nodeBase) {
     return jsonError(400, 'Missing nodeBase or nodePath');
   }
 
-  const localNodeRejection = rejectLocalNodeInProxy(nodeBase);
-  if (localNodeRejection) {
-    return new Response(localNodeRejection.body, {
-      status: localNodeRejection.status,
-      headers: { 'Content-Type': 'application/json' },
-    });
+  const safe = buildSafeProxyTarget(nodeBase, nodePath);
+  if (!safe.ok) {
+    return rejectionResponse(safe);
   }
 
-  const fakeMineRejection = rejectFakeMineIfRemote(nodePath, nodeBase);
-  if (fakeMineRejection) {
-    return new Response(fakeMineRejection.body, {
-      status: fakeMineRejection.status,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-
-  const targetUrl = nodeBase.replace(/\/$/, '') + '/' + nodePath.replace(/^\//, '');
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), PROXY_TIMEOUT_MS);
 
@@ -49,7 +44,7 @@ async function forwardToNode({ nodeBase, nodePath, method = 'GET', body = null }
   }
 
   try {
-    const response = await fetch(targetUrl, fetchOptions);
+    const response = await fetch(safe.targetUrl, fetchOptions);
     clearTimeout(timeoutId);
     const newHeaders = new Headers(response.headers);
     newHeaders.set('Cache-Control', 'no-cache');

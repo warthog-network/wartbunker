@@ -68,7 +68,7 @@ function ToastContainer({ toasts, onDismiss }) {
   if (!toasts.length) return null;
 
   return (
-    <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[9999] flex flex-col items-center gap-2 w-full max-w-[420px] px-3 pointer-events-none">
+    <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[10050] flex flex-col items-center gap-2 w-full max-w-[420px] px-3 pointer-events-none">
       {toasts.map((t) => (
         <ToastItem key={t.id} toast={t} onDismiss={() => onDismiss(t.id)} />
       ))}

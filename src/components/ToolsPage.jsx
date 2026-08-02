@@ -9,7 +9,14 @@ import NumberDisplaySettings from './NumberDisplaySettings.jsx';
 import WalletQrExportModal from './WalletQrExportModal.jsx';
 
 const ToolsPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
-  const { performFakeMine, isFakeMineAllowed, wallet: contextWallet, isSigningUnlocked } = useWallet();
+  const {
+    performFakeMine,
+    isFakeMineAllowed,
+    wallet: contextWallet,
+    isSigningUnlocked,
+    enablePasskeyOnCurrentWallet,
+    currentWalletName,
+  } = useWallet();
   const wallet = propWallet || contextWallet;
   const toast = useToast();
 
@@ -19,6 +26,7 @@ const ToolsPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const [isMiningNow, setIsMiningNow] = useState(false);
   const [activeTool, setActiveTool] = useState('validate');
   const [showWalletExportQr, setShowWalletExportQr] = useState(false);
+  const [passkeyBusy, setPasskeyBusy] = useState(false);
 
   const selectedNode = propSelectedNode || (() => {
     try {
@@ -84,12 +92,49 @@ const ToolsPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     setIsMiningNow(false);
   };
 
+  const handleEnablePasskey = async () => {
+    if (!wallet || !isSigningUnlocked) {
+      toast.error('Unlock your wallet first');
+      return;
+    }
+    setPasskeyBusy(true);
+    try {
+      const ok = await enablePasskeyOnCurrentWallet({ preferFingerprint: false, require2fa: false });
+      if (ok) {
+        toast.success(
+          `Passkey enabled${currentWalletName ? ` for “${currentWalletName}”` : ''} — next login: Unlock with passkey`,
+        );
+      } else {
+        toast.error('Could not enable passkey');
+      }
+    } finally {
+      setPasskeyBusy(false);
+    }
+  };
+
   return (
     <section>
       <h2>Tools</h2>
       <p className="text-sm text-zinc-400 mb-4">
         Utility helpers for address checks, display preferences, mobile export QR, dev mining, and DEX tooling.
       </p>
+
+      {wallet && isSigningUnlocked && (
+        <div className="mb-6 p-4 rounded-xl border border-amber-600/50 bg-amber-950/25">
+          <h3 className="text-base font-semibold text-zinc-100 m-0 mb-2">Passkey login</h3>
+          <p className="text-sm text-zinc-400 mb-3 m-0">
+            Enable one-tap unlock for this existing wallet. Save in a password manager or on this device.
+          </p>
+          <button
+            type="button"
+            className="wallet-action-btn w-full !mx-0 !min-h-[3rem] !text-base !font-bold"
+            disabled={passkeyBusy}
+            onClick={handleEnablePasskey}
+          >
+            {passkeyBusy ? 'Waiting for passkey…' : 'Enable passkey'}
+          </button>
+        </div>
+      )}
 
       <details className="group border border-zinc-800 rounded-xl overflow-hidden bg-zinc-950/50 mb-6">
         <summary className="cursor-pointer list-none flex items-center justify-between gap-3 px-3 py-2.5 hover:bg-zinc-900/80 transition-colors select-none">
