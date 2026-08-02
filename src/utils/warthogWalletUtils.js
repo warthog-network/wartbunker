@@ -20,8 +20,13 @@ export const encryptWallet = (walletData, password) => {
   if (password == null || String(password).length === 0) {
     throw new Error('Password is required');
   }
-  const { privateKey, publicKey, address } = walletData;
-  const plaintext = JSON.stringify({ privateKey, publicKey, address });
+  const { privateKey, publicKey, address, mnemonic, wordCount, pathType } = walletData;
+  // Include mnemonic when present so portable files are full backups (private key alone still works)
+  const payload = { privateKey, publicKey, address };
+  if (mnemonic) payload.mnemonic = mnemonic;
+  if (wordCount != null) payload.wordCount = wordCount;
+  if (pathType) payload.pathType = pathType;
+  const plaintext = JSON.stringify(payload);
 
   const salt = CryptoJS.lib.WordArray.random(16);
   const iv = CryptoJS.lib.WordArray.random(16);
@@ -183,13 +188,26 @@ export async function deriveWarthogAddress(publicKeyHex) {
   return Address.fromPublicKeyHex(publicKeyHex)?.hex ?? null;
 }
 
-export const downloadWallet = (walletData, password) => {
+/**
+ * Download a password-encrypted portable wallet file.
+ * @param {object} walletData
+ * @param {string} password
+ * @param {{ filename?: string }} [opts]
+ */
+export const downloadWallet = (walletData, password, opts = {}) => {
   const encrypted = encryptWallet(walletData, password);
-  const blob = new Blob([encrypted], { type: 'text/plain' });
+  const rawName = String(opts.filename || 'warthog_wallet.txt').trim() || 'warthog_wallet.txt';
+  // Keep downloads predictable and path-safe
+  const safeName = rawName
+    .replace(/[\\/:*?"<>|]+/g, '_')
+    .replace(/\s+/g, '_')
+    .slice(0, 80);
+  const blob = new Blob([encrypted], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'warthog_wallet.txt';
+  a.download = safeName.endsWith('.txt') || safeName.endsWith('.json') ? safeName : `${safeName}.txt`;
   a.click();
   URL.revokeObjectURL(url);
+  return a.download;
 };
