@@ -1143,6 +1143,75 @@
   background: #34d399;
 }
 
+/* Passkey / WebAuthn wait overlay (browser PIN can take a moment) */
+.passkey-wait-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  background: rgba(0, 0, 0, 0.62);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+.passkey-wait-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.85rem;
+  width: min(100%, 18rem);
+  padding: 1.35rem 1.25rem;
+  border-radius: 1rem;
+  border: 1px solid rgba(253, 185, 19, 0.35);
+  background: rgba(24, 24, 27, 0.96);
+  box-shadow: 0 18px 48px -20px rgba(0, 0, 0, 0.9);
+  text-align: center;
+}
+
+.passkey-spinner {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 999px;
+  border: 3px solid rgba(253, 185, 19, 0.22);
+  border-top-color: #fdb913;
+  animation: passkey-spin 0.75s linear infinite;
+}
+
+@keyframes passkey-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.passkey-wait-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #fafafa;
+}
+
+.passkey-wait-hint {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: #a1a1aa;
+}
+
+.btn-inline-spinner {
+  display: inline-block;
+  width: 0.95rem;
+  height: 0.95rem;
+  margin-right: 0.45rem;
+  vertical-align: -0.15em;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-top-color: currentColor;
+  animation: passkey-spin 0.75s linear infinite;
+}
+
 .wallet-info-modal__scroll {
   flex: 1 1 auto;
   min-height: 0;

@@ -152,26 +152,36 @@ const WalletContent = () => {
         setUnlockPromptError('2FA: enter password, then confirm with passkey');
         return;
       }
-      const ok = await unlockWallet?.(unlockPassword);
-      if (ok) {
-        toast.success(currentWalletName ? `Unlocked "${currentWalletName}" (2FA)` : 'Wallet unlocked');
-        setShowUnlockPrompt(false);
-        setUnlockPassword('');
-        setUnlockPromptError(null);
-      } else {
-        setUnlockPromptError('Unlock failed — check password and passkey');
+      setPasskeyBusy(true);
+      try {
+        const ok = await unlockWallet?.(unlockPassword);
+        if (ok) {
+          toast.success(currentWalletName ? `Unlocked "${currentWalletName}" (2FA)` : 'Wallet unlocked');
+          setShowUnlockPrompt(false);
+          setUnlockPassword('');
+          setUnlockPromptError(null);
+        } else {
+          setUnlockPromptError('Unlock failed — check password and passkey');
+        }
+      } finally {
+        setPasskeyBusy(false);
       }
       return;
     }
     if (usePasskey) {
-      const ok = await unlockWallet?.(null, { usePasskey: true });
-      if (ok) {
-        toast.success(currentWalletName ? `Unlocked "${currentWalletName}"` : 'Wallet unlocked');
-        setShowUnlockPrompt(false);
-        setUnlockPassword('');
-        setUnlockPromptError(null);
-      } else {
-        setUnlockPromptError('Passkey unlock failed');
+      setPasskeyBusy(true);
+      try {
+        const ok = await unlockWallet?.(null, { usePasskey: true });
+        if (ok) {
+          toast.success(currentWalletName ? `Unlocked "${currentWalletName}"` : 'Wallet unlocked');
+          setShowUnlockPrompt(false);
+          setUnlockPassword('');
+          setUnlockPromptError(null);
+        } else {
+          setUnlockPromptError('Passkey unlock failed');
+        }
+      } finally {
+        setPasskeyBusy(false);
       }
       return;
     }
@@ -318,6 +328,18 @@ const WalletContent = () => {
         </div>
       </div>
 
+      {passkeyBusy && (
+        <div className="passkey-wait-overlay" role="status" aria-live="polite" aria-busy="true">
+          <div className="passkey-wait-card">
+            <div className="passkey-spinner" aria-hidden="true" />
+            <p className="passkey-wait-title">Waiting for passkey…</p>
+            <p className="passkey-wait-hint">
+              Complete the browser or device prompt (PIN, biometrics, or password manager). This can take a moment.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Always-visible passkey CTA when logged in (mobile + desktop) */}
       {isLoggedIn && isSigningUnlocked && !savedAuthInfo.hasPasskey && (
         <div
@@ -331,7 +353,14 @@ const WalletContent = () => {
             data-action="enable-passkey"
             onClick={handleEnablePasskey}
           >
-            {passkeyBusy ? 'Waiting for passkey…' : 'Enable passkey'}
+            {passkeyBusy ? (
+              <>
+                <span className="btn-inline-spinner" aria-hidden="true" />
+                Waiting for passkey…
+              </>
+            ) : (
+              'Enable passkey'
+            )}
           </button>
           <p className="text-xs text-zinc-400 m-0 leading-snug">
             Save a passkey in your password manager or on this device for one-tap unlock next time.
@@ -468,8 +497,16 @@ const WalletContent = () => {
                 type="button"
                 onClick={() => handleUnlockWallet(true)}
                 className="wallet-action-btn w-full !mx-0 !mb-3"
+                disabled={passkeyBusy}
               >
-                Unlock with passkey
+                {passkeyBusy ? (
+                  <>
+                    <span className="btn-inline-spinner" aria-hidden="true" />
+                    Waiting for passkey…
+                  </>
+                ) : (
+                  'Unlock with passkey'
+                )}
               </button>
             )}
 

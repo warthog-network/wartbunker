@@ -125,6 +125,8 @@ const BalanceCardAccess = () => {
   );
   const [downloadPassword, setDownloadPassword] = useState('');
   const [isBusy, setIsBusy] = useState(false);
+  /** True while browser passkey sheet may be opening (show spinner overlay) */
+  const [awaitingPasskey, setAwaitingPasskey] = useState(false);
   const [passkeysSupported, setPasskeysSupported] = useState(false);
   const [platformAuthAvailable, setPlatformAuthAvailable] = useState(false);
   /** Device-only biometrics opt-in (default off → password managers OK) */
@@ -209,6 +211,7 @@ const BalanceCardAccess = () => {
         return;
       }
       setIsBusy(true);
+      setAwaitingPasskey(true);
       setError(null);
       try {
         const decrypted = await unlockEnvelopeWith2fa(info.envelope, password, decryptWallet);
@@ -218,6 +221,7 @@ const BalanceCardAccess = () => {
         const msg = err?.message || 'Unknown error';
         setError(msg === 'Invalid password' ? 'Invalid password — try again' : `Login failed: ${msg}`);
       } finally {
+        setAwaitingPasskey(false);
         setIsBusy(false);
       }
       return;
@@ -261,6 +265,7 @@ const BalanceCardAccess = () => {
       return;
     }
     setIsBusy(true);
+    setAwaitingPasskey(true);
     setError(null);
     try {
       const decrypted = await decryptWithPasskey(info.envelope.passkey);
@@ -269,6 +274,7 @@ const BalanceCardAccess = () => {
     } catch (err) {
       setError(err?.message || 'Passkey unlock failed');
     } finally {
+      setAwaitingPasskey(false);
       setIsBusy(false);
     }
   };
@@ -451,6 +457,7 @@ const BalanceCardAccess = () => {
       return;
     }
     setIsBusy(true);
+    if (wantPasskey) setAwaitingPasskey(true);
     setError(null);
     try {
       const result = await saveWalletBlob(walletData, name, {
@@ -479,6 +486,7 @@ const BalanceCardAccess = () => {
           : `Failed to save: ${msg}`,
       );
     } finally {
+      setAwaitingPasskey(false);
       setIsBusy(false);
     }
   };
@@ -690,7 +698,14 @@ const BalanceCardAccess = () => {
                   disabled={isBusy || !password || !selectedSavedWallet || !passkeysSupported}
                   onClick={handleLogin}
                 >
-                  {isBusy ? 'Unlocking…' : 'Unlock with password + passkey'}
+                  {isBusy ? (
+                    <>
+                      <span className="btn-inline-spinner" aria-hidden="true" />
+                      Waiting for passkey…
+                    </>
+                  ) : (
+                    'Unlock with password + passkey'
+                  )}
                 </button>
               </>
             ) : (
@@ -702,7 +717,14 @@ const BalanceCardAccess = () => {
                     disabled={isBusy || !selectedSavedWallet}
                     onClick={handleLoginPasskey}
                   >
-                    {isBusy ? 'Waiting for passkey…' : 'Unlock with passkey'}
+                    {isBusy ? (
+                      <>
+                        <span className="btn-inline-spinner" aria-hidden="true" />
+                        Waiting for passkey…
+                      </>
+                    ) : (
+                      'Unlock with passkey'
+                    )}
                   </button>
                 )}
                 {selectedHasPassword && (
@@ -931,6 +953,18 @@ const BalanceCardAccess = () => {
           <div className="bca-error" role="alert">{error}</div>
         )}
       </div>
+
+      {awaitingPasskey && (
+        <div className="passkey-wait-overlay" role="status" aria-live="polite" aria-busy="true">
+          <div className="passkey-wait-card">
+            <div className="passkey-spinner" aria-hidden="true" />
+            <p className="passkey-wait-title">Waiting for passkey…</p>
+            <p className="passkey-wait-hint">
+              Complete the browser or device prompt (PIN, biometrics, or password manager). This can take a moment.
+            </p>
+          </div>
+        </div>
+      )}
 
       {showModal && walletData && (
         <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="bca-wallet-info-title">
@@ -1163,11 +1197,16 @@ const BalanceCardAccess = () => {
                     disabled={!canSaveAndOpen}
                     className="wallet-action-btn w-full !mx-0 !mb-2 disabled:opacity-40 !min-h-[2.75rem] !font-bold"
                   >
-                    {isBusy
-                      ? (enablePasskeyOnSave && passkeysSupported ? 'Waiting for passkey…' : 'Saving…')
-                      : enablePasskeyOnSave && passkeysSupported
-                        ? 'Save & open (register passkey once)'
-                        : 'Save & open wallet'}
+                    {isBusy ? (
+                      <>
+                        <span className="btn-inline-spinner" aria-hidden="true" />
+                        {enablePasskeyOnSave && passkeysSupported ? 'Waiting for passkey…' : 'Saving…'}
+                      </>
+                    ) : enablePasskeyOnSave && passkeysSupported ? (
+                      'Save & open (register passkey once)'
+                    ) : (
+                      'Save & open wallet'
+                    )}
                   </button>
                   <button
                     type="button"

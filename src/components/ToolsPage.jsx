@@ -119,6 +119,18 @@ const ToolsPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
         Utility helpers for address checks, display preferences, mobile export QR, dev mining, and DEX tooling.
       </p>
 
+      {passkeyBusy && (
+        <div className="passkey-wait-overlay" role="status" aria-live="polite" aria-busy="true">
+          <div className="passkey-wait-card">
+            <div className="passkey-spinner" aria-hidden="true" />
+            <p className="passkey-wait-title">Waiting for passkey…</p>
+            <p className="passkey-wait-hint">
+              Complete the browser or device prompt (PIN, biometrics, or password manager). This can take a moment.
+            </p>
+          </div>
+        </div>
+      )}
+
       {wallet && isSigningUnlocked && (
         <div className="mb-6 p-4 rounded-xl border border-amber-600/50 bg-amber-950/25">
           <h3 className="text-base font-semibold text-zinc-100 m-0 mb-2">Passkey login</h3>
@@ -131,7 +143,14 @@ const ToolsPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
             disabled={passkeyBusy}
             onClick={handleEnablePasskey}
           >
-            {passkeyBusy ? 'Waiting for passkey…' : 'Enable passkey'}
+            {passkeyBusy ? (
+              <>
+                <span className="btn-inline-spinner" aria-hidden="true" />
+                Waiting for passkey…
+              </>
+            ) : (
+              'Enable passkey'
+            )}
           </button>
         </div>
       )}
