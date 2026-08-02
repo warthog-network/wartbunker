@@ -1110,11 +1110,37 @@
   padding: 0;
   overflow: hidden;
   max-height: min(92dvh, 920px);
+  width: min(96vw, 44rem);
+  max-width: min(96vw, 44rem);
 }
 
 .wallet-info-modal__header {
   flex-shrink: 0;
   padding: 1.25rem 1.25rem 0.75rem;
+}
+
+.secure-step-dots {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+  align-items: center;
+}
+
+.secure-step-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 999px;
+  background: rgba(113, 113, 122, 0.7);
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.secure-step-dot.is-active {
+  background: #fdb913;
+  transform: scale(1.25);
+}
+
+.secure-step-dot.is-done {
+  background: #34d399;
 }
 
 .wallet-info-modal__scroll {
@@ -1145,6 +1171,13 @@
   overflow: visible;
 }
 
+.modal-content .result.wallet-info-secret {
+  width: 100%;
+  box-sizing: border-box;
+  padding-left: 0.9rem;
+  padding-right: 0.9rem;
+}
+
 .modal-content .result pre {
   margin: 0;
   overflow-x: hidden;
@@ -1152,6 +1185,12 @@
   word-break: break-word;
   white-space: pre-wrap;
   max-width: 100%;
+}
+
+/* Secrets: no click-to-copy affordance (manual select only) */
+.modal-content .result.wallet-info-secret pre:not(.cursor-pointer) {
+  cursor: text;
+  user-select: text;
 }
 
 .modal-content h2 {

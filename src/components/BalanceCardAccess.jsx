@@ -113,9 +113,10 @@ const BalanceCardAccess = () => {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [uploadedFile, setUploadedFile] = useState(null);
   const [walletFileDragActive, setWalletFileDragActive] = useState(false);
-  const [saveWalletConsent, setSaveWalletConsent] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [walletData, setWalletData] = useState(null);
+  /** Guided secure flow: 'save' (name + passkey/password) → 'backup' (seed + confirm written down) */
+  const [secureStep, setSecureStep] = useState('save');
   const [consentToClose, setConsentToClose] = useState(false);
   const [error, setError] = useState(null);
   const [walletName, setWalletName] = useState('');
@@ -131,6 +132,8 @@ const BalanceCardAccess = () => {
   /** Optional 2FA: require password AND passkey */
   const [require2fa, setRequire2fa] = useState(false);
   const [enablePasskeyOnSave, setEnablePasskeyOnSave] = useState(true);
+  /** How keys were produced — create shows full seed backup; restore is lighter */
+  const [secureOrigin, setSecureOrigin] = useState('create');
 
   useEffect(() => {
     if (!showModal) return undefined;
@@ -352,36 +355,63 @@ const BalanceCardAccess = () => {
     reader.readAsText(uploadedFile);
   };
 
+  const resetSecureFormFields = ({ keepName = false } = {}) => {
+    setConsentToClose(false);
+    setSecureStep('save');
+    if (!keepName) setWalletName('');
+    setPassword('');
+    setConfirmPassword('');
+    setDownloadPassword('');
+    setRequire2fa(false);
+    setEnablePasskeyOnSave(passkeysSupported);
+    setPreferFingerprint(false);
+  };
+
+  const openSecureWizard = (wallet, origin = 'create') => {
+    setWalletData(wallet);
+    setSecureOrigin(origin);
+    setSecureStep('save');
+    setConsentToClose(false);
+    setShowModal(true);
+    setError(null);
+  };
+
   const handleGenerateOrRecover = async (action) => {
     setIsBusy(true);
     setError(null);
     try {
+      if (action === 'create') {
+        const name = String(walletName || '').trim();
+        if (!name) {
+          setError('Enter a wallet name first (e.g. main)');
+          return;
+        }
+      }
       const { generateWallet, deriveWallet, importFromPrivateKey } = await import('../utils/warthogWallet.js');
       let wallet;
+      let origin = 'create';
       if (action === 'create') {
         wallet = await generateWallet(wordCount, pathType);
+        origin = 'create';
       } else if (action === 'derive') {
         if (!mnemonic.trim()) {
           setError('Enter your seed phrase');
           return;
         }
         wallet = await deriveWallet(mnemonic.trim(), wordCount, pathType);
+        origin = 'restore';
       } else if (action === 'import') {
         if (!privateKeyInput) {
           setError('Enter a private key');
           return;
         }
         wallet = await importFromPrivateKey(privateKeyInput);
+        origin = 'restore';
       }
       if (wallet) {
-        setWalletData(wallet);
-        setShowModal(true);
-        setSaveWalletConsent(false);
-        setConsentToClose(false);
-        setWalletName('');
-        setPassword('');
-        setConfirmPassword('');
-        setDownloadPassword('');
+        // Passkey is registered only once in the save step — never before seed backup
+        resetSecureFormFields({ keepName: action === 'create' && Boolean(walletName.trim()) });
+        openSecureWizard(wallet, origin);
       }
     } catch (err) {
       setError(err.message || 'Something went wrong');
@@ -390,28 +420,39 @@ const BalanceCardAccess = () => {
     }
   };
 
-  const handleSaveWallet = async () => {
-    if (!saveWalletConsent || !walletName.trim()) {
-      setError('Provide a name and consent to save');
+  /** Single save path: name + optional passkey (one browser prompt) + open session */
+  const handleSaveAndOpen = async () => {
+    if (!consentToClose) {
+      setError('Confirm you have written down your seed phrase before closing');
+      setSecureStep('backup');
+      return;
+    }
+    const name = String(walletName || '').trim();
+    if (!name) {
+      setError('Enter a wallet name to save for next login');
+      setSecureStep('save');
       return;
     }
     const wantPasskey = enablePasskeyOnSave && passkeysSupported;
     const wantPassword = Boolean(password);
     if (!wantPasskey && !wantPassword) {
-      setError('Set a password and/or enable passkey unlock');
+      setError('Enable passkey and/or set a password so you can unlock next time');
+      setSecureStep('save');
       return;
     }
     if (wantPassword && password !== confirmPassword) {
       setError('Passwords do not match');
+      setSecureStep('save');
       return;
     }
     if (require2fa && (!wantPassword || !wantPasskey)) {
-      setError('2FA needs both a password and passkey unlock');
+      setError('2FA needs both a password and passkey');
+      setSecureStep('save');
       return;
     }
     setIsBusy(true);
+    setError(null);
     try {
-      const name = walletName.trim();
       const result = await saveWalletBlob(walletData, name, {
         password: wantPassword ? password : null,
         withPasskey: wantPasskey,
@@ -420,7 +461,6 @@ const BalanceCardAccess = () => {
       });
       await finishSession(walletData, name);
       setShowModal(false);
-      setError(null);
       refreshSaved();
       if (result.require2fa) {
         toast.success(`Saved “${name}” · password + passkey (2FA)`);
@@ -429,53 +469,15 @@ const BalanceCardAccess = () => {
       } else if (wantPasskey) {
         toast.success(`Saved “${name}” · passkey unlock`);
       } else {
-        toast.success(`Saved as "${name}" in this browser`);
+        toast.success(`Saved “${name}” with password`);
       }
     } catch (err) {
-      setError('Failed to save wallet: ' + (err?.message || err));
-    } finally {
-      setIsBusy(false);
-    }
-  };
-
-  const handleCreateWithPasskey = async () => {
-    const name = String(walletName || '').trim();
-    if (!name) {
-      setError('Enter a short wallet name first (e.g. main)');
-      return;
-    }
-    if (!passkeysSupported) {
-      setError('Passkey unlock needs HTTPS and a modern browser');
-      return;
-    }
-    if (require2fa && (!password || password !== confirmPassword)) {
-      setError('2FA needs a matching password as well');
-      return;
-    }
-    setIsBusy(true);
-    setError(null);
-    try {
-      const { generateWallet } = await import('../utils/warthogWallet.js');
-      const wallet = await generateWallet(wordCount, pathType);
-      setWalletData(wallet);
-      await saveWalletBlob(wallet, name, {
-        password: require2fa || password ? password : null,
-        withPasskey: true,
-        twoFactor: require2fa,
-        preferFp: preferFingerprint,
-      });
-      await finishSession(wallet, name);
-      setShowModal(true);
-      setSaveWalletConsent(false);
-      setConsentToClose(false);
-      refreshSaved();
-      toast.success(
-        require2fa
-          ? `Created “${name}” with password + passkey (2FA)`
-          : `Created “${name}” with ${fpLabel.toLowerCase()}`,
+      const msg = err?.message || String(err);
+      setError(
+        /cancel|not allowed|abort/i.test(msg)
+          ? 'Passkey cancelled — try Save & open again, or turn off passkey and use a password.'
+          : `Failed to save: ${msg}`,
       );
-    } catch (err) {
-      setError(err?.message || 'Failed to create wallet with passkey');
     } finally {
       setIsBusy(false);
     }
@@ -495,17 +497,19 @@ const BalanceCardAccess = () => {
     }
   };
 
-  const handleUseNow = async () => {
+  /** Open session without browser save (no second name/passkey modal) */
+  const handleOpenWithoutSaving = async () => {
     if (!consentToClose) {
-      setError('Confirm you saved the seed / private key');
+      setError('Confirm you have written down your seed phrase before closing');
+      setSecureStep('backup');
       return;
     }
     setIsBusy(true);
+    setError(null);
     try {
       await finishSession(walletData, null);
       setShowModal(false);
-      setError(null);
-      toast.success('Wallet ready');
+      toast.success('Wallet open for this session — not saved for next login');
     } catch (err) {
       setError('Failed to open wallet: ' + err.message);
     } finally {
@@ -525,15 +529,15 @@ const BalanceCardAccess = () => {
   };
 
   const passwordsMatch = !confirmPassword || password === confirmPassword;
-  const canSaveBrowser =
+  const canSaveAndOpen =
     consentToClose
-    && saveWalletConsent
-    && walletName.trim()
+    && String(walletName || '').trim()
     && (
       (enablePasskeyOnSave && passkeysSupported)
       || (password && password === confirmPassword)
     )
     && !(require2fa && !(password && (enablePasskeyOnSave && passkeysSupported)))
+    && passwordsMatch
     && !isBusy;
 
   const pathTitle = {
@@ -555,9 +559,7 @@ const BalanceCardAccess = () => {
       : selectedHasPasskey
         ? 'Tap Unlock with passkey, or use password if you set one.'
         : 'Choose a saved wallet and enter its password. You can add a passkey after unlock.',
-    create: passkeysSupported
-      ? 'Recommended: passkey (password manager OK). Optional password, optional 2FA.'
-      : 'Generate keys in this browser. You’ll back up the seed next.',
+    create: 'Name the wallet first. Then unlock options, then write down your seed.',
     have: 'How do you want to restore access?',
     derive: 'Enter the 12 or 24 word phrase for this wallet.',
     import: 'Paste the 64-character private key.',
@@ -601,7 +603,7 @@ const BalanceCardAccess = () => {
             >
               <span className="bca-path__label">Create new wallet</span>
               <span className="bca-path__meta">
-                {passkeysSupported ? 'passkey · optional 2FA' : 'Fresh seed phrase'}
+                Name → unlock options → seed
               </span>
             </button>
             <button type="button" className="bca-path" onClick={() => goPath('have')}>
@@ -733,9 +735,12 @@ const BalanceCardAccess = () => {
           </div>
         )}
 
-        {/* ── Create ── */}
+        {/* ── Create: name first, then guided seed + passkey (one flow) ── */}
         {path === 'create' && (
           <div className="bca-form">
+            <p className="bca-hint" style={{ margin: 0 }}>
+              Step 1 of 3 — pick a name. Next: passkey/password, then write down your seed.
+            </p>
             <div className="bca-field">
               <label className="bca-label" htmlFor="bca-wname-create">Wallet name</label>
               <input
@@ -748,6 +753,9 @@ const BalanceCardAccess = () => {
                 disabled={isBusy}
                 autoComplete="off"
                 autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && walletName.trim()) handleGenerateOrRecover('create');
+                }}
               />
             </div>
             <div className="bca-field">
@@ -764,77 +772,13 @@ const BalanceCardAccess = () => {
                 <option value="legacy">Legacy</option>
               </select>
             </div>
-            {passkeysSupported && (
-              <>
-                <label className="login-checkbox-label">
-                  <input
-                    type="checkbox"
-                    checked={preferFingerprint}
-                    onChange={(e) => setPreferFingerprint(e.target.checked)}
-                    disabled={isBusy || !platformAuthAvailable}
-                  />
-                  Device-only biometrics (leave off for password manager)
-                  {!platformAuthAvailable ? ' — no biometrics on this device' : ''}
-                </label>
-                <label className="login-checkbox-label">
-                  <input
-                    type="checkbox"
-                    checked={require2fa}
-                    onChange={(e) => setRequire2fa(e.target.checked)}
-                    disabled={isBusy}
-                  />
-                  Optional 2FA: require password + passkey
-                </label>
-                {require2fa && (
-                  <>
-                    <PasswordField
-                      id="bca-create-2fa-pw"
-                      label="Password (for 2FA)"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="Strong password"
-                      autoComplete="new-password"
-                      disabled={isBusy}
-                    />
-                    <PasswordField
-                      id="bca-create-2fa-pw2"
-                      label="Confirm password"
-                      value={confirmPassword}
-                      onChange={(e) => setConfirmPassword(e.target.value)}
-                      placeholder="Re-enter password"
-                      autoComplete="new-password"
-                      disabled={isBusy}
-                    />
-                  </>
-                )}
-                <button
-                  type="button"
-                  className="wallet-action-btn bca-cta"
-                  disabled={
-                    isBusy
-                    || !walletName.trim()
-                    || (require2fa && (!password || password !== confirmPassword))
-                  }
-                  onClick={handleCreateWithPasskey}
-                >
-                  {isBusy
-                    ? 'Creating…'
-                    : require2fa
-                      ? 'Create with password + passkey'
-                      : 'Create with passkey'}
-                </button>
-                <p className="bca-hint" style={{ margin: 0 }}>
-                  or create without passkey and save with a password next
-                </p>
-              </>
-            )}
             <button
               type="button"
               className="wallet-action-btn bca-cta"
-              disabled={isBusy}
+              disabled={isBusy || !walletName.trim()}
               onClick={() => handleGenerateOrRecover('create')}
             >
-              {isBusy ? 'Generating…' : 'Create wallet'}
+              {isBusy ? 'Generating…' : 'Continue — unlock options'}
             </button>
           </div>
         )}
@@ -992,155 +936,165 @@ const BalanceCardAccess = () => {
         <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="bca-wallet-info-title">
           <div className="modal-content wallet-info-modal">
             <div className="wallet-info-modal__header">
-              <h2 id="bca-wallet-info-title" className="!mb-0">Secure your wallet</h2>
+              <h2 id="bca-wallet-info-title" className="!mb-0">
+                {secureStep === 'save' ? 'Name & unlock options' : 'Write down your seed phrase'}
+              </h2>
               <p className="text-xs text-zinc-500 mt-1 mb-0">
-                Back up secrets first, then save or continue.
+                {secureStep === 'save'
+                  ? 'Step 2 of 3 · set name, passkey, and optional password first'
+                  : 'Step 3 of 3 · write the seed offline, then confirm before closing'}
               </p>
+              <div className="secure-step-dots" aria-hidden="true">
+                <span className="secure-step-dot is-done" title="Name" />
+                <span className={`secure-step-dot${secureStep === 'save' ? ' is-active' : ' is-done'}`} title="Unlock options" />
+                <span className={`secure-step-dot${secureStep === 'backup' ? ' is-active' : ''}`} title="Seed phrase" />
+              </div>
             </div>
 
             <div className="wallet-info-modal__scroll">
-              <div className="login-modal-step">
-                <div className="login-modal-step__badge">1</div>
-                <div className="login-modal-step__body">
-                  <div className="login-modal-step__title">Write down your secrets</div>
-                  <div className="rounded-xl bg-amber-950/60 border border-amber-900/70 px-4 py-3 text-sm text-amber-300 mb-3">
-                    <strong>Critical:</strong> Store seed and private key offline. Never share them.
-                  </div>
-                  {walletData.mnemonic && (
-                    <div className="result min-w-0">
-                      <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
-                        <span className="text-xs font-medium text-amber-400">SEED PHRASE</span>
-                        <button type="button" onClick={() => copyToClipboard(walletData.mnemonic, 'Seed copied')} className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !mt-0 !px-3 !py-1">COPY</button>
-                      </div>
-                      <pre onClick={() => copyToClipboard(walletData.mnemonic, 'Seed copied')} className="cursor-pointer select-all whitespace-pre-wrap break-words [overflow-wrap:anywhere] max-w-full">{walletData.mnemonic}</pre>
+              {secureStep === 'save' && (
+                <div className="login-modal-step">
+                  <div className="login-modal-step__badge">2</div>
+                  <div className="login-modal-step__body">
+                    <div className="login-modal-step__title">Name, passkey &amp; password</div>
+                    <p className="bca-hint" style={{ marginTop: 0 }}>
+                      Choose how you’ll unlock next time. The passkey is registered{' '}
+                      <strong>once</strong> at the end — after you write down your seed.
+                    </p>
+                    <div className="bca-field mb-3">
+                      <label className="bca-label" htmlFor="bca-wname">Wallet name</label>
+                      <input
+                        id="bca-wname"
+                        type="text"
+                        className="input"
+                        value={walletName}
+                        onChange={(e) => setWalletName(e.target.value)}
+                        placeholder="e.g. main"
+                        autoComplete="off"
+                        autoFocus={!walletName}
+                      />
                     </div>
-                  )}
-                  <div className="result min-w-0">
-                    <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
-                      <span className="text-xs font-medium text-red-400">PRIVATE KEY</span>
-                      <button type="button" onClick={() => copyToClipboard(walletData.privateKey, 'Key copied')} className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !mt-0 !px-3 !py-1">COPY</button>
-                    </div>
-                    <pre onClick={() => copyToClipboard(walletData.privateKey, 'Key copied')} className="cursor-pointer select-all whitespace-pre-wrap break-all [overflow-wrap:anywhere] max-w-full">{walletData.privateKey}</pre>
-                  </div>
-                  <div className="result min-w-0">
-                    <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
-                      <span className="text-xs font-medium text-zinc-400">Public Key</span>
-                      <button type="button" onClick={() => copyToClipboard(walletData.publicKey, 'Public key copied')} className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !mt-0 !px-3 !py-1">COPY</button>
-                    </div>
-                    <pre onClick={() => copyToClipboard(walletData.publicKey)} className="cursor-pointer select-all text-xs whitespace-pre-wrap break-all [overflow-wrap:anywhere] max-w-full">{walletData.publicKey}</pre>
-                  </div>
-                  <div className="result min-w-0 !mb-0">
-                    <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
-                      <span className="text-xs font-medium text-emerald-400">Address</span>
-                      <button type="button" onClick={() => copyToClipboard(walletData.address, 'Address copied')} className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !mt-0 !px-3 !py-1">COPY</button>
-                    </div>
-                    <pre onClick={() => copyToClipboard(walletData.address, 'Address copied')} className="cursor-pointer select-all font-mono text-sm whitespace-pre-wrap break-all [overflow-wrap:anywhere] max-w-full">{walletData.address}</pre>
-                  </div>
-                </div>
-              </div>
-
-              <div className="login-modal-step">
-                <div className="login-modal-step__badge">2</div>
-                <div className="login-modal-step__body">
-                  <div className="login-modal-step__title">Optional: save for later</div>
-                  <label className="login-checkbox-label mb-3">
-                    <input
-                      type="checkbox"
-                      checked={saveWalletConsent}
-                      onChange={(e) => setSaveWalletConsent(e.target.checked)}
-                    />
-                    Save in this browser (encrypted)
-                  </label>
-                  {saveWalletConsent && (
-                    <div className="login-save-fields">
-                      <div className="bca-field mb-3">
-                        <label className="bca-label" htmlFor="bca-wname">Wallet name</label>
-                        <input
-                          id="bca-wname"
-                          type="text"
-                          className="input"
-                          value={walletName}
-                          onChange={(e) => setWalletName(e.target.value)}
-                          placeholder="e.g. main"
-                          autoComplete="off"
-                        />
-                      </div>
-                      {passkeysSupported && (
-                        <>
+                    {passkeysSupported && (
+                      <>
+                        <label className="login-checkbox-label mb-2">
+                          <input
+                            type="checkbox"
+                            checked={enablePasskeyOnSave}
+                            onChange={(e) => setEnablePasskeyOnSave(e.target.checked)}
+                          />
+                          Enable passkey unlock
+                        </label>
+                        {enablePasskeyOnSave && (
                           <label className="login-checkbox-label mb-2">
                             <input
                               type="checkbox"
-                              checked={enablePasskeyOnSave}
-                              onChange={(e) => setEnablePasskeyOnSave(e.target.checked)}
+                              checked={preferFingerprint}
+                              onChange={(e) => setPreferFingerprint(e.target.checked)}
+                              disabled={!platformAuthAvailable}
                             />
-                            Enable passkey unlock
+                            Device-only biometrics (leave off for password manager)
                           </label>
-                          {enablePasskeyOnSave && (
-                            <label className="login-checkbox-label mb-2">
-                              <input
-                                type="checkbox"
-                                checked={preferFingerprint}
-                                onChange={(e) => setPreferFingerprint(e.target.checked)}
-                                disabled={!platformAuthAvailable}
-                              />
-                              Device-only biometrics (leave off for password manager)
-                            </label>
-                          )}
-                          <label className="login-checkbox-label mb-2">
-                            <input
-                              type="checkbox"
-                              checked={require2fa}
-                              onChange={(e) => {
-                                setRequire2fa(e.target.checked);
-                                if (e.target.checked) setEnablePasskeyOnSave(true);
-                              }}
-                            />
-                            Optional 2FA: require password + passkey together
-                          </label>
-                        </>
-                      )}
-                      <PasswordField
-                        id="bca-save-pw"
-                        label={require2fa ? 'Password (required for 2FA)' : 'Password (optional if passkey is on)'}
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        placeholder="Strong password"
-                        autoComplete="new-password"
-                      />
-                      <PasswordField
-                        id="bca-save-pw2"
-                        label="Confirm password"
-                        value={confirmPassword}
-                        onChange={(e) => setConfirmPassword(e.target.value)}
-                        placeholder="Re-enter password"
-                        autoComplete="new-password"
-                      />
-                      {!passwordsMatch && (
-                        <p className="text-xs text-red-400 -mt-1 mb-2">Passwords do not match</p>
-                      )}
-                    </div>
-                  )}
-                  <div className="border-t border-zinc-800 pt-3 mt-2">
-                    <label className="bca-label">Optional: download encrypted file</label>
-                    <input
-                      type="password"
-                      className="input mb-2"
-                      value={downloadPassword}
-                      onChange={(e) => setDownloadPassword(e.target.value)}
-                      placeholder="Password for the file"
+                        )}
+                        <label className="login-checkbox-label mb-2">
+                          <input
+                            type="checkbox"
+                            checked={require2fa}
+                            onChange={(e) => {
+                              setRequire2fa(e.target.checked);
+                              if (e.target.checked) setEnablePasskeyOnSave(true);
+                            }}
+                          />
+                          Optional 2FA: require password + passkey together
+                        </label>
+                      </>
+                    )}
+                    <PasswordField
+                      id="bca-save-pw"
+                      label={require2fa ? 'Password (required for 2FA)' : 'Password (optional if passkey is on)'}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Strong password"
                       autoComplete="new-password"
                     />
-                    <button
-                      type="button"
-                      onClick={handleDownloadWalletFile}
-                      disabled={!downloadPassword}
-                      className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1 !w-full"
-                    >
-                      Download warthog_wallet.txt
-                    </button>
+                    <PasswordField
+                      id="bca-save-pw2"
+                      label="Confirm password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="Re-enter password"
+                      autoComplete="new-password"
+                    />
+                    {!passwordsMatch && (
+                      <p className="text-xs text-red-400 -mt-1 mb-2">Passwords do not match</p>
+                    )}
+                    <div className="border-t border-zinc-800 pt-3 mt-2">
+                      <label className="bca-label">Optional: download encrypted file</label>
+                      <input
+                        type="password"
+                        className="input mb-2"
+                        value={downloadPassword}
+                        onChange={(e) => setDownloadPassword(e.target.value)}
+                        placeholder="Password for the file"
+                        autoComplete="new-password"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleDownloadWalletFile}
+                        disabled={!downloadPassword || isBusy}
+                        className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1 !w-full"
+                      >
+                        Download warthog_wallet.txt
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
+
+              {secureStep === 'backup' && (
+                <div className="login-modal-step">
+                  <div className="login-modal-step__badge">3</div>
+                  <div className="login-modal-step__body">
+                    <div className="login-modal-step__title">Write down your seed phrase</div>
+                    <div className="rounded-xl bg-amber-950/60 border border-amber-900/70 px-4 py-3 text-sm text-amber-300 mb-3">
+                      <strong>Critical:</strong> Write your seed phrase offline and store it safely.
+                      Anyone with these words can take your funds. Never share them. Confirm you have
+                      written them down before closing this screen.
+                    </div>
+                    {walletName && (
+                      <p className="text-xs text-zinc-400 mb-2">
+                        Wallet name: <span className="font-mono text-emerald-400">{walletName}</span>
+                      </p>
+                    )}
+                    {walletData.mnemonic && (
+                      <div className="result wallet-info-secret min-w-0">
+                        <div className="mb-1">
+                          <span className="text-xs font-medium text-amber-400">SEED PHRASE</span>
+                        </div>
+                        <pre className="select-text whitespace-pre-wrap break-words [overflow-wrap:anywhere] max-w-full">{walletData.mnemonic}</pre>
+                      </div>
+                    )}
+                    <div className="result wallet-info-secret min-w-0">
+                      <div className="mb-1">
+                        <span className="text-xs font-medium text-red-400">PRIVATE KEY</span>
+                      </div>
+                      <pre className="select-text whitespace-pre-wrap break-all [overflow-wrap:anywhere] max-w-full">{walletData.privateKey}</pre>
+                    </div>
+                    <div className="result wallet-info-secret min-w-0">
+                      <div className="mb-1">
+                        <span className="text-xs font-medium text-zinc-400">Public Key</span>
+                      </div>
+                      <pre className="select-text text-xs whitespace-pre-wrap break-all [overflow-wrap:anywhere] max-w-full">{walletData.publicKey}</pre>
+                    </div>
+                    <div className="result wallet-info-secret min-w-0 !mb-0">
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+                        <span className="text-xs font-medium text-emerald-400">Address</span>
+                        <button type="button" onClick={() => copyToClipboard(walletData.address, 'Address copied')} className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !mt-0 !px-3 !py-1">COPY</button>
+                      </div>
+                      <pre onClick={() => copyToClipboard(walletData.address, 'Address copied')} className="cursor-pointer select-all font-mono text-sm whitespace-pre-wrap break-all [overflow-wrap:anywhere] max-w-full">{walletData.address}</pre>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {error && showModal && (
                 <div className="bca-error" role="alert">{error}</div>
@@ -1148,41 +1102,91 @@ const BalanceCardAccess = () => {
             </div>
 
             <div className="wallet-info-modal__actions">
-              <label className="flex items-start gap-2 text-sm text-zinc-300 mb-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={consentToClose}
-                  onChange={(e) => setConsentToClose(e.target.checked)}
-                  className="mt-0.5 flex-shrink-0"
-                />
-                <span>I saved the seed / private key securely</span>
-              </label>
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleUseNow}
-                  disabled={!consentToClose || isBusy}
-                  className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !mt-0 !px-3 !py-1.5 flex-1 font-semibold"
-                >
-                  {isBusy ? 'Opening…' : 'Use wallet now'}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSaveWallet}
-                  disabled={!canSaveBrowser}
-                  className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !mt-0 !px-3 !py-1.5 flex-1 font-semibold"
-                >
-                  Save in browser
-                </button>
-              </div>
-              <button
-                type="button"
-                onClick={() => { setShowModal(false); setError(null); }}
-                className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !mt-2 !px-3 !py-1 !w-full"
-                disabled={isBusy}
-              >
-                Cancel
-              </button>
+              {secureStep === 'save' && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const name = String(walletName || '').trim();
+                      if (!name) {
+                        setError('Enter a wallet name first');
+                        return;
+                      }
+                      const wantPasskey = enablePasskeyOnSave && passkeysSupported;
+                      const wantPassword = Boolean(password);
+                      if (!wantPasskey && !wantPassword) {
+                        setError('Enable passkey and/or set a password for next login');
+                        return;
+                      }
+                      if (wantPassword && password !== confirmPassword) {
+                        setError('Passwords do not match');
+                        return;
+                      }
+                      if (require2fa && (!wantPassword || !wantPasskey)) {
+                        setError('2FA needs both a password and passkey');
+                        return;
+                      }
+                      setError(null);
+                      setSecureStep('backup');
+                    }}
+                    disabled={isBusy || !String(walletName || '').trim()}
+                    className="wallet-action-btn w-full !mx-0 !mb-2 disabled:opacity-40"
+                  >
+                    Continue — write down seed phrase
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setShowModal(false); setError(null); }}
+                    className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1 !w-full"
+                    disabled={isBusy}
+                  >
+                    Cancel
+                  </button>
+                </>
+              )}
+              {secureStep === 'backup' && (
+                <>
+                  <label className="flex items-start gap-2 text-sm text-zinc-300 mb-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={consentToClose}
+                      onChange={(e) => setConsentToClose(e.target.checked)}
+                      className="mt-0.5 flex-shrink-0"
+                    />
+                    <span>
+                      I confirm I have written down my seed phrase before closing
+                    </span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleSaveAndOpen}
+                    disabled={!canSaveAndOpen}
+                    className="wallet-action-btn w-full !mx-0 !mb-2 disabled:opacity-40 !min-h-[2.75rem] !font-bold"
+                  >
+                    {isBusy
+                      ? (enablePasskeyOnSave && passkeysSupported ? 'Waiting for passkey…' : 'Saving…')
+                      : enablePasskeyOnSave && passkeysSupported
+                        ? 'Save & open (register passkey once)'
+                        : 'Save & open wallet'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleOpenWithoutSaving}
+                    disabled={!consentToClose || isBusy}
+                    className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !mb-2 !px-3 !py-1.5 !w-full"
+                  >
+                    Open without saving
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setSecureStep('save'); setError(null); }}
+                    className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1 !w-full"
+                    disabled={isBusy}
+                  >
+                    ← Back to unlock options
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
