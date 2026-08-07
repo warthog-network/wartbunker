@@ -44,18 +44,30 @@ const ToolsPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
   const [backupPassword2, setBackupPassword2] = useState('');
   const [backupBusy, setBackupBusy] = useState(false);
   const [hasPasskey, setHasPasskey] = useState(false);
+  const [hasPasswordAuth, setHasPasswordAuth] = useState(false);
+  const [require2faActive, setRequire2faActive] = useState(false);
+  /** When enabling/re-registering: also require password + passkey at login */
+  const [want2fa, setWant2fa] = useState(false);
+  const [passkeyPassword, setPasskeyPassword] = useState('');
 
   const refreshPasskeyStatus = useCallback(() => {
     try {
       if (typeof localStorage === 'undefined' || !currentWalletName) {
         setHasPasskey(false);
+        setHasPasswordAuth(false);
+        setRequire2faActive(false);
         return;
       }
       const raw = localStorage.getItem(`warthogWallet_${currentWalletName}`);
       const info = inspectWalletBlob(raw);
       setHasPasskey(Boolean(info.hasPasskey));
+      setHasPasswordAuth(Boolean(info.hasPassword));
+      setRequire2faActive(Boolean(info.require2fa));
+      if (info.require2fa) setWant2fa(true);
     } catch {
       setHasPasskey(false);
+      setHasPasswordAuth(false);
+      setRequire2faActive(false);
     }
   }, [currentWalletName]);
 
@@ -134,18 +146,35 @@ const ToolsPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
     setIsMiningNow(false);
   };
 
-  const handleEnablePasskey = async () => {
+  const handleEnablePasskey = async ({ force2fa } = {}) => {
     if (!wallet || !isSigningUnlocked) {
       toast.error('Unlock your wallet first');
       return;
     }
+    const twoFactor = Boolean(force2fa ?? want2fa);
+    const pwd = passkeyPassword.trim() || null;
+    if (twoFactor && !pwd && !hasPasswordAuth) {
+      toast.error('2FA needs a password — enter the wallet password below');
+      return;
+    }
+    if (twoFactor && !pwd) {
+      // Existing password cipher on disk is enough if re-saving with passkey
+      // but enablePasskey prefers an explicit password when requiring 2FA
+    }
     try {
       await paintPasskeyWaiting(setPasskeyBusy);
-      const ok = await enablePasskeyOnCurrentWallet({ preferFingerprint: false, require2fa: false });
+      const ok = await enablePasskeyOnCurrentWallet({
+        preferFingerprint: false,
+        require2fa: twoFactor,
+        password: pwd,
+      });
       if (ok) {
         refreshPasskeyStatus();
+        setPasskeyPassword('');
         toast.success(
-          `Passkey enabled${currentWalletName ? ` for “${currentWalletName}”` : ''} — next login: Unlock with passkey`,
+          twoFactor
+            ? `2FA enabled${currentWalletName ? ` for “${currentWalletName}”` : ''} — next login: password + passkey`
+            : `Passkey enabled${currentWalletName ? ` for “${currentWalletName}”` : ''} — next login: Unlock with passkey`,
         );
       } else {
         toast.error('Could not enable passkey');
@@ -217,66 +246,104 @@ const ToolsPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
         <div
           id="tools-passkey"
           className={`mb-6 p-4 rounded-xl border ${
-            hasPasskey
-              ? 'border-emerald-700/40 bg-emerald-950/25'
-              : 'border-amber-600/50 bg-amber-950/25'
+            require2faActive
+              ? 'border-sky-700/40 bg-sky-950/25'
+              : hasPasskey
+                ? 'border-emerald-700/40 bg-emerald-950/25'
+                : 'border-amber-600/50 bg-amber-950/25'
           }`}
         >
-          <h3 className="text-base font-semibold text-zinc-100 m-0 mb-2">Passkey login</h3>
-          {hasPasskey ? (
-            <>
-              <p className="text-sm text-emerald-400/90 mb-2 m-0 font-medium">
-                ✓ Passkey already enabled
-                {currentWalletName ? (
-                  <>
-                    {' '}
-                    for <span className="font-mono">{currentWalletName}</span>
-                  </>
-                ) : null}
-              </p>
-              <p className="text-xs text-zinc-500 mb-3 m-0">
-                Use <strong>Unlock with passkey</strong> on login. For offline backup, open{' '}
-                <strong>Download Wallet File</strong> in the tool list below.
-              </p>
+          <h3 className="text-base font-semibold text-zinc-100 m-0 mb-2">Passkey &amp; 2FA login</h3>
+          <p className="text-xs text-zinc-500 mb-3 m-0">
+            Same unlock options as save-wallet flow: passkey alone, or password + passkey (2FA). Offline backup
+            still uses <strong>Download Wallet File</strong> below.
+          </p>
+
+          {require2faActive ? (
+            <p className="text-sm text-sky-300/95 mb-2 m-0 font-medium">
+              ✓ 2FA active{currentWalletName ? <> for <span className="font-mono">{currentWalletName}</span></> : null}
+              {' '}— password then passkey at login
+            </p>
+          ) : hasPasskey ? (
+            <p className="text-sm text-emerald-400/90 mb-2 m-0 font-medium">
+              ✓ Passkey enabled{currentWalletName ? <> for <span className="font-mono">{currentWalletName}</span></> : null}
+            </p>
+          ) : (
+            <p className="text-sm text-zinc-400 mb-2 m-0">
+              One-tap unlock in this browser (password manager or device).
+            </p>
+          )}
+
+          <label className="flex items-start gap-2 text-sm text-zinc-300 mb-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              className="mt-1 accent-[#E79300]"
+              checked={want2fa}
+              onChange={(e) => setWant2fa(e.target.checked)}
+              disabled={passkeyBusy || backupBusy}
+            />
+            <span>
+              <strong>Require 2FA</strong> — password <em>and</em> passkey every login
+              {want2fa && !hasPasswordAuth ? (
+                <span className="block text-xs text-amber-400/90 mt-0.5">
+                  Enter the wallet password below so 2FA can be stored.
+                </span>
+              ) : null}
+            </span>
+          </label>
+
+          {(want2fa || !hasPasswordAuth) && (
+            <div className="mb-3">
+              <label className="block text-xs text-zinc-500 mb-1" htmlFor="tools-passkey-password">
+                Wallet password {want2fa ? '(required for 2FA)' : '(optional — keeps password unlock)'}
+              </label>
+              <input
+                id="tools-passkey-password"
+                type="password"
+                className="input w-full"
+                autoComplete="current-password"
+                value={passkeyPassword}
+                onChange={(e) => setPasskeyPassword(e.target.value)}
+                placeholder={want2fa ? 'Password for 2FA' : 'Optional password'}
+                disabled={passkeyBusy || backupBusy}
+              />
+            </div>
+          )}
+
+          <div className="flex flex-col gap-2">
+            <button
+              type="button"
+              className="wallet-action-btn w-full !mx-0 !min-h-[2.75rem] !font-bold"
+              disabled={passkeyBusy || backupBusy}
+              onClick={() => handleEnablePasskey({ force2fa: want2fa })}
+            >
+              {passkeyBusy ? (
+                <>
+                  <span className="btn-inline-spinner" aria-hidden="true" />
+                  Waiting for passkey…
+                </>
+              ) : want2fa ? (
+                hasPasskey ? 'Update passkey + keep 2FA' : 'Enable passkey with 2FA'
+              ) : hasPasskey ? (
+                'Re-register passkey'
+              ) : (
+                'Enable passkey'
+              )}
+            </button>
+            {hasPasskey && !require2faActive && (
               <button
                 type="button"
                 className="compact-btn hover:!text-[#E79300] !mx-0 !my-0 !px-3 !py-1.5 !w-full"
                 disabled={passkeyBusy || backupBusy}
-                onClick={handleEnablePasskey}
+                onClick={() => {
+                  setWant2fa(true);
+                  void handleEnablePasskey({ force2fa: true });
+                }}
               >
-                {passkeyBusy ? (
-                  <>
-                    <span className="btn-inline-spinner" aria-hidden="true" />
-                    Waiting for passkey…
-                  </>
-                ) : (
-                  'Re-register passkey'
-                )}
+                Enable 2FA (password + passkey)
               </button>
-            </>
-          ) : (
-            <>
-              <p className="text-sm text-zinc-400 mb-3 m-0">
-                One-tap unlock in this browser. Also use <strong>Download Wallet File</strong> below for offline
-                backup.
-              </p>
-              <button
-                type="button"
-                className="wallet-action-btn w-full !mx-0 !min-h-[2.75rem] !font-bold"
-                disabled={passkeyBusy || backupBusy}
-                onClick={handleEnablePasskey}
-              >
-                {passkeyBusy ? (
-                  <>
-                    <span className="btn-inline-spinner" aria-hidden="true" />
-                    Waiting for passkey…
-                  </>
-                ) : (
-                  'Enable passkey'
-                )}
-              </button>
-            </>
-          )}
+            )}
+          </div>
         </div>
       ) : null}
 
