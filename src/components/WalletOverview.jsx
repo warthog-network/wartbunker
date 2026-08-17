@@ -9,6 +9,7 @@ import AddressQrModal from './AddressQrModal';
 import BalanceCardAccess from './BalanceCardAccess';
 import DexPage from './DexPage';
 import { isValidAssetHash } from '../utils/warthogFormat';
+import AssetMark, { AssetTitle } from './AssetMark.jsx';
 import { createWarthogApi, getNodeData } from '../utils/warthogClient.js';
 import {
   bumpNonceAfterSuccess,
@@ -655,11 +656,11 @@ const WalletOverview = ({ onLogout }) => {
                           </span>
                         </button>
                       )}
-                      <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500/80 to-cyan-500/60 flex items-center justify-center text-white font-bold text-sm flex-shrink-0 ring-1 ring-white/10">
-                        {asset.name?.[0]?.toUpperCase() || '?'}
-                      </div>
+                      <AssetMark hash={asset.hash} name={asset.name} size="md" />
                       <div className="min-w-0 flex-1">
-                        <div className="font-medium text-white truncate">{asset.name}</div>
+                        <div className="font-medium text-white truncate">
+                          <AssetTitle hash={asset.hash} name={asset.name} />
+                        </div>
                         <span
                           onClick={() => copyToClipboard(asset.hash)}
                           className="text-[10px] text-zinc-500 font-mono truncate cursor-pointer block"
@@ -864,12 +865,10 @@ const WalletOverview = ({ onLogout }) => {
                               >
                                 {isGroupCollapsed ? '▸' : '▾'}
                               </span>
-                              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-purple-500 via-violet-500 to-fuchsia-500 flex items-center justify-center text-white font-bold text-xl shadow-inner ring-1 ring-white/20 flex-shrink-0">
-                                {asset.name?.[0] || '?'}
-                              </div>
+                              <AssetMark hash={asset.hash} name={asset.name} size="md" />
                               <div className="min-w-0 flex-1">
                                 <div className="font-bold text-base sm:text-lg tracking-tight text-white truncate">
-                                  {asset.name}
+                                  <AssetTitle hash={asset.hash} name={asset.name} />
                                 </div>
                                 <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                                   <span className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-zinc-900/80 border border-zinc-700/60 text-[10px] text-zinc-400 font-mono tabular-nums">
@@ -1046,12 +1045,11 @@ const WalletOverview = ({ onLogout }) => {
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex items-center gap-3 min-w-0">
-                            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-500 via-orange-500 to-yellow-500 flex items-center justify-center text-white font-bold text-xl shadow-inner ring-1 ring-white/20 flex-shrink-0">
-                              {position.name?.[0] || 'L'}
-                            </div>
+                            <AssetMark hash={position.hash} name={position.name} size="md" />
                             <div className="min-w-0">
                               <div className="font-bold text-lg tracking-tight text-white truncate">
-                                {position.name} <span className={`font-normal text-sm ${liquidityPoolClasses.textMuted}`}>LP</span>
+                                <AssetTitle hash={position.hash} name={position.name} />{' '}
+                                <span className={`font-normal text-sm ${liquidityPoolClasses.textMuted}`}>LP</span>
                               </div>
                               <div className="text-[10px] text-zinc-500 font-mono">
                                 {position.assetId != null ? `ID ${position.assetId} · ` : ''}

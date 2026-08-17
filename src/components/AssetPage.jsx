@@ -18,6 +18,11 @@ import {
 } from '../utils/dexPrice.js';
 import AssetPriceChart from './AssetPriceChart.jsx';
 import { DEFAULT_NODE_URL } from '../utils/presetNodes.js';
+import AssetMark, { AssetTitle } from './AssetMark.jsx';
+import {
+  searchAssetCatalog,
+  useAssetMetadata,
+} from '../utils/assetMetadata.js';
 
 const AssetCardWithChart = ({ asset, isCompact, selectedNode, onCopyHash, chartPriority = false }) => {
 
@@ -171,10 +176,8 @@ const AssetCardWithChart = ({ asset, isCompact, selectedNode, onCopyHash, chartP
     ? 'Trades'
     : (CHART_INTERVALS.find((i) => i.id === chartInterval)?.label || chartInterval);
 
-  if (!asset) return null;
-
-
-  const hash = asset.hash || '';
+  const hash = asset?.hash || '';
+  const meta = useAssetMetadata(hash);
   const isTracked = watchedAssets.some((w) => w.hash.toLowerCase() === hash.toLowerCase());
 
   const handleTrackAsset = () => {
@@ -187,16 +190,18 @@ const AssetCardWithChart = ({ asset, isCompact, selectedNode, onCopyHash, chartP
     toast.success(`${asset.name || 'Token'} added to your wallet`);
   };
 
+  if (!asset) return null;
+
   return (
     <div className="w-full bg-zinc-950 border border-zinc-700 rounded-2xl overflow-hidden">
       <div className={isCompact ? 'p-4' : 'p-5'}>
         <div className="flex items-start justify-between mb-4">
           <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-blue-500 via-cyan-500 to-teal-500 flex items-center justify-center text-white font-bold text-2xl shadow-inner ring-1 ring-white/20">
-              {asset.name?.[0] || 'A'}
-            </div>
+            <AssetMark hash={hash} name={asset.name} size="lg" rounded="rounded-2xl" />
             <div>
-              <div className="font-bold text-2xl tracking-tight text-white">{asset.name}</div>
+              <div className="font-bold text-2xl tracking-tight text-white">
+                <AssetTitle hash={hash} name={asset.name} />
+              </div>
               <div className="text-xs text-zinc-400 font-mono -mt-1">Asset ID {asset.id}</div>
             </div>
           </div>
@@ -241,6 +246,20 @@ const AssetCardWithChart = ({ asset, isCompact, selectedNode, onCopyHash, chartP
             </div>
           )}
         </div>
+
+        {meta?.description ? (
+          <p className="mt-4 text-sm text-zinc-300 leading-relaxed">{meta.description}</p>
+        ) : null}
+        {meta?.website ? (
+          <a
+            href={meta.website}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-2 inline-block text-xs text-sky-400 hover:text-sky-300 break-all"
+          >
+            {meta.website}
+          </a>
+        ) : null}
 
         <div className="mt-4 pt-3 border-t border-zinc-700 text-xs text-zinc-400 flex items-center justify-between gap-2 flex-wrap">
           <span>Created on-chain</span>
@@ -642,12 +661,61 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
                 </div>
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={async () => {
                     const name = document.getElementById('namePrefix').value.trim();
                     const hash = document.getElementById('nameHashPrefix').value.trim().replace(/^0x/i, '');
                     let path = `asset/complete?namePrefix=${encodeURIComponent(name)}`;
                     if (hash) path += `&hashPrefix=${encodeURIComponent(hash)}`;
-                    query('assetComplete', path);
+                    const nodeResult = await query('assetComplete', path).catch(() => null);
+                    if (!name) return;
+                    const hits = await searchAssetCatalog(name);
+                    const existing = new Set(
+                      (nodeResult?.data?.matches || []).map((a) => String(a.hash || '').toLowerCase()),
+                    );
+                    const extras = [];
+                    const api = await createWarthogApi(selectedNode).catch(() => null);
+                    for (const hit of hits) {
+                      if (existing.has(hit.hash)) continue;
+                      let added = false;
+                      if (api) {
+                        try {
+                          const looked = await getNodeData(
+                            api,
+                            `asset/lookup/${encodeURIComponent(hit.hash)}`,
+                          );
+                          if (looked?.code === 0 && looked.data?.hash) {
+                            extras.push(looked.data);
+                            added = true;
+                          }
+                        } catch {
+                          added = false;
+                        }
+                      }
+                      if (!added) {
+                        extras.push({
+                          hash: hit.hash,
+                          name: hit.ticker || hit.name,
+                          id: '—',
+                          decimals: 8,
+                        });
+                      }
+                    }
+                    if (!extras.length) return;
+                    setResults((prev) => {
+                      const prevComplete = prev.assetComplete || nodeResult || {};
+                      const prevMatches = prevComplete.data?.matches || [];
+                      return {
+                        ...prev,
+                        assetComplete: {
+                          ...prevComplete,
+                          code: 0,
+                          data: {
+                            ...(prevComplete.data || {}),
+                            matches: [...extras, ...prevMatches],
+                          },
+                        },
+                      };
+                    });
                   }}
                   disabled={loading.assetComplete}
                   className="compact-btn hover:!text-[#E79300] disabled:opacity-40 !mx-0 !my-0 !px-3 !py-1"

@@ -15,6 +15,8 @@ import {
 import { computePoolSpotPrice, formatAssetPrice } from '../utils/dexPrice.js';
 import { DEFAULT_NODE_URL } from '../utils/presetNodes.js';
 import { readPublicSession } from '../utils/sessionWallet.js';
+import AssetMark, { AssetTitle } from './AssetMark.jsx';
+import { ZERO_ASSET_HASH } from '../utils/assetMetadata.js';
 import {
   amountExceedsAvailable,
   formatBalanceBreakdown,
@@ -846,12 +848,11 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet, embedded 
         <div className={`mt-4 bg-zinc-950 border rounded-2xl overflow-hidden ${liquidityPoolClasses.borderPanel}`}>
           <div className="px-4 py-3 bg-zinc-900 flex items-center justify-between border-b border-zinc-800">
             <div className="flex items-center gap-3">
-              <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-white text-xl font-bold ${liquidityPoolClasses.bgSolid}`}>
-                {asset.name?.[0] || 'P'}
-              </div>
+              <AssetMark hash={asset.hash} name={asset.name} size="md" />
               <div>
                 <div className="text-lg font-semibold text-white">
-                  {asset.name} <span className={liquidityPoolClasses.textFaint}>/ WART</span>
+                  <AssetTitle hash={asset.hash} name={asset.name} />{' '}
+                  <span className={liquidityPoolClasses.textFaint}>/ WART</span>
                 </div>
                 <div className="font-mono text-[10px] text-zinc-500">
                   {asset.decimals || 8} decimals
@@ -958,7 +959,9 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet, embedded 
           return (
             <div key={idx} className="bg-zinc-950 border border-zinc-700 rounded-2xl overflow-hidden">
               <div className="px-3 py-2 bg-zinc-900 border-b border-zinc-700 flex items-center justify-between">
-                <span className="font-semibold text-white">{asset.name || 'Asset'}</span>
+                <span className="font-semibold text-white">
+                  <AssetTitle hash={asset.hash} name={asset.name || 'Asset'} />
+                </span>
                 {asset.hash && (
                   <button type="button" onClick={() => copyToClipboard(asset.hash)} className="font-mono text-[10px] text-purple-400">
                     {asset.hash.slice(0, 8)}…{asset.hash.slice(-6)}
@@ -1124,9 +1127,12 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet, embedded 
                   onClick={() => setShowTokenPicker(true)}
                   className="swap-token-btn"
                 >
-                  <span className="w-6 h-6 rounded-full bg-zinc-700 text-zinc-200 text-xs font-bold flex items-center justify-center">
-                    {(selectedAsset?.symbol || '?')[0]}
-                  </span>
+                  <AssetMark
+                    hash={selectedAsset?.hash}
+                    name={selectedAsset?.symbol}
+                    size="xs"
+                    rounded="rounded-full"
+                  />
                   <span>{selectedAsset?.symbol || 'Select'}</span>
                   <span className="text-zinc-500 text-xs">▾</span>
                 </button>
@@ -1171,9 +1177,12 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet, embedded 
                         onClick={() => setShowTokenPicker(true)}
                         className="swap-token-btn"
                       >
-                        <span className="w-6 h-6 rounded-full bg-zinc-700 text-zinc-200 text-xs font-bold flex items-center justify-center">
-                          {(selectedAsset?.symbol || '?')[0]}
-                        </span>
+                        <AssetMark
+                          hash={selectedAsset?.hash}
+                          name={selectedAsset?.symbol}
+                          size="xs"
+                          rounded="rounded-full"
+                        />
                         <span>{selectedAsset?.symbol || 'Select'}</span>
                       </button>
                     </div>
@@ -1204,7 +1213,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet, embedded 
                         />
                       </div>
                       <div className="swap-token-static flex items-center gap-2 px-3 py-2 rounded-full bg-zinc-950/80 border border-zinc-700/80">
-                        <span className="w-6 h-6 rounded-full bg-zinc-700 text-zinc-200 text-xs font-bold flex items-center justify-center">W</span>
+                        <AssetMark hash={ZERO_ASSET_HASH} name="WART" size="xs" rounded="rounded-full" />
                         <span className="font-semibold text-zinc-100 text-sm">WART</span>
                       </div>
                     </div>
@@ -1413,7 +1422,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet, embedded 
                 </button>
                 {payingWart ? (
                   <div className="swap-token-static flex items-center gap-2 px-3 py-2 rounded-full bg-zinc-950/80 border border-zinc-700/80">
-                    <span className="w-6 h-6 rounded-full bg-zinc-700 text-zinc-200 text-xs font-bold flex items-center justify-center">W</span>
+                    <AssetMark hash={ZERO_ASSET_HASH} name="WART" size="xs" rounded="rounded-full" />
                     <span className="font-semibold text-zinc-100 text-sm">WART</span>
                   </div>
                 ) : (
@@ -1422,9 +1431,12 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet, embedded 
                     onClick={() => setShowTokenPicker(true)}
                     className="swap-token-btn"
                   >
-                    <span className="w-6 h-6 rounded-full bg-zinc-700 text-zinc-200 text-xs font-bold flex items-center justify-center">
-                      {(selectedAsset?.symbol || '?')[0]}
-                    </span>
+                    <AssetMark
+                      hash={selectedAsset?.hash}
+                      name={selectedAsset?.symbol}
+                      size="xs"
+                      rounded="rounded-full"
+                    />
                     <span>{selectedAsset?.symbol || 'Select'}</span>
                     <span className="text-zinc-500 text-xs">▾</span>
                   </button>
@@ -1471,7 +1483,7 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet, embedded 
                 </div>
                 {!payingWart ? (
                   <div className="swap-token-static flex items-center gap-2 px-3 py-2 rounded-full bg-zinc-950/80 border border-zinc-700/80">
-                    <span className="w-6 h-6 rounded-full bg-zinc-700 text-zinc-200 text-xs font-bold flex items-center justify-center">W</span>
+                    <AssetMark hash={ZERO_ASSET_HASH} name="WART" size="xs" rounded="rounded-full" />
                     <span className="font-semibold text-zinc-100 text-sm">WART</span>
                   </div>
                 ) : (
@@ -1480,9 +1492,12 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet, embedded 
                     onClick={() => setShowTokenPicker(true)}
                     className="swap-token-btn"
                   >
-                    <span className="w-6 h-6 rounded-full bg-zinc-700 text-zinc-200 text-xs font-bold flex items-center justify-center">
-                      {(selectedAsset?.symbol || '?')[0]}
-                    </span>
+                    <AssetMark
+                      hash={selectedAsset?.hash}
+                      name={selectedAsset?.symbol}
+                      size="xs"
+                      rounded="rounded-full"
+                    />
                     <span>{selectedAsset?.symbol || 'Select'}</span>
                     <span className="text-zinc-500 text-xs">▾</span>
                   </button>
@@ -1683,11 +1698,11 @@ const DexPage = ({ selectedNode: propSelectedNode, wallet: propWallet, embedded 
                     className={`swap-token-row${selectedAsset?.hash === t.hash ? ' swap-token-row--active' : ''}`}
                   >
                     <div className="flex items-center gap-3 min-w-0">
-                      <span className="w-8 h-8 rounded-full bg-zinc-700 text-zinc-200 text-sm font-bold flex items-center justify-center flex-shrink-0">
-                        {t.symbol[0]}
-                      </span>
+                      <AssetMark hash={t.hash} name={t.symbol} size="sm" rounded="rounded-full" />
                       <div className="min-w-0">
-                        <div className="font-semibold text-white truncate">{t.symbol}</div>
+                        <div className="font-semibold text-white truncate">
+                          <AssetTitle hash={t.hash} name={t.symbol} />
+                        </div>
                         <div className="font-mono text-[10px] text-zinc-500 truncate">{t.hash.slice(0, 12)}…</div>
                       </div>
                     </div>
