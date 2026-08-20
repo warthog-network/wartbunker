@@ -20,9 +20,19 @@ import AssetPriceChart from './AssetPriceChart.jsx';
 import { DEFAULT_NODE_URL } from '../utils/presetNodes.js';
 import AssetMark, { AssetTitle } from './AssetMark.jsx';
 import {
+  METADATA_BASE,
   searchAssetCatalog,
   useAssetMetadata,
 } from '../utils/assetMetadata.js';
+import { openMetadataForm } from '../utils/metadataSessionBridge.js';
+
+function metadataFormUrl(hash) {
+  const clean = String(hash || '').replace(/^0x/i, '').toLowerCase();
+  if (/^[0-9a-f]{64}$/.test(clean)) {
+    return `${METADATA_BASE}/?asset_hash=${clean}`;
+  }
+  return METADATA_BASE;
+}
 
 const AssetCardWithChart = ({ asset, isCompact, selectedNode, onCopyHash, chartPriority = false }) => {
 
@@ -260,6 +270,13 @@ const AssetCardWithChart = ({ asset, isCompact, selectedNode, onCopyHash, chartP
             {meta.website}
           </a>
         ) : null}
+        {(meta?.telegram || meta?.discord || meta?.twitter) ? (
+          <div className="mt-2 flex flex-wrap gap-3 text-xs">
+            {meta.telegram ? <a href={meta.telegram} target="_blank" rel="noreferrer" className="text-sky-400 hover:text-sky-300">Telegram</a> : null}
+            {meta.discord ? <a href={meta.discord} target="_blank" rel="noreferrer" className="text-sky-400 hover:text-sky-300">Discord</a> : null}
+            {meta.twitter ? <a href={meta.twitter} target="_blank" rel="noreferrer" className="text-sky-400 hover:text-sky-300">Twitter</a> : null}
+          </div>
+        ) : null}
 
         <div className="mt-4 pt-3 border-t border-zinc-700 text-xs text-zinc-400 flex items-center justify-between gap-2 flex-wrap">
           <span>Created on-chain</span>
@@ -283,6 +300,17 @@ const AssetCardWithChart = ({ asset, isCompact, selectedNode, onCopyHash, chartP
             >
               {isTracked ? '✓ Tracked' : '+ Track in Wallet'}
             </button>
+            <a
+              href={metadataFormUrl(hash)}
+              target="_blank"
+              className="compact-btn text-amber-300 hover:!text-[#FDB913]"
+              onClick={(event) => {
+                event.preventDefault();
+                openMetadataForm(metadataFormUrl(hash));
+              }}
+            >
+              Add metadata
+            </a>
             <button
               type="button"
               onClick={() => onCopyHash(hash)}
@@ -462,6 +490,19 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
             >
               {txHash}
             </div>
+            {isSuccess && type === 'Asset Creation' && (
+              <a
+                href={metadataFormUrl(txHash)}
+                target="_blank"
+                className="mt-3 inline-flex compact-btn text-amber-300 hover:!text-[#FDB913] !mx-0"
+                onClick={(event) => {
+                  event.preventDefault();
+                  openMetadataForm(metadataFormUrl(txHash));
+                }}
+              >
+                Add public metadata
+              </a>
+            )}
           </div>
         )}
 
@@ -578,6 +619,22 @@ const AssetPage = ({ selectedNode: propSelectedNode, wallet: propWallet }) => {
       {activeTab === 'create' && (
         <section className="border-2 border-blue-500 rounded-3xl p-8 bg-blue-50 dark:bg-blue-950 shadow-xl">
           <h3 className="text-2xl font-bold mb-6 text-blue-700 dark:text-blue-300">Create New Asset</h3>
+          <p className="text-sm text-blue-800/80 dark:text-blue-300/80 mb-5">
+            Mint is on-chain (ticker, supply, decimals). Logo, description, and links are stored on this host — add them after the create tx confirms.
+            {' '}
+            <a
+              href={METADATA_BASE}
+              target="_blank"
+              className="underline decoration-[#FDB913]/60 underline-offset-2 text-[#E79300] hover:text-[#FDB913]"
+              onClick={(event) => {
+                event.preventDefault();
+                openMetadataForm(METADATA_BASE);
+              }}
+            >
+              Open metadata form
+            </a>
+            .
+          </p>
           <div>
               <label className="block text-sm font-medium mb-2">Asset Name (1-5 chars)</label>
               <input id="assetName" maxLength="5" placeholder="e.g. LIQ" className="input mb-4" />

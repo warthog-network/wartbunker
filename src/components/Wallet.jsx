@@ -19,6 +19,7 @@ import {
   inspectWalletBlob,
 } from '../utils/passkeyWallet.js';
 import { paintPasskeyWaiting, clearPasskeyWaiting } from '../utils/passkeyUi.js';
+import { startMetadataSessionBridge } from '../utils/metadataSessionBridge.js';
 
 const WalletContent = () => {
   const {
@@ -76,6 +77,8 @@ const WalletContent = () => {
       require2fa: info.require2fa,
     });
   }, [currentWalletName, showUnlockPrompt, isSessionLocked]);
+
+  useEffect(() => startMetadataSessionBridge(), []);
 
   useEffect(() => {
     registerAutoLockCallback?.(({ hasSavedWallet }) => {

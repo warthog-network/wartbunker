@@ -131,6 +131,29 @@ export async function signMessageInWorker(message) {
   return new ethers.Wallet(key).signMessage(message);
 }
 
+/** SHA-256 + signature65 (r‖s‖recid). Used by the asset-metadata form. */
+export async function signWarthogBytesInWorker(message) {
+  const status = await getSigningStatus();
+  if (!status.unlocked) {
+    throw new Error('Wallet is locked — unlock in WartBunker to sign');
+  }
+
+  const wallet = await exportWalletFromWorker();
+  const { ethers } = await import('ethers');
+  const priv = wallet.privateKey.startsWith('0x') ? wallet.privateKey : `0x${wallet.privateKey}`;
+  const signingKey = new ethers.SigningKey(priv);
+  const digest = ethers.sha256(ethers.toUtf8Bytes(String(message ?? '')));
+  const sig = signingKey.sign(digest);
+  const r = sig.r.slice(2).padStart(64, '0');
+  const s = sig.s.slice(2).padStart(64, '0');
+  const yParity = sig.yParity ?? (typeof sig.v === 'number' ? sig.v % 2 : 0);
+  const recid = Number(yParity).toString(16).padStart(2, '0');
+  return {
+    signature: `${r}${s}${recid}`.toLowerCase(),
+    address: wallet.address,
+  };
+}
+
 export function terminateSigningWorker() {
   pendingRequests.forEach(({ reject }) => {
     reject(new Error('Signing worker terminated'));

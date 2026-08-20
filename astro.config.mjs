@@ -15,7 +15,7 @@ function devCspOverride() {
     "script-src 'self' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' data: https://fonts.gstatic.com https://fonts.googleapis.com",
-    "img-src 'self' data: https://data.warthog.network https://raw.githubusercontent.com",
+    "img-src 'self' data: https://warthog-defitestnet.duckdns.org:4445",
     "connect-src 'self' http: https: ws: wss:",
   ].join('; ') + ';';
 
@@ -84,5 +84,13 @@ export default defineConfig({
     },
 
     plugins: [tailwindcss(), devCspOverride()],
+    server: {
+      allowedHosts: [
+        'cartesi-bridge.duckdns.org',
+        'localhost',
+        '127.0.0.1',
+        '217.216.94.146',
+      ],
+    },
   },
 });

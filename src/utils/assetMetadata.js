@@ -1,24 +1,10 @@
 import { useEffect, useState } from 'react';
 
-/** Official GitHub Pages export of warthog-network/public-data. */
-export const PUBLIC_DATA_API = 'https://data.warthog.network';
+/** Off-chain catalog on this VPS (Postgres). Replaces GitHub public-data. */
+export const METADATA_BASE = 'https://warthog-defitestnet.duckdns.org:4445';
+/** @deprecated kept so old imports keep compiling */
+export const PUBLIC_DATA_API = METADATA_BASE;
 export const ZERO_ASSET_HASH = '0'.repeat(64);
-
-/**
- * ICE (IceCube) landed in public-data PR #9 but is not on master /
- * data.warthog.network until a maintainer merges. Keep a raw-branch
- * fallback so bunker can show it immediately.
- */
-const PENDING_BY_HASH = {
-  '0378b2df12a28c749facfcc7caa55edec0672b6c908c3a7ec152caf5aa2d4679': {
-    name: 'IceCube',
-    ticker: 'ICE',
-    infoUrl:
-      'https://raw.githubusercontent.com/warthog-network/public-data/asset-metadata/0378b2df12a2/data/assets/0378b2df12a28c749facfcc7caa55edec0672b6c908c3a7ec152caf5aa2d4679/info.json',
-    logoUrl:
-      'https://raw.githubusercontent.com/warthog-network/public-data/asset-metadata/0378b2df12a2/data/assets/0378b2df12a28c749facfcc7caa55edec0672b6c908c3a7ec152caf5aa2d4679/logo.png',
-  },
-};
 
 const memory = new Map();
 let catalogPromise = null;
@@ -28,43 +14,14 @@ export function normalizeAssetMetaHash(hash) {
   return /^[0-9a-f]{64}$/.test(clean) ? clean : '';
 }
 
-const LOCAL_LOGOS = {
-  [ZERO_ASSET_HASH]: [`/asset-meta/${ZERO_ASSET_HASH}/image.png`],
-  '0378b2df12a28c749facfcc7caa55edec0672b6c908c3a7ec152caf5aa2d4679': [
-    '/asset-meta/0378b2df12a28c749facfcc7caa55edec0672b6c908c3a7ec152caf5aa2d4679/logo.png',
-  ],
-};
-
 export function assetLogoCandidates(hash) {
   const h = normalizeAssetMetaHash(hash);
   if (!h) return [];
-  const pending = PENDING_BY_HASH[h];
-  return [
-    ...(LOCAL_LOGOS[h] || []),
-    `${PUBLIC_DATA_API}/assets/${h}/logo.png`,
-    `${PUBLIC_DATA_API}/assets/${h}/image.png`,
-    `https://raw.githubusercontent.com/warthog-network/public-data/master/data/assets/${h}/logo.png`,
-    `https://raw.githubusercontent.com/warthog-network/public-data/master/data/assets/${h}/image.png`,
-    pending?.logoUrl,
-  ].filter(Boolean);
+  return [`${METADATA_BASE}/assets/${h}/logo.png`, `${METADATA_BASE}/assets/${h}/image.png`];
 }
 
-const LOCAL_INFO = {
-  [ZERO_ASSET_HASH]: `/asset-meta/${ZERO_ASSET_HASH}/info.json`,
-  '0378b2df12a28c749facfcc7caa55edec0672b6c908c3a7ec152caf5aa2d4679':
-    '/asset-meta/0378b2df12a28c749facfcc7caa55edec0672b6c908c3a7ec152caf5aa2d4679/info.json',
-};
-
-function infoCandidates(hash) {
-  const h = normalizeAssetMetaHash(hash);
-  if (!h) return [];
-  const pending = PENDING_BY_HASH[h];
-  return [
-    LOCAL_INFO[h],
-    `${PUBLIC_DATA_API}/assets/${h}/info.json`,
-    `https://raw.githubusercontent.com/warthog-network/public-data/master/data/assets/${h}/info.json`,
-    pending?.infoUrl,
-  ].filter(Boolean);
+function infoUrl(hash) {
+  return `${METADATA_BASE}/assets/${hash}/info.json`;
 }
 
 async function fetchJson(url) {
@@ -105,23 +62,8 @@ export async function fetchAssetMetadata(hash) {
   if (memory.has(h)) return memory.get(h);
 
   const pending = (async () => {
-    for (const url of infoCandidates(h)) {
-      const raw = await fetchJson(url).catch(() => null);
-      const info = normalizeInfo(raw, h);
-      if (info) return info;
-    }
-    const seed = PENDING_BY_HASH[h];
-    if (seed) {
-      return normalizeInfo(
-        {
-          hash: h,
-          name: seed.name,
-          ticker: seed.ticker,
-        },
-        h,
-      );
-    }
-    return null;
+    const raw = await fetchJson(infoUrl(h)).catch(() => null);
+    return normalizeInfo(raw, h);
   })();
 
   memory.set(h, pending);
@@ -140,7 +82,7 @@ export function peekAssetMetadata(hash) {
 export async function loadAssetCatalog() {
   if (!catalogPromise) {
     catalogPromise = (async () => {
-      const listed = await fetchJson(`${PUBLIC_DATA_API}/assets.json`);
+      const listed = await fetchJson(`${METADATA_BASE}/assets.json`);
       const byHash = new Map();
       if (Array.isArray(listed)) {
         for (const row of listed) {
@@ -148,20 +90,10 @@ export async function loadAssetCatalog() {
           if (info) byHash.set(info.hash, info);
         }
       }
-      for (const [hash, seed] of Object.entries(PENDING_BY_HASH)) {
-        if (!byHash.has(hash)) {
-          byHash.set(
-            hash,
-            normalizeInfo({ hash, name: seed.name, ticker: seed.ticker }, hash),
-          );
-        }
-      }
       return [...byHash.values()];
     })().catch(() => {
       catalogPromise = null;
-      return Object.entries(PENDING_BY_HASH).map(([hash, seed]) =>
-        normalizeInfo({ hash, name: seed.name, ticker: seed.ticker }, hash),
-      );
+      return [];
     });
   }
   return catalogPromise;

@@ -42,7 +42,7 @@ export default defineConfig({
         'script-src': ["'self'", "'unsafe-inline'"],
         'style-src-elem': ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
         'font-src': ["'self'", "data:", "https://fonts.gstatic.com", "https://fonts.googleapis.com"],
-        'img-src': ["'self'", "data:", "https://data.warthog.network", "https://raw.githubusercontent.com"],
+        'img-src': ["'self'", "data:", "https://warthog-defitestnet.duckdns.org:4445"],
       },
     }),
   ],
